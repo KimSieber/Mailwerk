@@ -1,0 +1,61 @@
+# Xcode
+build/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+xcuserdata/
+
+# Xcode Schemes (persönliche, nicht geteilte)
+*.xcodeproj/xcshareddata/xcschemes/*
+!*.xcodeproj/xcshareddata/xcschemes/*.xcscheme
+
+# Interface Builder
+*.storyboard.xml
+
+# Swift Package Manager
+.build/
+Package.resolved
+
+# CocoaPods (falls du es je nutzt)
+Pods/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Thumbnails
+Icon?
+
+# Archives & Exports
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.app
+
+# Playgrounds
+timeline.xctimeline
+playground.xcworkspace
+
+# Instruments
+*.trace
+
+# Fastlane (falls später relevant)
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/
+fastlane/test_output/
+
+# Sensitive Daten (wichtig bei Public Repo!)
+*.pem
+*.p12
+*.key
+*.mobileprovision
+Secrets/
+Config/Secrets.*
+
+# Temporäres
+*.swp
+*.lock
+*~
