@@ -24,6 +24,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		3B74D9E0305DE2290072DF5D /* .gitignore */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitignore; sourceTree = "<group>"; };
+		3B74D9E1305DE2290072DF5D /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		3B8C3B1F305DE0980028B269 /* Mailwerk.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Mailwerk.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B8C3B2C305DE09B0028B269 /* MailwerkTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MailwerkTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B8C3B36305DE09B0028B269 /* MailwerkUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MailwerkUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -75,6 +77,8 @@
 		3B8C3B16305DE0980028B269 = {
 			isa = PBXGroup;
 			children = (
+				3B74D9E0305DE2290072DF5D /* .gitignore */,
+				3B74D9E1305DE2290072DF5D /* README.md */,
 				3B8C3B21305DE0980028B269 /* Mailwerk */,
 				3B8C3B2F305DE09B0028B269 /* MailwerkTests */,
 				3B8C3B39305DE09B0028B269 /* MailwerkUITests */,
