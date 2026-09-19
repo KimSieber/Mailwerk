@@ -2,20 +2,14 @@
 //  ContentView.swift
 //  Mailwerk
 //
-//  Created by Kim Sieber on 18.09.26.
-//
 
 import SwiftUI
 
 struct ContentView: View {
+    @State private var accountStore = AccountStore()
+
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
-        }
-        .padding()
+        InboxView(accountStore: accountStore)
     }
 }
 
