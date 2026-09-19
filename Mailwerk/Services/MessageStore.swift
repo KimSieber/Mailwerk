@@ -33,6 +33,7 @@ final class MessageStore: @unchecked Sendable {
                 fatalError("SQLite öffnen fehlgeschlagen: \(errMsg)")
             }
             createTablesIfNeeded()
+            migrateIfNeeded()
         } catch {
             fatalError("App-Support-Verzeichnis nicht verfügbar: \(error)")
         }
@@ -61,7 +62,8 @@ final class MessageStore: @unchecked Sendable {
                 totalSizeBytes INTEGER NOT NULL,
                 textBody TEXT,
                 htmlBody TEXT,
-                fetchedAt REAL NOT NULL
+                fetchedAt REAL NOT NULL,
+                hasAttachments INTEGER NOT NULL DEFAULT 0
             )
             """)
         exec("""
@@ -78,15 +80,53 @@ final class MessageStore: @unchecked Sendable {
         exec("PRAGMA foreign_keys = ON")
     }
 
+    // MARK: - Migration
+
+    /// Fügt neue Spalten hinzu, falls die DB aus v0.1.0 stammt.
+    /// Prüft vorher per PRAGMA table_info, ob die Spalte schon existiert.
+    private func migrateIfNeeded() {
+        // v0.1.1: hasAttachments-Spalte
+        if !columnExists("hasAttachments", in: "message") {
+            exec("ALTER TABLE message ADD COLUMN hasAttachments INTEGER NOT NULL DEFAULT 0")
+
+            // Backfill: bestehende Nachrichten anhand der Attachment-Tabelle aktualisieren
+            exec("""
+                UPDATE message SET hasAttachments = 1
+                WHERE id IN (SELECT DISTINCT messageID FROM attachment)
+                """)
+        }
+    }
+
+    private func columnExists(_ column: String, in table: String) -> Bool {
+        guard let stmt = prepare("PRAGMA table_info(\(table))") else { return false }
+        defer { sqlite3_finalize(stmt) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            // Spalte 1 von PRAGMA table_info ist der Spaltenname
+            if str(stmt, 1) == column { return true }
+        }
+        return false
+    }
+
     // MARK: - Nachrichten speichern
 
+    /// Speichert eine neue Nachricht oder aktualisiert eine bestehende.
+    /// Nutzt UPSERT (ON CONFLICT … DO UPDATE) statt INSERT OR REPLACE,
+    /// da letzteres intern DELETE + INSERT ist und damit ON DELETE CASCADE
+    /// auf der Attachment-Tabelle auslösen würde.
     func saveMessage(_ m: CachedMessage) {
         let sql = """
-            INSERT OR REPLACE INTO message
+            INSERT INTO message
             (id, accountID, accountDisplayName, uid, subject,
              "from", "to", date, isUnread, totalSizeBytes,
-             textBody, htmlBody, fetchedAt)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+             textBody, htmlBody, fetchedAt, hasAttachments)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                isUnread = excluded.isUnread,
+                totalSizeBytes = excluded.totalSizeBytes,
+                textBody = excluded.textBody,
+                htmlBody = excluded.htmlBody,
+                fetchedAt = excluded.fetchedAt,
+                hasAttachments = excluded.hasAttachments
             """
         guard let stmt = prepare(sql) else { return }
         defer { sqlite3_finalize(stmt) }
@@ -105,7 +145,19 @@ final class MessageStore: @unchecked Sendable {
         bind(stmt, 11, m.textBody)
         bind(stmt, 12, m.htmlBody)
         sqlite3_bind_double(stmt, 13, m.fetchedAt.timeIntervalSince1970)
+        sqlite3_bind_int(stmt, 14, m.hasAttachments ? 1 : 0)
 
+        sqlite3_step(stmt)
+    }
+
+    /// Aktualisiert nur den Gelesen-Status einer bereits gecachten Nachricht.
+    /// Leichtgewichtig, ohne Risiko für Cascade-Deletes.
+    func updateFlags(messageID: String, isUnread: Bool) {
+        let sql = "UPDATE message SET isUnread = ? WHERE id = ?"
+        guard let stmt = prepare(sql) else { return }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int(stmt, 1, isUnread ? 1 : 0)
+        bind(stmt, 2, messageID)
         sqlite3_step(stmt)
     }
 
@@ -119,9 +171,14 @@ final class MessageStore: @unchecked Sendable {
 
     func saveAttachment(_ a: CachedAttachment) {
         let sql = """
-            INSERT OR REPLACE INTO attachment
+            INSERT INTO attachment
             (id, messageID, filename, contentType, sizeBytes, data)
             VALUES (?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                filename = excluded.filename,
+                contentType = excluded.contentType,
+                sizeBytes = excluded.sizeBytes,
+                data = excluded.data
             """
         guard let stmt = prepare(sql) else { return }
         defer { sqlite3_finalize(stmt) }
@@ -138,6 +195,19 @@ final class MessageStore: @unchecked Sendable {
         } else {
             sqlite3_bind_null(stmt, 6)
         }
+        sqlite3_step(stmt)
+    }
+
+    // MARK: - Anhänge löschen (nur lokales BLOB)
+
+    /// Löscht nur die lokalen Binärdaten eines Anhangs, behält aber
+    /// die Metadaten (Dateiname, Größe, Typ). Der Anhang kann danach
+    /// bei Bedarf erneut vom Server geladen werden.
+    func deleteAttachmentData(id: String) {
+        let sql = "UPDATE attachment SET data = NULL WHERE id = ?"
+        guard let stmt = prepare(sql) else { return }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, id)
         sqlite3_step(stmt)
     }
 
@@ -216,6 +286,7 @@ final class MessageStore: @unchecked Sendable {
             date: dateVal.map { Date(timeIntervalSince1970: $0) },
             isUnread: sqlite3_column_int(s, 8) != 0,
             totalSizeBytes: Int(sqlite3_column_int(s, 9)),
+            hasAttachments: sqlite3_column_int(s, 13) != 0,
             textBody: optStr(s, 10),
             htmlBody: optStr(s, 11),
             fetchedAt: Date(timeIntervalSince1970: sqlite3_column_double(s, 12))

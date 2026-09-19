@@ -9,6 +9,7 @@ struct InboxView: View {
     let accountStore: AccountStore
     @State private var viewModel: InboxViewModel
     @State private var showingAccounts = false
+    @State private var hasLoadedOnce = false
 
     init(accountStore: AccountStore) {
         self.accountStore = accountStore
@@ -18,7 +19,16 @@ struct InboxView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if viewModel.messages.isEmpty && !viewModel.isLoading {
+                if viewModel.messages.isEmpty && viewModel.isLoading {
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .controlSize(.large)
+                        Text("Postfächer werden abgerufen …")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if viewModel.messages.isEmpty {
                     ContentUnavailableView(
                         "Keine Nachrichten",
                         systemImage: "tray",
@@ -31,7 +41,7 @@ struct InboxView: View {
                 } else {
                     List(viewModel.messages) { message in
                         NavigationLink {
-                            MessageDetailView(message: message)
+                            MessageDetailView(message: message, accountStore: accountStore)
                         } label: {
                             InboxRow(message: message)
                         }
@@ -40,6 +50,11 @@ struct InboxView: View {
             }
             .navigationTitle("Mailwerk")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if viewModel.isLoading && !viewModel.messages.isEmpty {
+                        ProgressView()
+                    }
+                }
                 ToolbarItem {
                     Button {
                         showingAccounts = true
@@ -49,7 +64,11 @@ struct InboxView: View {
                 }
             }
             .refreshable { await viewModel.refresh() }
-            .task { await viewModel.refresh() }
+            .task {
+                guard !hasLoadedOnce else { return }
+                hasLoadedOnce = true
+                await viewModel.refresh()
+            }
             .sheet(isPresented: $showingAccounts) {
                 AccountListView(accountStore: accountStore)
             }
@@ -77,6 +96,11 @@ private struct InboxRow: View {
                 Text(message.from)
                     .font(message.isUnread ? .headline : .subheadline)
                 Spacer()
+                if message.hasAttachments {
+                    Image(systemName: "paperclip")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 if let date = message.date {
                     Text(date, style: .date)
                         .font(.caption)

@@ -26,6 +26,7 @@ struct CachedMessage: Identifiable {
     let date: Date?
     var isUnread: Bool
     let totalSizeBytes: Int     // RFC822.SIZE – entscheidet, ob Anhänge automatisch geladen werden
+    let hasAttachments: Bool    // true wenn die Mail mindestens einen Anhang hat
     let textBody: String?
     let htmlBody: String?
     let fetchedAt: Date
