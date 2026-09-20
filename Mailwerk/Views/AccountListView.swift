@@ -16,6 +16,8 @@ import SwiftUI
 struct AccountListView: View {
     let accountStore: AccountStore
     @State private var showingAddAccount = false
+    @State private var editingAccount: MailAccount?
+    @Environment(\.dismiss) private var dismiss
     
     var body: some View {
         NavigationStack {
@@ -28,13 +30,26 @@ struct AccountListView: View {
                     )
                 } else {
                     ForEach(accountStore.accounts) { account in
-                        VStack(alignment: .leading) {
-                            Text(account.displayName)
-                                .font(.headline)
-                            Text(account.username)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                        Button {
+                            editingAccount = account
+                        } label: {
+                            HStack(spacing: 10) {
+                                // Farbpunkt, falls eine Farbe gewählt ist
+                                if let colorHex = account.colorHex {
+                                    Circle()
+                                        .fill(Color(hex: colorHex))
+                                        .frame(width: 12, height: 12)
+                                }
+                                VStack(alignment: .leading) {
+                                    Text(account.displayName)
+                                        .font(.headline)
+                                    Text(account.username)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
                         }
+                        .tint(.primary)
                     }
                     .onDelete { indexSet in
                         for index in indexSet {
@@ -43,8 +58,15 @@ struct AccountListView: View {
                     }
                 }
             }
-            .navigationTitle("Mailwerk")
+            .navigationTitle("Postfächer")
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                }
                 ToolbarItem {
                     Button {
                         showingAddAccount = true
@@ -55,6 +77,9 @@ struct AccountListView: View {
             }
             .sheet(isPresented: $showingAddAccount) {
                 AddAccountView(accountStore: accountStore)
+            }
+            .sheet(item: $editingAccount) { account in
+                EditAccountView(accountStore: accountStore, account: account)
             }
         }
     }

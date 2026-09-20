@@ -36,6 +36,17 @@ final class AccountStore {
         save()
     }
 
+    func updateAccount(_ updated: MailAccount, newPassword: String?) throws {
+        guard let index = accounts.firstIndex(where: { $0.id == updated.id }) else {
+            return
+        }
+        if let newPassword, !newPassword.isEmpty {
+            try KeychainService.savePassword(newPassword, for: updated.id)
+        }
+        accounts[index] = updated
+        save()
+    }
+    
     func password(for account: MailAccount) throws -> String? {
         try KeychainService.readPassword(for: account.id)
     }

@@ -33,6 +33,9 @@ struct MailAccount: Identifiable, Codable, Equatable {
     var smtpPort: Int
     var smtpUseTLS: Bool
 
+    /// Hex-Farbwert aus AccountColor, z. B. "#378ADD". nil = keine Farbmarkierung.
+    var colorHex: String?
+    
     init(
         id: UUID = UUID(),
         displayName: String,
@@ -42,7 +45,8 @@ struct MailAccount: Identifiable, Codable, Equatable {
         imapUseTLS: Bool = true,
         smtpHost: String,
         smtpPort: Int = 465,
-        smtpUseTLS: Bool = true
+        smtpUseTLS: Bool = true,
+        colorHex: String? = nil       // ← neu
     ) {
         self.id = id
         self.displayName = displayName
@@ -53,5 +57,6 @@ struct MailAccount: Identifiable, Codable, Equatable {
         self.smtpHost = smtpHost
         self.smtpPort = smtpPort
         self.smtpUseTLS = smtpUseTLS
+        self.colorHex = colorHex      // ← neu
     }
 }

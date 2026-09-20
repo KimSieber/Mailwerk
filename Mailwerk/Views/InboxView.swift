@@ -49,7 +49,11 @@ struct InboxView: View {
                                 onChange: { viewModel.loadFromCache() }
                             )
                         } label: {
-                            InboxRow(message: message)
+                            InboxRow(
+                                message: message,
+                                colorHex: accountStore.accounts
+                                    .first(where: { $0.id == message.accountID })?.colorHex
+                            )
                         }
                         .swipeActions(edge: .leading, allowsFullSwipe: true) {
                             Button {
@@ -88,7 +92,7 @@ struct InboxView: View {
                     Button {
                         showingAccounts = true
                     } label: {
-                        Label("Postfächer", systemImage: "envelope.badge.person.crop")
+                        Label("Postfächer", systemImage: "gearshape")
                     }
                 }
             }
@@ -171,35 +175,49 @@ struct InboxView: View {
 
 private struct InboxRow: View {
     let message: CachedMessage
+    let colorHex: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(message.from)
-                    .font(message.isUnread ? .headline : .subheadline)
-                Spacer()
-                if message.isFlagged {
-                    Image(systemName: "flag.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-                if message.hasAttachments {
-                    Image(systemName: "paperclip")
+        HStack(spacing: 0) {
+            // Farbstreifen am linken Rand (nur wenn Farbe gesetzt)
+            if let hex = colorHex {
+                Color(hex: hex)
+                    .frame(width: 4)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(message.from)
+                        .font(message.isUnread ? .headline : .subheadline)
+                        .lineLimit(1)
+                    Spacer()
+                    if message.isFlagged {
+                        Image(systemName: "flag.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                    if message.hasAttachments {
+                        Image(systemName: "paperclip")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(message.date ?? Date(), format: .dateTime.weekday(.abbreviated).day().month().year().hour().minute())
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                if let date = message.date {
-                    Text(date, format: .dateTime.weekday(.abbreviated).day(.twoDigits).month(.twoDigits).year().hour(.defaultDigits(amPM: .omitted)).minute(.twoDigits))
+
+                Text(message.subject)
+                    .font(.subheadline)
+                    .lineLimit(1)
+
+                if let body = message.textBody {
+                    Text(body)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
-            Text(message.subject)
-                .font(message.isUnread ? .headline : .body)
-                .lineLimit(1)
-            Text(message.accountDisplayName)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+            .padding(.leading, colorHex != nil ? 8 : 0)
         }
     }
 }
