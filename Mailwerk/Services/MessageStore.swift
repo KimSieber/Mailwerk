@@ -59,11 +59,13 @@ final class MessageStore: @unchecked Sendable {
                 "to" TEXT NOT NULL,
                 date REAL,
                 isUnread INTEGER NOT NULL,
+                isFlagged INTEGER NOT NULL DEFAULT 0,
                 totalSizeBytes INTEGER NOT NULL,
                 textBody TEXT,
                 htmlBody TEXT,
                 fetchedAt REAL NOT NULL,
-                hasAttachments INTEGER NOT NULL DEFAULT 0
+                hasAttachments INTEGER NOT NULL DEFAULT 0,
+                isFlagged INTEGER NOT NULL DEFAULT 0
             )
             """)
         exec("""
@@ -95,8 +97,13 @@ final class MessageStore: @unchecked Sendable {
                 WHERE id IN (SELECT DISTINCT messageID FROM attachment)
                 """)
         }
-    }
 
+        // v0.1.2: isFlagged-Spalte
+        if !columnExists("isFlagged", in: "message") {
+            exec("ALTER TABLE message ADD COLUMN isFlagged INTEGER NOT NULL DEFAULT 0")
+        }
+    }
+    
     private func columnExists(_ column: String, in table: String) -> Bool {
         guard let stmt = prepare("PRAGMA table_info(\(table))") else { return false }
         defer { sqlite3_finalize(stmt) }
@@ -117,11 +124,12 @@ final class MessageStore: @unchecked Sendable {
         let sql = """
             INSERT INTO message
             (id, accountID, accountDisplayName, uid, subject,
-             "from", "to", date, isUnread, totalSizeBytes,
+             "from", "to", date, isUnread, isFlagged, totalSizeBytes,
              textBody, htmlBody, fetchedAt, hasAttachments)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 isUnread = excluded.isUnread,
+                isFlagged = excluded.isFlagged,
                 totalSizeBytes = excluded.totalSizeBytes,
                 textBody = excluded.textBody,
                 htmlBody = excluded.htmlBody,
@@ -141,14 +149,16 @@ final class MessageStore: @unchecked Sendable {
         if let d = m.date { sqlite3_bind_double(stmt, 8, d.timeIntervalSince1970) }
         else { sqlite3_bind_null(stmt, 8) }
         sqlite3_bind_int(stmt, 9, m.isUnread ? 1 : 0)
-        sqlite3_bind_int(stmt, 10, Int32(m.totalSizeBytes))
-        bind(stmt, 11, m.textBody)
-        bind(stmt, 12, m.htmlBody)
-        sqlite3_bind_double(stmt, 13, m.fetchedAt.timeIntervalSince1970)
-        sqlite3_bind_int(stmt, 14, m.hasAttachments ? 1 : 0)
+        sqlite3_bind_int(stmt, 10, m.isFlagged ? 1 : 0)
+        sqlite3_bind_int(stmt, 11, Int32(m.totalSizeBytes))
+        bind(stmt, 12, m.textBody)
+        bind(stmt, 13, m.htmlBody)
+        sqlite3_bind_double(stmt, 14, m.fetchedAt.timeIntervalSince1970)
+        sqlite3_bind_int(stmt, 15, m.hasAttachments ? 1 : 0)
 
         sqlite3_step(stmt)
     }
+    
 
     /// Aktualisiert nur den Gelesen-Status einer bereits gecachten Nachricht.
     /// Leichtgewichtig, ohne Risiko für Cascade-Deletes.
@@ -161,6 +171,16 @@ final class MessageStore: @unchecked Sendable {
         sqlite3_step(stmt)
     }
 
+    /// Aktualisiert nur die Kennzeichnung (\Flagged) einer bereits gecachten Nachricht.
+    func updateFlagged(messageID: String, isFlagged: Bool) {
+        let sql = "UPDATE message SET isFlagged = ? WHERE id = ?"
+        guard let stmt = prepare(sql) else { return }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int(stmt, 1, isFlagged ? 1 : 0)
+        bind(stmt, 2, messageID)
+        sqlite3_step(stmt)
+    }
+    
     func saveMessages(_ messages: [CachedMessage]) {
         exec("BEGIN TRANSACTION")
         for m in messages { saveMessage(m) }
@@ -270,6 +290,17 @@ final class MessageStore: @unchecked Sendable {
         sqlite3_step(stmt)
     }
 
+    /// Entfernt eine einzelne Nachricht (und über ON DELETE CASCADE
+    /// automatisch ihre Anhänge) aus dem Cache. Wird nach erfolgreichem
+    /// serverseitigem Löschen/Verschieben aufgerufen.
+    func deleteMessage(id: String) {
+        let sql = "DELETE FROM message WHERE id = ?"
+        guard let stmt = prepare(sql) else { return }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, id)
+        sqlite3_step(stmt)
+    }
+    
     // MARK: - Interne Helfer
 
     private func readMessage(_ s: OpaquePointer?) -> CachedMessage {
@@ -285,6 +316,7 @@ final class MessageStore: @unchecked Sendable {
             to: str(s, 6),
             date: dateVal.map { Date(timeIntervalSince1970: $0) },
             isUnread: sqlite3_column_int(s, 8) != 0,
+            isFlagged: sqlite3_column_int(s, 14) != 0,
             totalSizeBytes: Int(sqlite3_column_int(s, 9)),
             hasAttachments: sqlite3_column_int(s, 13) != 0,
             textBody: optStr(s, 10),
@@ -292,7 +324,7 @@ final class MessageStore: @unchecked Sendable {
             fetchedAt: Date(timeIntervalSince1970: sqlite3_column_double(s, 12))
         )
     }
-
+    
     private func readAttachment(_ s: OpaquePointer?) -> CachedAttachment {
         var data: Data?
         if sqlite3_column_type(s, 5) != SQLITE_NULL,

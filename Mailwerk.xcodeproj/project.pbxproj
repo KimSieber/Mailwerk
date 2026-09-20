@@ -197,11 +197,12 @@
 				};
 			};
 			buildConfigurationList = 3B8C3B1A305DE0980028B269 /* Build configuration list for PBXProject "Mailwerk" */;
-			developmentRegion = en;
+			developmentRegion = de;
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
 				Base,
+				de,
 			);
 			mainGroup = 3B8C3B16305DE0980028B269;
 			minimizedProjectReferenceProxies = 1;

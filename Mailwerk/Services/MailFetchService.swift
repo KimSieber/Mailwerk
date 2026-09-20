@@ -68,16 +68,21 @@ enum MailFetchService {
                 }
                 let msgID = "\(account.id.uuidString)-\(uid.value)"
 
-                // Schon im Cache → nur Gelesen-Status aktualisieren
+                // Schon im Cache → Gelesen- und Flagged-Status aktualisieren
                 if alreadyCached.contains(msgID) {
                     let isUnread = !info.flags.contains(where: {
                         if case .seen = $0 { return true }
                         return false
                     })
+                    let isFlagged = info.flags.contains(where: {
+                        if case .flagged = $0 { return true }
+                        return false
+                    })
                     MessageStore.shared.updateFlags(messageID: msgID, isUnread: isUnread)
+                    MessageStore.shared.updateFlagged(messageID: msgID, isFlagged: isFlagged)
                     continue
                 }
-
+                
                 // Neu: Body laden — Fehler bei einzelner Mail
                 // überspringen, nicht den ganzen Account abbrechen
                 do {
@@ -100,6 +105,10 @@ enum MailFetchService {
                         to: info.to.joined(separator: ", "),
                         date: info.date ?? info.internalDate,
                         isUnread: isUnread,
+                        isFlagged: info.flags.contains(where: {
+                            if case .flagged = $0 { return true }
+                            return false
+                        }),
                         totalSizeBytes: totalSize,
                         hasAttachments: hasAttachments,
                         textBody: message.textBody,

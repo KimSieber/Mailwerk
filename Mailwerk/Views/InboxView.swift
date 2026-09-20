@@ -10,7 +10,9 @@ struct InboxView: View {
     @State private var viewModel: InboxViewModel
     @State private var showingAccounts = false
     @State private var hasLoadedOnce = false
-
+    @State private var errorMessage: String?
+    @State private var processingMessageIDs: Set<String> = []
+    
     init(accountStore: AccountStore) {
         self.accountStore = accountStore
         _viewModel = State(initialValue: InboxViewModel(accountStore: accountStore))
@@ -41,10 +43,37 @@ struct InboxView: View {
                 } else {
                     List(viewModel.messages) { message in
                         NavigationLink {
-                            MessageDetailView(message: message, accountStore: accountStore)
+                            MessageDetailView(
+                                message: message,
+                                accountStore: accountStore,
+                                onChange: { viewModel.loadFromCache() }
+                            )
                         } label: {
                             InboxRow(message: message)
                         }
+                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                            Button {
+                                Task { await toggleRead(message) }
+                            } label: {
+                                Label(
+                                    message.isUnread ? "Gelesen" : "Ungelesen",
+                                    systemImage: message.isUnread ? "envelope.open" : "envelope.badge"
+                                )
+                            }
+                            .tint(.blue)
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button {
+                                Task { await toggleFlag(message) }
+                            } label: {
+                                Label(
+                                    message.isFlagged ? "Entflaggen" : "Flaggen",
+                                    systemImage: message.isFlagged ? "flag.slash" : "flag"
+                                )
+                            }
+                            .tint(.orange)
+                        }
+                        .disabled(processingMessageIDs.contains(message.id))
                     }
                 }
             }
@@ -83,8 +112,61 @@ struct InboxView: View {
             } message: {
                 Text(viewModel.errorMessage ?? "")
             }
+            .alert(
+                 "Aktion fehlgeschlagen",
+                 isPresented: Binding(
+                     get: { errorMessage != nil },
+                     set: { if !$0 { errorMessage = nil } }
+                 )
+             ) {
+                 Button("OK") { errorMessage = nil }
+             } message: {
+                 Text(errorMessage ?? "")
+             }
         }
     }
+    
+    // MARK: - Swipe-Aktionen
+    @MainActor
+    private func toggleRead(_ message: CachedMessage) async {
+        processingMessageIDs.insert(message.id)
+        defer { processingMessageIDs.remove(message.id) }
+
+        let markAsRead = message.isUnread
+        do {
+            try await MailActionService.setRead(
+                uid: Int(message.uid),
+                isRead: markAsRead,
+                accountID: message.accountID,
+                accountStore: accountStore
+            )
+            MessageStore.shared.updateFlags(messageID: message.id, isUnread: !markAsRead)
+            viewModel.loadFromCache()
+        } catch {
+            errorMessage = "Status ändern fehlgeschlagen: \(error.localizedDescription)"
+        }
+    }
+
+    @MainActor
+    private func toggleFlag(_ message: CachedMessage) async {
+        processingMessageIDs.insert(message.id)
+        defer { processingMessageIDs.remove(message.id) }
+
+        let newFlagged = !message.isFlagged
+        do {
+            try await MailActionService.setFlagged(
+                uid: Int(message.uid),
+                isFlagged: newFlagged,
+                accountID: message.accountID,
+                accountStore: accountStore
+            )
+            MessageStore.shared.updateFlagged(messageID: message.id, isFlagged: newFlagged)
+            viewModel.loadFromCache()
+        } catch {
+            errorMessage = "Kennzeichnen fehlgeschlagen: \(error.localizedDescription)"
+        }
+    }
+    
 }
 
 private struct InboxRow: View {
@@ -96,13 +178,18 @@ private struct InboxRow: View {
                 Text(message.from)
                     .font(message.isUnread ? .headline : .subheadline)
                 Spacer()
+                if message.isFlagged {
+                    Image(systemName: "flag.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
                 if message.hasAttachments {
                     Image(systemName: "paperclip")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 if let date = message.date {
-                    Text(date, style: .date)
+                    Text(date, format: .dateTime.weekday(.abbreviated).day(.twoDigits).month(.twoDigits).year().hour(.defaultDigits(amPM: .omitted)).minute(.twoDigits))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
