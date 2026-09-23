@@ -30,6 +30,15 @@ struct MessageDetailView: View {
     @State private var folders: [MailFolder] = []
     @State private var isLoadingFolders = false
 
+    // MARK: - Verfassen (v0.1.4)
+    @State private var composeRequest: ComposeRequest?
+
+    /// Kapselt die Art der zu verfassenden Nachricht für das Sheet.
+    private struct ComposeRequest: Identifiable {
+        let id = UUID()
+        let kind: ComposeKind
+    }
+
     init(
         message: CachedMessage,
         accountStore: AccountStore,
@@ -60,6 +69,11 @@ struct MessageDetailView: View {
                     .foregroundStyle(.secondary)
                 if !message.to.isEmpty {
                     Text("An: \(message.to)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                if !message.headers.ccList.isEmpty {
+                    Text("Kopie: \(message.headers.ccList.joined(separator: ", "))")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -108,12 +122,30 @@ struct MessageDetailView: View {
         #endif
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
+                // Tap antwortet direkt, langes Drücken zeigt alle Varianten
+                Menu {
+                    replyButtons
+                } label: {
+                    Image(systemName: "arrowshape.turn.up.left")
+                } primaryAction: {
+                    composeRequest = ComposeRequest(kind: .reply)
+                }
+            }
+            ToolbarItem(placement: .primaryAction) {
                 if isProcessingAction {
                     ProgressView()
                 } else {
                     messageMenu
                 }
             }
+        }
+        .sheet(item: $composeRequest) { request in
+            ComposeView(
+                accountStore: accountStore,
+                kind: request.kind,
+                original: message,
+                onSent: { onChange?() }
+            )
         }
         .quickLookPreview($previewURL)
         .alert("Fehler", isPresented: Binding(
@@ -185,20 +217,7 @@ struct MessageDetailView: View {
         Menu {
             // ── Kommunikation ──
             Section {
-                Button(action: {}) {
-                    Label("Antworten", systemImage: "arrowshape.turn.up.left")
-                }
-                .disabled(true)
-
-                Button(action: {}) {
-                    Label("Allen antworten", systemImage: "arrowshape.turn.up.left.2")
-                }
-                .disabled(true)
-
-                Button(action: {}) {
-                    Label("Weiterleiten", systemImage: "arrowshape.turn.up.right")
-                }
-                .disabled(true)
+                replyButtons
             }
 
             // ── Organisation ──
@@ -288,6 +307,28 @@ struct MessageDetailView: View {
             }
         } label: {
             Image(systemName: "ellipsis.circle")
+        }
+    }
+
+    /// Antworten, Allen antworten und Weiterleiten – im Menü und in der Toolbar.
+    @ViewBuilder
+    private var replyButtons: some View {
+        Button {
+            composeRequest = ComposeRequest(kind: .reply)
+        } label: {
+            Label("Antworten", systemImage: "arrowshape.turn.up.left")
+        }
+
+        Button {
+            composeRequest = ComposeRequest(kind: .replyAll)
+        } label: {
+            Label("Allen antworten", systemImage: "arrowshape.turn.up.left.2")
+        }
+
+        Button {
+            composeRequest = ComposeRequest(kind: .forward)
+        } label: {
+            Label("Weiterleiten", systemImage: "arrowshape.turn.up.right")
         }
     }
 

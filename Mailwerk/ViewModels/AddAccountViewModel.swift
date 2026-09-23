@@ -5,18 +5,13 @@
 //  Created by Kim Sieber on 18.09.26.
 //
 
-
-//
-//  AddAccountViewModel.swift
-//  Mailwerk
-//
-
 import Foundation
 import Observation
 
 @Observable
 final class AddAccountViewModel {
     var displayName = ""
+    var senderName = ""
     var username = ""
     var password = ""
 
@@ -64,6 +59,7 @@ final class AddAccountViewModel {
     func makeAccount() -> MailAccount {
         MailAccount(
             displayName: displayName,
+            senderName: senderName,
             username: username,
             imapHost: imapHost,
             imapPort: Int(imapPort) ?? 993,

@@ -5,28 +5,29 @@
 //  Created by Kim Sieber on 18.09.26.
 //
 
-
-//
-//  AddAccountView.swift
-//  Mailwerk
-//
-
 import SwiftUI
 
 struct AddAccountView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var viewModel = AddAccountViewModel()
+    @State private var saveError: String?
     let accountStore: AccountStore
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Konto") {
-                    TextField("Anzeigename", text: $viewModel.displayName)
+                Section {
+                    TextField("Bezeichnung", text: $viewModel.displayName)
+                    TextField("Absendername", text: $viewModel.senderName)
+                        .textContentType(.name)
                     TextField("Benutzername / E-Mail", text: $viewModel.username)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     SecureField("Passwort", text: $viewModel.password)
+                } header: {
+                    Text("Konto")
+                } footer: {
+                    Text("Die Bezeichnung dient nur zur Anzeige in Mailwerk. Der Absendername erscheint beim Empfänger vor deiner Adresse.")
                 }
 
                 Section("IMAP (Empfang)") {
@@ -73,14 +74,34 @@ struct AddAccountView: View {
                     Button("Abbrechen") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Speichern") {
-                        let account = viewModel.makeAccount()
-                        try? accountStore.addAccount(account, password: viewModel.password)
-                        dismiss()
-                    }
-                    .disabled(!viewModel.isValid)
+                    Button("Speichern") { save() }
+                        .disabled(!viewModel.isValid)
                 }
             }
+            .alert(
+                "Speichern fehlgeschlagen",
+                isPresented: Binding(
+                    get: { saveError != nil },
+                    set: { if !$0 { saveError = nil } }
+                )
+            ) {
+                Button("OK") { saveError = nil }
+            } message: {
+                Text(saveError ?? "")
+            }
+        }
+    }
+
+    // MARK: - Aktionen
+
+    private func save() {
+        let account = viewModel.makeAccount()
+        do {
+            try accountStore.addAccount(account, password: viewModel.password)
+            dismiss()
+        } catch {
+            // Formular bleibt offen, damit keine Eingaben verloren gehen
+            saveError = error.localizedDescription
         }
     }
 }

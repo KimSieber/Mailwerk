@@ -5,17 +5,13 @@
 //  Created by Kim Sieber on 18.09.26.
 //
 
-
-//
-//  MailConnectionTester.swift
-//  Mailwerk
-//
-
 import Foundation
 import SwiftMail
 
 /// Prüft IMAP- und SMTP-Zugangsdaten, ohne dauerhaft verbunden zu bleiben.
 /// Wird für den "Verbindung testen"-Button bei der Postfach-Einrichtung genutzt.
+/// Die Verbindung wird in jedem Fall wieder geschlossen – auch bei Fehlern.
+/// Verbindungen entstehen ausschließlich verschlüsselt über MailServerFactory.
 enum MailConnectionTester {
 
     enum TestError: LocalizedError {
@@ -33,24 +29,28 @@ enum MailConnectionTester {
     }
 
     static func testIMAP(host: String, port: Int, username: String, password: String) async throws {
-        let server = IMAPServer(host: host, port: port)
+        let server = MailServerFactory.imapServer(host: host, port: port)
         do {
             try await server.connect()
             try await server.login(username: username, password: password)
             _ = try await server.selectMailbox("INBOX")
             try await server.logout()
         } catch {
+            // Verbindung nicht offen lassen (z. B. nach fehlgeschlagenem Login)
+            try? await server.disconnect()
             throw TestError.imapFailed(error.localizedDescription)
         }
     }
 
     static func testSMTP(host: String, port: Int, username: String, password: String) async throws {
-        let server = SMTPServer(host: host, port: port)
+        let server = MailServerFactory.smtpServer(host: host, port: port)
         do {
             try await server.connect()
             try await server.login(username: username, password: password)
             try await server.disconnect()
         } catch {
+            // Verbindung nicht offen lassen (z. B. nach fehlgeschlagenem Login)
+            try? await server.disconnect()
             throw TestError.smtpFailed(error.localizedDescription)
         }
     }

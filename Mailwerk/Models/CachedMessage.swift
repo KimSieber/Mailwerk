@@ -5,13 +5,24 @@
 //  Created by Kim Sieber on 18.09.26.
 //
 
-
-//
-//  CachedMessage.swift
-//  Mailwerk
-//
-
 import Foundation
+
+/// Adress- und Threading-Header einer Nachricht.
+/// Grundlage für Antworten, Allen antworten und Weiterleiten.
+struct CachedMessageHeaders: Equatable {
+    /// Empfänger (To) – je Eintrag eine formatierte Adresse, z. B. "Kim Sieber <kim@example.org>"
+    var toList: [String] = []
+    /// Kopie-Empfänger (Cc)
+    var ccList: [String] = []
+    /// Abweichende Antwortadresse(n) (Reply-To)
+    var replyToList: [String] = []
+    /// Message-ID inkl. spitzer Klammern, z. B. "<abc@example.org>"
+    var rfcMessageID: String?
+    /// Message-ID der Nachricht, auf die diese antwortet
+    var rfcInReplyTo: String?
+    /// References-Kette, durch Leerzeichen getrennt
+    var rfcReferences: String?
+}
 
 /// Lokal zwischengespeicherte Nachricht inkl. Body.
 /// Anhänge werden separat in CachedAttachment gehalten.
@@ -22,15 +33,18 @@ struct CachedMessage: Identifiable {
     let uid: UInt32
     let subject: String
     let from: String
-    let to: String
+    let to: String              // Anzeige-String; für Logik headers.toList verwenden
     let date: Date?
     var isUnread: Bool
     var isFlagged: Bool
+    var isAnswered: Bool        // IMAP \Answered
+    var isForwarded: Bool       // IMAP-Keyword $Forwarded
     let totalSizeBytes: Int     // RFC822.SIZE – entscheidet, ob Anhänge automatisch geladen werden
     let hasAttachments: Bool    // true wenn die Mail mindestens einen Anhang hat
     let textBody: String?
     let htmlBody: String?
     let fetchedAt: Date
+    let headers: CachedMessageHeaders
 }
 
 /// Ein einzelner gecachter Anhang, referenziert über die messageID.

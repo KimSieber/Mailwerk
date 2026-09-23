@@ -5,38 +5,61 @@
 //  Created by Kim Sieber on 18.09.26.
 //
 
-
-//
-//  MessageStore.swift
-//  Mailwerk
-//
-
 import Foundation
 import SQLite3
+
+/// SQLite soll übergebene Texte/Blobs selbst kopieren (SQLITE_TRANSIENT = -1).
+/// Das C-Makro ist in Swift nicht verfügbar, daher hier nachgebildet.
+private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 /// Lokale SQLite-Ablage für Nachrichten und Anhänge.
 /// Nutzt das auf jeder Apple-Plattform mitgelieferte System-SQLite.
 /// Dient später auch als Basis für den FTS5-Volltextindex (Stufe 2).
+///
+/// Schema-Prinzip: `createTablesIfNeeded()` legt nur das Basisschema (v0.1.0) an,
+/// alle späteren Spalten kommen ausschließlich über `migrateIfNeeded()`.
+/// Damit ist die Struktur auf Neu- und Bestandsinstallationen identisch.
 final class MessageStore: @unchecked Sendable {
     static let shared = MessageStore()
+
+    /// Version der gespeicherten Adress-/Threading-Header. Nachrichten mit
+    /// kleinerer Version werden beim nächsten Refresh nachgefüllt.
+    static let currentHeadersVersion = 1
+
+    /// Explizite Spaltenliste – Reihenfolge entspricht den Indizes in readMessage().
+    private static let messageColumns = """
+        id, accountID, accountDisplayName, uid, subject, "from", "to", date, \
+        isUnread, isFlagged, isAnswered, isForwarded, totalSizeBytes, hasAttachments, \
+        textBody, htmlBody, fetchedAt, \
+        toJSON, ccJSON, replyToJSON, rfcMessageID, rfcInReplyTo, rfcReferences
+        """
+
+    private static let attachmentColumns =
+        "id, messageID, filename, contentType, sizeBytes, data"
 
     private var db: OpaquePointer?
 
     private init() {
+        let folder: URL
         do {
-            let folder = try FileManager.default.url(
+            folder = try FileManager.default.url(
                 for: .applicationSupportDirectory, in: .userDomainMask,
                 appropriateFor: nil, create: true
             )
-            let path = folder.appendingPathComponent("Mailwerk.sqlite").path
-            guard sqlite3_open(path, &db) == SQLITE_OK else {
-                fatalError("SQLite öffnen fehlgeschlagen: \(errMsg)")
-            }
-            createTablesIfNeeded()
-            migrateIfNeeded()
         } catch {
             fatalError("App-Support-Verzeichnis nicht verfügbar: \(error)")
         }
+        let path = folder.appendingPathComponent("Mailwerk.sqlite").path
+
+        // FULLMUTEX: Verbindung wird aus mehreren async-Kontexten genutzt –
+        // SQLite serialisiert die Zugriffe intern.
+        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+        guard sqlite3_open_v2(path, &db, flags, nil) == SQLITE_OK else {
+            fatalError("SQLite öffnen fehlgeschlagen: \(errMsg)")
+        }
+        exec("PRAGMA foreign_keys = ON")
+        createTablesIfNeeded()
+        migrateIfNeeded()
     }
 
     deinit { sqlite3_close(db) }
@@ -48,6 +71,7 @@ final class MessageStore: @unchecked Sendable {
     // MARK: - Schema
 
     private func createTablesIfNeeded() {
+        // Basisschema v0.1.0 – Erweiterungen nur über migrateIfNeeded()
         exec("""
             CREATE TABLE IF NOT EXISTS message (
                 id TEXT PRIMARY KEY,
@@ -59,13 +83,10 @@ final class MessageStore: @unchecked Sendable {
                 "to" TEXT NOT NULL,
                 date REAL,
                 isUnread INTEGER NOT NULL,
-                isFlagged INTEGER NOT NULL DEFAULT 0,
                 totalSizeBytes INTEGER NOT NULL,
                 textBody TEXT,
                 htmlBody TEXT,
-                fetchedAt REAL NOT NULL,
-                hasAttachments INTEGER NOT NULL DEFAULT 0,
-                isFlagged INTEGER NOT NULL DEFAULT 0
+                fetchedAt REAL NOT NULL
             )
             """)
         exec("""
@@ -79,31 +100,43 @@ final class MessageStore: @unchecked Sendable {
                 FOREIGN KEY (messageID) REFERENCES message(id) ON DELETE CASCADE
             )
             """)
-        exec("PRAGMA foreign_keys = ON")
     }
 
     // MARK: - Migration
 
-    /// Fügt neue Spalten hinzu, falls die DB aus v0.1.0 stammt.
-    /// Prüft vorher per PRAGMA table_info, ob die Spalte schon existiert.
     private func migrateIfNeeded() {
-        // v0.1.1: hasAttachments-Spalte
-        if !columnExists("hasAttachments", in: "message") {
-            exec("ALTER TABLE message ADD COLUMN hasAttachments INTEGER NOT NULL DEFAULT 0")
-
-            // Backfill: bestehende Nachrichten anhand der Attachment-Tabelle aktualisieren
+        // v0.1.1: hasAttachments
+        if addColumnIfMissing("hasAttachments", "INTEGER NOT NULL DEFAULT 0") {
+            // Backfill anhand der Attachment-Tabelle
             exec("""
                 UPDATE message SET hasAttachments = 1
                 WHERE id IN (SELECT DISTINCT messageID FROM attachment)
                 """)
         }
 
-        // v0.1.2: isFlagged-Spalte
-        if !columnExists("isFlagged", in: "message") {
-            exec("ALTER TABLE message ADD COLUMN isFlagged INTEGER NOT NULL DEFAULT 0")
-        }
+        // v0.1.2: isFlagged
+        addColumnIfMissing("isFlagged", "INTEGER NOT NULL DEFAULT 0")
+
+        // v0.1.4: Beantwortet-/Weitergeleitet-Status, Adresslisten, Threading-Header
+        addColumnIfMissing("isAnswered", "INTEGER NOT NULL DEFAULT 0")
+        addColumnIfMissing("isForwarded", "INTEGER NOT NULL DEFAULT 0")
+        addColumnIfMissing("toJSON", "TEXT")
+        addColumnIfMissing("ccJSON", "TEXT")
+        addColumnIfMissing("replyToJSON", "TEXT")
+        addColumnIfMissing("rfcMessageID", "TEXT")
+        addColumnIfMissing("rfcInReplyTo", "TEXT")
+        addColumnIfMissing("rfcReferences", "TEXT")
+        addColumnIfMissing("headersVersion", "INTEGER NOT NULL DEFAULT 0")
     }
-    
+
+    /// Fügt eine Spalte zur message-Tabelle hinzu, falls sie fehlt.
+    /// - Returns: `true`, wenn die Spalte neu angelegt wurde.
+    @discardableResult
+    private func addColumnIfMissing(_ column: String, _ definition: String) -> Bool {
+        guard !columnExists(column, in: "message") else { return false }
+        return exec("ALTER TABLE message ADD COLUMN \(column) \(definition)")
+    }
+
     private func columnExists(_ column: String, in table: String) -> Bool {
         guard let stmt = prepare("PRAGMA table_info(\(table))") else { return false }
         defer { sqlite3_finalize(stmt) }
@@ -123,18 +156,25 @@ final class MessageStore: @unchecked Sendable {
     func saveMessage(_ m: CachedMessage) {
         let sql = """
             INSERT INTO message
-            (id, accountID, accountDisplayName, uid, subject,
-             "from", "to", date, isUnread, isFlagged, totalSizeBytes,
-             textBody, htmlBody, fetchedAt, hasAttachments)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            (\(Self.messageColumns), headersVersion)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 isUnread = excluded.isUnread,
                 isFlagged = excluded.isFlagged,
+                isAnswered = excluded.isAnswered,
+                isForwarded = excluded.isForwarded,
                 totalSizeBytes = excluded.totalSizeBytes,
+                hasAttachments = excluded.hasAttachments,
                 textBody = excluded.textBody,
                 htmlBody = excluded.htmlBody,
                 fetchedAt = excluded.fetchedAt,
-                hasAttachments = excluded.hasAttachments
+                toJSON = excluded.toJSON,
+                ccJSON = excluded.ccJSON,
+                replyToJSON = excluded.replyToJSON,
+                rfcMessageID = excluded.rfcMessageID,
+                rfcInReplyTo = excluded.rfcInReplyTo,
+                rfcReferences = excluded.rfcReferences,
+                headersVersion = excluded.headersVersion
             """
         guard let stmt = prepare(sql) else { return }
         defer { sqlite3_finalize(stmt) }
@@ -142,7 +182,7 @@ final class MessageStore: @unchecked Sendable {
         bind(stmt, 1, m.id)
         bind(stmt, 2, m.accountID.uuidString)
         bind(stmt, 3, m.accountDisplayName)
-        sqlite3_bind_int(stmt, 4, Int32(m.uid))
+        sqlite3_bind_int64(stmt, 4, Int64(m.uid))
         bind(stmt, 5, m.subject)
         bind(stmt, 6, m.from)
         bind(stmt, 7, m.to)
@@ -150,41 +190,103 @@ final class MessageStore: @unchecked Sendable {
         else { sqlite3_bind_null(stmt, 8) }
         sqlite3_bind_int(stmt, 9, m.isUnread ? 1 : 0)
         sqlite3_bind_int(stmt, 10, m.isFlagged ? 1 : 0)
-        sqlite3_bind_int(stmt, 11, Int32(m.totalSizeBytes))
-        bind(stmt, 12, m.textBody)
-        bind(stmt, 13, m.htmlBody)
-        sqlite3_bind_double(stmt, 14, m.fetchedAt.timeIntervalSince1970)
-        sqlite3_bind_int(stmt, 15, m.hasAttachments ? 1 : 0)
+        sqlite3_bind_int(stmt, 11, m.isAnswered ? 1 : 0)
+        sqlite3_bind_int(stmt, 12, m.isForwarded ? 1 : 0)
+        sqlite3_bind_int64(stmt, 13, Int64(m.totalSizeBytes))
+        sqlite3_bind_int(stmt, 14, m.hasAttachments ? 1 : 0)
+        bind(stmt, 15, m.textBody)
+        bind(stmt, 16, m.htmlBody)
+        sqlite3_bind_double(stmt, 17, m.fetchedAt.timeIntervalSince1970)
+        bindHeaders(stmt, startingAt: 18, m.headers)          // 18–23
+        sqlite3_bind_int(stmt, 24, Int32(Self.currentHeadersVersion))
 
         sqlite3_step(stmt)
     }
-    
 
-    /// Aktualisiert nur den Gelesen-Status einer bereits gecachten Nachricht.
-    /// Leichtgewichtig, ohne Risiko für Cascade-Deletes.
-    func updateFlags(messageID: String, isUnread: Bool) {
-        let sql = "UPDATE message SET isUnread = ? WHERE id = ?"
-        guard let stmt = prepare(sql) else { return }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_int(stmt, 1, isUnread ? 1 : 0)
-        bind(stmt, 2, messageID)
-        sqlite3_step(stmt)
-    }
-
-    /// Aktualisiert nur die Kennzeichnung (\Flagged) einer bereits gecachten Nachricht.
-    func updateFlagged(messageID: String, isFlagged: Bool) {
-        let sql = "UPDATE message SET isFlagged = ? WHERE id = ?"
-        guard let stmt = prepare(sql) else { return }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_int(stmt, 1, isFlagged ? 1 : 0)
-        bind(stmt, 2, messageID)
-        sqlite3_step(stmt)
-    }
-    
     func saveMessages(_ messages: [CachedMessage]) {
         exec("BEGIN TRANSACTION")
         for m in messages { saveMessage(m) }
         exec("COMMIT")
+    }
+
+    // MARK: - Flags aktualisieren
+
+    /// Aktualisiert nur den Gelesen-Status einer bereits gecachten Nachricht.
+    /// Leichtgewichtig, ohne Risiko für Cascade-Deletes.
+    func updateFlags(messageID: String, isUnread: Bool) {
+        updateIntColumn("isUnread", value: isUnread, messageID: messageID)
+    }
+
+    /// Aktualisiert nur die Kennzeichnung (\Flagged) einer bereits gecachten Nachricht.
+    func updateFlagged(messageID: String, isFlagged: Bool) {
+        updateIntColumn("isFlagged", value: isFlagged, messageID: messageID)
+    }
+
+    /// Aktualisiert nur den Beantwortet-Status (\Answered) einer bereits gecachten Nachricht.
+    func updateAnswered(messageID: String, isAnswered: Bool) {
+        updateIntColumn("isAnswered", value: isAnswered, messageID: messageID)
+    }
+
+    /// Aktualisiert nur den Weitergeleitet-Status ($Forwarded) einer bereits gecachten Nachricht.
+    func updateForwarded(messageID: String, isForwarded: Bool) {
+        updateIntColumn("isForwarded", value: isForwarded, messageID: messageID)
+    }
+
+    /// Übernimmt alle Server-Flags in einem Statement (für den Refresh).
+    func updateServerFlags(
+        messageID: String,
+        isUnread: Bool,
+        isFlagged: Bool,
+        isAnswered: Bool,
+        isForwarded: Bool
+    ) {
+        let sql = """
+            UPDATE message
+            SET isUnread = ?, isFlagged = ?, isAnswered = ?, isForwarded = ?
+            WHERE id = ?
+            """
+        guard let stmt = prepare(sql) else { return }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int(stmt, 1, isUnread ? 1 : 0)
+        sqlite3_bind_int(stmt, 2, isFlagged ? 1 : 0)
+        sqlite3_bind_int(stmt, 3, isAnswered ? 1 : 0)
+        sqlite3_bind_int(stmt, 4, isForwarded ? 1 : 0)
+        bind(stmt, 5, messageID)
+        sqlite3_step(stmt)
+    }
+
+    // MARK: - Header nachfüllen
+
+    /// IDs der Nachrichten eines Kontos, deren Header noch nicht dem
+    /// aktuellen Stand (`currentHeadersVersion`) entsprechen.
+    func messageIDsNeedingHeaders(forAccount accountID: UUID) -> Set<String> {
+        let sql = "SELECT id FROM message WHERE accountID = ? AND headersVersion < ?"
+        guard let stmt = prepare(sql) else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, accountID.uuidString)
+        sqlite3_bind_int(stmt, 2, Int32(Self.currentHeadersVersion))
+        var ids = Set<String>()
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            ids.insert(str(stmt, 0))
+        }
+        return ids
+    }
+
+    /// Schreibt Adress-/Threading-Header und setzt die Header-Version.
+    func updateHeaders(messageID: String, headers: CachedMessageHeaders) {
+        let sql = """
+            UPDATE message SET
+                toJSON = ?, ccJSON = ?, replyToJSON = ?,
+                rfcMessageID = ?, rfcInReplyTo = ?, rfcReferences = ?,
+                headersVersion = ?
+            WHERE id = ?
+            """
+        guard let stmt = prepare(sql) else { return }
+        defer { sqlite3_finalize(stmt) }
+        bindHeaders(stmt, startingAt: 1, headers)             // 1–6
+        sqlite3_bind_int(stmt, 7, Int32(Self.currentHeadersVersion))
+        bind(stmt, 8, messageID)
+        sqlite3_step(stmt)
     }
 
     // MARK: - Anhänge speichern
@@ -192,7 +294,7 @@ final class MessageStore: @unchecked Sendable {
     func saveAttachment(_ a: CachedAttachment) {
         let sql = """
             INSERT INTO attachment
-            (id, messageID, filename, contentType, sizeBytes, data)
+            (\(Self.attachmentColumns))
             VALUES (?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 filename = excluded.filename,
@@ -207,10 +309,10 @@ final class MessageStore: @unchecked Sendable {
         bind(stmt, 2, a.messageID)
         bind(stmt, 3, a.filename)
         bind(stmt, 4, a.contentType)
-        sqlite3_bind_int(stmt, 5, Int32(a.sizeBytes))
+        sqlite3_bind_int64(stmt, 5, Int64(a.sizeBytes))
         if let data = a.data {
             _ = data.withUnsafeBytes { ptr in
-                sqlite3_bind_blob(stmt, 6, ptr.baseAddress, Int32(data.count), nil)
+                sqlite3_bind_blob(stmt, 6, ptr.baseAddress, Int32(data.count), SQLITE_TRANSIENT)
             }
         } else {
             sqlite3_bind_null(stmt, 6)
@@ -234,7 +336,8 @@ final class MessageStore: @unchecked Sendable {
     // MARK: - Lesen
 
     func message(id: String) -> CachedMessage? {
-        guard let stmt = prepare("SELECT * FROM message WHERE id = ? LIMIT 1") else { return nil }
+        let sql = "SELECT \(Self.messageColumns) FROM message WHERE id = ? LIMIT 1"
+        guard let stmt = prepare(sql) else { return nil }
         defer { sqlite3_finalize(stmt) }
         bind(stmt, 1, id)
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
@@ -244,7 +347,10 @@ final class MessageStore: @unchecked Sendable {
     func allMessages(accountIDs: [UUID]) -> [CachedMessage] {
         guard !accountIDs.isEmpty else { return [] }
         let ph = accountIDs.map { _ in "?" }.joined(separator: ",")
-        let sql = "SELECT * FROM message WHERE accountID IN (\(ph)) ORDER BY date DESC"
+        let sql = """
+            SELECT \(Self.messageColumns) FROM message
+            WHERE accountID IN (\(ph)) ORDER BY date DESC
+            """
         guard let stmt = prepare(sql) else { return [] }
         defer { sqlite3_finalize(stmt) }
         for (i, id) in accountIDs.enumerated() {
@@ -269,7 +375,8 @@ final class MessageStore: @unchecked Sendable {
     }
 
     func attachments(forMessage messageID: String) -> [CachedAttachment] {
-        guard let stmt = prepare("SELECT * FROM attachment WHERE messageID = ?") else { return [] }
+        let sql = "SELECT \(Self.attachmentColumns) FROM attachment WHERE messageID = ?"
+        guard let stmt = prepare(sql) else { return [] }
         defer { sqlite3_finalize(stmt) }
         bind(stmt, 1, messageID)
         var result: [CachedAttachment] = []
@@ -300,31 +407,44 @@ final class MessageStore: @unchecked Sendable {
         bind(stmt, 1, id)
         sqlite3_step(stmt)
     }
-    
+
     // MARK: - Interne Helfer
 
+    /// Liest eine Zeile gemäß `messageColumns` (Indizes 0–22).
     private func readMessage(_ s: OpaquePointer?) -> CachedMessage {
         let dateVal = sqlite3_column_type(s, 7) != SQLITE_NULL
             ? sqlite3_column_double(s, 7) : nil
+        let headers = CachedMessageHeaders(
+            toList: decodeList(optStr(s, 17)),
+            ccList: decodeList(optStr(s, 18)),
+            replyToList: decodeList(optStr(s, 19)),
+            rfcMessageID: optStr(s, 20),
+            rfcInReplyTo: optStr(s, 21),
+            rfcReferences: optStr(s, 22)
+        )
         return CachedMessage(
             id: str(s, 0),
             accountID: UUID(uuidString: str(s, 1)) ?? UUID(),
             accountDisplayName: str(s, 2),
-            uid: UInt32(sqlite3_column_int(s, 3)),
+            uid: UInt32(truncatingIfNeeded: sqlite3_column_int64(s, 3)),
             subject: str(s, 4),
             from: str(s, 5),
             to: str(s, 6),
             date: dateVal.map { Date(timeIntervalSince1970: $0) },
             isUnread: sqlite3_column_int(s, 8) != 0,
-            isFlagged: sqlite3_column_int(s, 14) != 0,
-            totalSizeBytes: Int(sqlite3_column_int(s, 9)),
+            isFlagged: sqlite3_column_int(s, 9) != 0,
+            isAnswered: sqlite3_column_int(s, 10) != 0,
+            isForwarded: sqlite3_column_int(s, 11) != 0,
+            totalSizeBytes: Int(sqlite3_column_int64(s, 12)),
             hasAttachments: sqlite3_column_int(s, 13) != 0,
-            textBody: optStr(s, 10),
-            htmlBody: optStr(s, 11),
-            fetchedAt: Date(timeIntervalSince1970: sqlite3_column_double(s, 12))
+            textBody: optStr(s, 14),
+            htmlBody: optStr(s, 15),
+            fetchedAt: Date(timeIntervalSince1970: sqlite3_column_double(s, 16)),
+            headers: headers
         )
     }
-    
+
+    /// Liest eine Zeile gemäß `attachmentColumns` (Indizes 0–5).
     private func readAttachment(_ s: OpaquePointer?) -> CachedAttachment {
         var data: Data?
         if sqlite3_column_type(s, 5) != SQLITE_NULL,
@@ -337,9 +457,42 @@ final class MessageStore: @unchecked Sendable {
             messageID: str(s, 1),
             filename: str(s, 2),
             contentType: str(s, 3),
-            sizeBytes: Int(sqlite3_column_int(s, 4)),
+            sizeBytes: Int(sqlite3_column_int64(s, 4)),
             data: data
         )
+    }
+
+    /// Bindet die sechs Header-Felder ab `startingAt` in der Reihenfolge:
+    /// toJSON, ccJSON, replyToJSON, rfcMessageID, rfcInReplyTo, rfcReferences.
+    private func bindHeaders(_ s: OpaquePointer?, startingAt i: Int32, _ h: CachedMessageHeaders) {
+        bind(s, i,     encodeList(h.toList))
+        bind(s, i + 1, encodeList(h.ccList))
+        bind(s, i + 2, encodeList(h.replyToList))
+        bind(s, i + 3, h.rfcMessageID)
+        bind(s, i + 4, h.rfcInReplyTo)
+        bind(s, i + 5, h.rfcReferences)
+    }
+
+    private func updateIntColumn(_ column: String, value: Bool, messageID: String) {
+        let sql = "UPDATE message SET \(column) = ? WHERE id = ?"
+        guard let stmt = prepare(sql) else { return }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int(stmt, 1, value ? 1 : 0)
+        bind(stmt, 2, messageID)
+        sqlite3_step(stmt)
+    }
+
+    private func encodeList(_ list: [String]) -> String? {
+        guard !list.isEmpty,
+              let data = try? JSONEncoder().encode(list) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func decodeList(_ json: String?) -> [String] {
+        guard let json,
+              let data = json.data(using: .utf8),
+              let list = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return list
     }
 
     private func str(_ s: OpaquePointer?, _ col: Int32) -> String {
@@ -354,17 +507,23 @@ final class MessageStore: @unchecked Sendable {
     }
 
     private func bind(_ s: OpaquePointer?, _ i: Int32, _ v: String?) {
-        if let v { sqlite3_bind_text(s, i, (v as NSString).utf8String, -1, nil) }
+        if let v { sqlite3_bind_text(s, i, v, -1, SQLITE_TRANSIENT) }
         else { sqlite3_bind_null(s, i) }
     }
 
     private func prepare(_ sql: String) -> OpaquePointer? {
         var stmt: OpaquePointer?
-        return sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK ? stmt : nil
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            print("🗄️ SQL-Fehler: \(errMsg) – \(sql.prefix(80))")
+            return nil
+        }
+        return stmt
     }
 
     @discardableResult
     private func exec(_ sql: String) -> Bool {
-        sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK
+        let ok = sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK
+        if !ok { print("🗄️ SQL-Fehler: \(errMsg) – \(sql.prefix(80))") }
+        return ok
     }
 }

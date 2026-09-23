@@ -69,7 +69,7 @@ enum AttachmentManager {
             throw AttachmentError.noPassword
         }
 
-        let server = IMAPServer(host: account.imapHost, port: account.imapPort)
+        let server = MailServerFactory.imapServer(for: account)
         do {
             try await server.connect()
             try await server.login(username: account.username, password: password)

@@ -5,12 +5,6 @@
 //  Created by Kim Sieber on 20.09.26.
 //
 
-
-//
-//  EditAccountView.swift
-//  Mailwerk
-//
-
 import SwiftUI
 
 struct EditAccountView: View {
@@ -20,6 +14,7 @@ struct EditAccountView: View {
 
     // Formularfelder, vorbelegt mit den aktuellen Werten
     @State private var displayName: String
+    @State private var senderName: String
     @State private var username: String
     @State private var password: String = ""  // leer = nicht ändern
     @State private var imapHost: String
@@ -27,6 +22,7 @@ struct EditAccountView: View {
     @State private var smtpHost: String
     @State private var smtpPort: String
     @State private var selectedColor: AccountColor?
+    @State private var saveError: String?
 
     // Verbindungstest
     @State private var isTesting = false
@@ -41,6 +37,7 @@ struct EditAccountView: View {
         self.accountStore = accountStore
         self.account = account
         _displayName = State(initialValue: account.displayName)
+        _senderName = State(initialValue: account.senderName ?? "")
         _username = State(initialValue: account.username)
         _imapHost = State(initialValue: account.imapHost)
         _imapPort = State(initialValue: String(account.imapPort))
@@ -58,12 +55,18 @@ struct EditAccountView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Konto") {
-                    TextField("Anzeigename", text: $displayName)
+                Section {
+                    TextField("Bezeichnung", text: $displayName)
+                    TextField("Absendername", text: $senderName)
+                        .textContentType(.name)
                     TextField("Benutzername / E-Mail", text: $username)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     SecureField("Neues Passwort (leer = unverändert)", text: $password)
+                } header: {
+                    Text("Konto")
+                } footer: {
+                    Text("Die Bezeichnung dient nur zur Anzeige in Mailwerk. Der Absendername erscheint beim Empfänger vor deiner Adresse.")
                 }
 
                 Section("IMAP (Empfang)") {
@@ -122,6 +125,17 @@ struct EditAccountView: View {
                         .disabled(!isValid)
                 }
             }
+            .alert(
+                "Speichern fehlgeschlagen",
+                isPresented: Binding(
+                    get: { saveError != nil },
+                    set: { if !$0 { saveError = nil } }
+                )
+            ) {
+                Button("OK") { saveError = nil }
+            } message: {
+                Text(saveError ?? "")
+            }
         }
     }
 
@@ -130,6 +144,7 @@ struct EditAccountView: View {
     private func save() {
         var updated = account
         updated.displayName = displayName
+        updated.senderName = MailAccount.normalized(senderName)
         updated.username = username
         updated.imapHost = imapHost
         updated.imapPort = Int(imapPort) ?? 993
@@ -137,11 +152,16 @@ struct EditAccountView: View {
         updated.smtpPort = Int(smtpPort) ?? 587
         updated.colorHex = selectedColor?.rawValue
 
-        try? accountStore.updateAccount(
-            updated,
-            newPassword: password.isEmpty ? nil : password
-        )
-        dismiss()
+        do {
+            try accountStore.updateAccount(
+                updated,
+                newPassword: password.isEmpty ? nil : password
+            )
+            dismiss()
+        } catch {
+            // Formular bleibt offen, damit keine Eingaben verloren gehen
+            saveError = error.localizedDescription
+        }
     }
 
     @MainActor

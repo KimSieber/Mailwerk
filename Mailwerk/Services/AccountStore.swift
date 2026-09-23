@@ -2,16 +2,29 @@
 //  AccountStore.swift
 //  Mailwerk
 //
+//  Verwaltet die Postfach-Konfigurationen (iCloud Key-Value-Store) und das
+//  Standard-Postfach für neue Mails. Passwörter liegen im Keychain.
+//
 
 import Foundation
 import Observation
 
 @Observable
 final class AccountStore {
-    private static let key = "mailwerk.accounts"
+    private static let accountsKey = "mailwerk.accounts"
+    private static let defaultAccountKey = "mailwerk.defaultAccountID"
     private let store = NSUbiquitousKeyValueStore.default
 
     private(set) var accounts: [MailAccount] = []
+
+    /// ID des Standard-Postfachs für neue Mails. `nil` = kein Standard definiert.
+    private(set) var defaultAccountID: UUID?
+
+    /// Das Standard-Postfach, sofern definiert und noch vorhanden.
+    var defaultAccount: MailAccount? {
+        guard let defaultAccountID else { return nil }
+        return accounts.first { $0.id == defaultAccountID }
+    }
 
     init() {
         load()
@@ -24,16 +37,23 @@ final class AccountStore {
         store.synchronize()
     }
 
+    // MARK: - Postfächer
+
     func addAccount(_ account: MailAccount, password: String) throws {
         try KeychainService.savePassword(password, for: account.id)
         accounts.append(account)
-        save()
+        saveAccounts()
     }
 
     func removeAccount(_ account: MailAccount) throws {
         try KeychainService.deletePassword(for: account.id)
         accounts.removeAll { $0.id == account.id }
-        save()
+        saveAccounts()
+
+        // Gelöschtes Standard-Postfach → Standard zurücksetzen
+        if defaultAccountID == account.id {
+            setDefaultAccount(nil)
+        }
     }
 
     func updateAccount(_ updated: MailAccount, newPassword: String?) throws {
@@ -44,28 +64,61 @@ final class AccountStore {
             try KeychainService.savePassword(newPassword, for: updated.id)
         }
         accounts[index] = updated
-        save()
+        saveAccounts()
     }
-    
+
     func password(for account: MailAccount) throws -> String? {
         try KeychainService.readPassword(for: account.id)
     }
 
+    // MARK: - Standard-Postfach
+
+    /// Setzt das Standard-Postfach. `nil` entfernt die Einstellung.
+    /// Unbekannte IDs werden ignoriert.
+    func setDefaultAccount(_ id: UUID?) {
+        if let id, !accounts.contains(where: { $0.id == id }) {
+            return
+        }
+        defaultAccountID = id
+        if let id {
+            store.set(id.uuidString, forKey: Self.defaultAccountKey)
+        } else {
+            store.removeObject(forKey: Self.defaultAccountKey)
+        }
+        store.synchronize()
+    }
+
+    // MARK: - Persistenz
+
     @objc private func externalChange(_ notification: Notification) {
-        load()
+        // Die Notification kommt auf einem Hintergrund-Thread an –
+        // Observable-State wird ausschließlich auf dem Main-Thread geändert.
+        DispatchQueue.main.async { [weak self] in
+            self?.load()
+        }
     }
 
     private func load() {
-        guard let data = store.data(forKey: Self.key),
-              let decoded = try? JSONDecoder().decode([MailAccount].self, from: data) else {
-            return
+        if let data = store.data(forKey: Self.accountsKey),
+           let decoded = try? JSONDecoder().decode([MailAccount].self, from: data) {
+            accounts = decoded
         }
-        accounts = decoded
+
+        // Standard-Postfach nur übernehmen, wenn es (schon) existiert.
+        // Der gespeicherte Wert bleibt unangetastet: Kommen die Konten per
+        // iCloud später an, greift er beim nächsten load() wieder.
+        if let raw = store.string(forKey: Self.defaultAccountKey),
+           let id = UUID(uuidString: raw),
+           accounts.contains(where: { $0.id == id }) {
+            defaultAccountID = id
+        } else {
+            defaultAccountID = nil
+        }
     }
 
-    private func save() {
+    private func saveAccounts() {
         guard let data = try? JSONEncoder().encode(accounts) else { return }
-        store.set(data, forKey: Self.key)
+        store.set(data, forKey: Self.accountsKey)
         store.synchronize()
     }
 }

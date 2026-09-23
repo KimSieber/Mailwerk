@@ -9,10 +9,11 @@ struct InboxView: View {
     let accountStore: AccountStore
     @State private var viewModel: InboxViewModel
     @State private var showingAccounts = false
+    @State private var showingCompose = false
     @State private var hasLoadedOnce = false
     @State private var errorMessage: String?
     @State private var processingMessageIDs: Set<String> = []
-    
+
     init(accountStore: AccountStore) {
         self.accountStore = accountStore
         _viewModel = State(initialValue: InboxViewModel(accountStore: accountStore))
@@ -90,6 +91,14 @@ struct InboxView: View {
                 }
                 ToolbarItem {
                     Button {
+                        showingCompose = true
+                    } label: {
+                        Label("Neue Nachricht", systemImage: "square.and.pencil")
+                    }
+                    .disabled(accountStore.accounts.isEmpty)
+                }
+                ToolbarItem {
+                    Button {
                         showingAccounts = true
                     } label: {
                         Label("Postfächer", systemImage: "gearshape")
@@ -105,6 +114,13 @@ struct InboxView: View {
             .sheet(isPresented: $showingAccounts) {
                 AccountListView(accountStore: accountStore)
             }
+            .sheet(isPresented: $showingCompose) {
+                ComposeView(
+                    accountStore: accountStore,
+                    kind: .new,
+                    onSent: { viewModel.loadFromCache() }
+                )
+            }
             .alert(
                 "Fehler beim Abrufen",
                 isPresented: Binding(
@@ -117,20 +133,21 @@ struct InboxView: View {
                 Text(viewModel.errorMessage ?? "")
             }
             .alert(
-                 "Aktion fehlgeschlagen",
-                 isPresented: Binding(
-                     get: { errorMessage != nil },
-                     set: { if !$0 { errorMessage = nil } }
-                 )
-             ) {
-                 Button("OK") { errorMessage = nil }
-             } message: {
-                 Text(errorMessage ?? "")
-             }
+                "Aktion fehlgeschlagen",
+                isPresented: Binding(
+                    get: { errorMessage != nil },
+                    set: { if !$0 { errorMessage = nil } }
+                )
+            ) {
+                Button("OK") { errorMessage = nil }
+            } message: {
+                Text(errorMessage ?? "")
+            }
         }
     }
-    
+
     // MARK: - Swipe-Aktionen
+
     @MainActor
     private func toggleRead(_ message: CachedMessage) async {
         processingMessageIDs.insert(message.id)
@@ -170,7 +187,6 @@ struct InboxView: View {
             errorMessage = "Kennzeichnen fehlgeschlagen: \(error.localizedDescription)"
         }
     }
-    
 }
 
 private struct InboxRow: View {
@@ -191,6 +207,18 @@ private struct InboxRow: View {
                         .font(message.isUnread ? .headline : .subheadline)
                         .lineLimit(1)
                     Spacer()
+                    if message.isAnswered {
+                        Image(systemName: "arrowshape.turn.up.left.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Beantwortet")
+                    }
+                    if message.isForwarded {
+                        Image(systemName: "arrowshape.turn.up.right.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Weitergeleitet")
+                    }
                     if message.isFlagged {
                         Image(systemName: "flag.fill")
                             .font(.caption2)

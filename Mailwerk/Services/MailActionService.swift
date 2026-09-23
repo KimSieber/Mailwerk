@@ -166,8 +166,8 @@ enum MailActionService {
 
     // MARK: - Interne Helfer
 
-    /// Baut eine IMAP-Verbindung auf, führt die übergebene Operation aus
-    /// und räumt die Verbindung anschließend sauber auf.
+    /// Baut eine (verschlüsselte) IMAP-Verbindung auf, führt die übergebene
+    /// Operation aus und räumt die Verbindung anschließend sauber auf.
     private static func withIMAPConnection<T>(
         accountID: UUID,
         accountStore: AccountStore,
@@ -176,9 +176,7 @@ enum MailActionService {
         let (account, password) = try resolveCredentials(
             accountID: accountID, accountStore: accountStore
         )
-        let server = SwiftMail.IMAPServer(
-            host: account.imapHost, port: account.imapPort
-        )
+        let server = MailServerFactory.imapServer(for: account)
         do {
             try await server.connect()
             try await server.login(
