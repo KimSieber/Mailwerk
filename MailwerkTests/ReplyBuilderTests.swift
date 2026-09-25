@@ -32,9 +32,10 @@ struct ReplyBuilderTests {
         references: String? = nil
     ) -> CachedMessage {
         CachedMessage(
-            id: "\(accountID.uuidString)-42",
+            id: CachedMessage.makeID(accountID: accountID, folder: "INBOX", uid: 42),
             accountID: accountID,
             accountDisplayName: "Test",
+            folder: "INBOX",
             uid: 42,
             subject: subject,
             from: from,

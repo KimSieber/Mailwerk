@@ -16,6 +16,11 @@ enum MailFetchService {
     /// Sync-Zeitraum: nur Nachrichten der letzten 30 Tage abrufen.
     static let syncDays = 30
 
+    /// Name des Posteingangs. IMAP schreibt genau diese Schreibweise vor.
+    /// `nonisolated`, weil die Konstante als Standardwert eines Parameters
+    /// dient – solche Ausdrücke wertet Swift außerhalb des Main-Actors aus.
+    nonisolated static let inboxFolder = "INBOX"
+
     /// IMAP-Keyword für weitergeleitete Nachrichten (kein Systemflag, aber
     /// von Apple Mail, Thunderbird u. a. verwendet).
     static let forwardedKeyword = "$Forwarded"
@@ -24,17 +29,18 @@ enum MailFetchService {
     /// Teil des ENVELOPE, wird aber für korrektes Threading gebraucht.
     private static let extraHeaderFields = ["References"]
 
-    /// Holt neue Nachrichten aus INBOX (letzte 30 Tage), cacht Body
+    /// Holt neue Nachrichten eines Ordners (letzte 30 Tage), cacht Body
     /// und – bei Mails ≤ 5 MB – auch die Anhänge lokal.
     static func refreshAndCache(
         account: MailAccount,
-        password: String
+        password: String,
+        folder: String = inboxFolder
     ) async throws {
         let server = MailServerFactory.imapServer(for: account)
         do {
             try await server.connect()
             try await server.login(username: account.username, password: password)
-            _ = try await server.selectMailbox("INBOX")
+            _ = try await server.selectMailbox(folder)
 
             // Serverseitig nur Mails der letzten 30 Tage suchen
             let sinceDate = Calendar.current.date(
@@ -46,7 +52,7 @@ enum MailFetchService {
                 calendar: Calendar(identifier: .gregorian)
             )
 
-            print("📬 [\(account.displayName)] SEARCH ergab \(uids.count) UIDs (seit \(sinceDate))")
+            print("📬 [\(account.displayName)/\(folder)] SEARCH ergab \(uids.count) UIDs (seit \(sinceDate))")
 
             guard !uids.isEmpty else {
                 print("📬 [\(account.displayName)] Keine UIDs → überspringe")
@@ -56,10 +62,10 @@ enum MailFetchService {
 
             // Welche UIDs haben wir schon im Cache – und wem fehlen noch Header?
             let alreadyCached = MessageStore.shared.cachedMessageIDs(
-                forAccount: account.id
+                forAccount: account.id, folder: folder
             )
             let needsHeaders = MessageStore.shared.messageIDsNeedingHeaders(
-                forAccount: account.id
+                forAccount: account.id, folder: folder
             )
             print("📬 [\(account.displayName)] Davon bereits im Cache: \(alreadyCached.count)")
 
@@ -80,7 +86,9 @@ enum MailFetchService {
                     skippedCount += 1
                     continue
                 }
-                let msgID = "\(account.id.uuidString)-\(uid.value)"
+                let msgID = CachedMessage.makeID(
+                    accountID: account.id, folder: folder, uid: uid.value
+                )
                 let flags = FlagState(info.flags)
 
                 // Schon im Cache → Flags aktualisieren, ggf. Header nachfüllen
@@ -113,6 +121,7 @@ enum MailFetchService {
                         id: msgID,
                         accountID: account.id,
                         accountDisplayName: account.displayName,
+                        folder: folder,
                         uid: uid.value,
                         subject: info.subject ?? "(kein Betreff)",
                         from: info.from ?? "(unbekannt)",
@@ -183,7 +192,9 @@ enum MailFetchService {
             try await server.logout()
 
             // Alte Nachrichten jenseits des 30-Tage-Fensters bereinigen
-            MessageStore.shared.deleteMessagesOlderThan(sinceDate, forAccount: account.id)
+            MessageStore.shared.deleteMessagesOlderThan(
+                sinceDate, forAccount: account.id, folder: folder
+            )
 
         } catch {
             try? await server.disconnect()

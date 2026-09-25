@@ -37,6 +37,11 @@ struct MailAccount: Identifiable, Codable, Equatable {
     /// Hex-Farbwert aus AccountColor, z. B. "#378ADD". nil = keine Farbmarkierung.
     var colorHex: String?
 
+    /// Vollständiger IMAP-Pfad des Spam-Ordners dieses Postfachs,
+    /// z. B. "Junk" oder "INBOX.Spam". nil = noch nicht ermittelt.
+    /// Wird beim ersten Filterlauf gefüllt und danach wiederverwendet.
+    var spamFolder: String?
+
     init(
         id: UUID = UUID(),
         displayName: String,
@@ -46,7 +51,8 @@ struct MailAccount: Identifiable, Codable, Equatable {
         imapPort: Int = 993,
         smtpHost: String,
         smtpPort: Int = 465,
-        colorHex: String? = nil
+        colorHex: String? = nil,
+        spamFolder: String? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -57,6 +63,7 @@ struct MailAccount: Identifiable, Codable, Equatable {
         self.smtpHost = smtpHost
         self.smtpPort = smtpPort
         self.colorHex = colorHex
+        self.spamFolder = spamFolder
     }
 
     /// Leere bzw. nur aus Leerzeichen bestehende Namen werden zu nil.

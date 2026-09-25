@@ -35,9 +35,22 @@
 		3B8C3B36305DE09B0028B269 /* MailwerkUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MailwerkUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		3BA5C3493064A2E500DAF05C /* Exceptions for "Mailwerk" folder in "Mailwerk" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 3B8C3B1E305DE0980028B269 /* Mailwerk */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		3B8C3B21305DE0980028B269 /* Mailwerk */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				3BA5C3493064A2E500DAF05C /* Exceptions for "Mailwerk" folder in "Mailwerk" target */,
+			);
 			path = Mailwerk;
 			sourceTree = "<group>";
 		};
@@ -413,6 +426,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Mailwerk/Info.plist;
 				INFOPLIST_KEY_NSContactsUsageDescription = "Mailwerk schlägt beim Verfassen einer Mail passende Empfänger aus deinen Kontakten vor. Deine Kontakte verlassen das Gerät nicht.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -460,6 +474,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Mailwerk/Info.plist;
 				INFOPLIST_KEY_NSContactsUsageDescription = "Mailwerk schlägt beim Verfassen einer Mail passende Empfänger aus deinen Kontakten vor. Deine Kontakte verlassen das Gerät nicht.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;

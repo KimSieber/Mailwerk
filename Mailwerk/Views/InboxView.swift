@@ -7,16 +7,29 @@ import SwiftUI
 
 struct InboxView: View {
     let accountStore: AccountStore
+    let filterLists: any FilterListRepository
+    let spamSettings: SpamSettings
     @State private var viewModel: InboxViewModel
     @State private var showingAccounts = false
+    @State private var showingSpamSettings = false
     @State private var showingCompose = false
     @State private var hasLoadedOnce = false
     @State private var errorMessage: String?
     @State private var processingMessageIDs: Set<String> = []
 
-    init(accountStore: AccountStore) {
+    init(
+        accountStore: AccountStore,
+        filterLists: any FilterListRepository,
+        spamSettings: SpamSettings
+    ) {
         self.accountStore = accountStore
-        _viewModel = State(initialValue: InboxViewModel(accountStore: accountStore))
+        self.filterLists = filterLists
+        self.spamSettings = spamSettings
+        _viewModel = State(initialValue: InboxViewModel(
+            accountStore: accountStore,
+            filterLists: filterLists,
+            spamSettings: spamSettings
+        ))
     }
 
     var body: some View {
@@ -47,6 +60,7 @@ struct InboxView: View {
                             MessageDetailView(
                                 message: message,
                                 accountStore: accountStore,
+                                spamFilter: viewModel.spamFilter,
                                 onChange: { viewModel.loadFromCache() }
                             )
                         } label: {
@@ -98,10 +112,19 @@ struct InboxView: View {
                     .disabled(accountStore.accounts.isEmpty)
                 }
                 ToolbarItem {
-                    Button {
-                        showingAccounts = true
+                    Menu {
+                        Button {
+                            showingAccounts = true
+                        } label: {
+                            Label("Postfächer", systemImage: "envelope")
+                        }
+                        Button {
+                            showingSpamSettings = true
+                        } label: {
+                            Label("Spamfilter", systemImage: "shield")
+                        }
                     } label: {
-                        Label("Postfächer", systemImage: "gearshape")
+                        Label("Einstellungen", systemImage: "gearshape")
                     }
                 }
             }
@@ -113,6 +136,26 @@ struct InboxView: View {
             }
             .sheet(isPresented: $showingAccounts) {
                 AccountListView(accountStore: accountStore)
+            }
+            .alert(
+                "Spam-Ordner anlegen?",
+                isPresented: Binding(
+                    get: { viewModel.pendingSpamFolders.first != nil },
+                    set: { _ in }
+                ),
+                presenting: viewModel.pendingSpamFolders.first
+            ) { pending in
+                Button("Anlegen") {
+                    Task { await viewModel.createSpamFolder(for: pending) }
+                }
+                Button("Nicht jetzt", role: .cancel) {
+                    viewModel.dismissSpamFolderRequest(pending, declineForSession: true)
+                }
+            } message: { pending in
+                Text("Das Postfach „\(pending.account.displayName)“ hat keinen Spam-Ordner. Ohne ihn kann der Filter dort nichts aussortieren. Vorgeschlagen wird „\(pending.proposal)“.")
+            }
+            .sheet(isPresented: $showingSpamSettings) {
+                SpamSettingsView(settings: spamSettings, filterLists: filterLists)
             }
             .sheet(isPresented: $showingCompose) {
                 ComposeView(
@@ -159,7 +202,8 @@ struct InboxView: View {
                 uid: Int(message.uid),
                 isRead: markAsRead,
                 accountID: message.accountID,
-                accountStore: accountStore
+                accountStore: accountStore,
+                folder: message.folder
             )
             MessageStore.shared.updateFlags(messageID: message.id, isUnread: !markAsRead)
             viewModel.loadFromCache()
@@ -179,7 +223,8 @@ struct InboxView: View {
                 uid: Int(message.uid),
                 isFlagged: newFlagged,
                 accountID: message.accountID,
-                accountStore: accountStore
+                accountStore: accountStore,
+                folder: message.folder
             )
             MessageStore.shared.updateFlagged(messageID: message.id, isFlagged: newFlagged)
             viewModel.loadFromCache()

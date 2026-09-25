@@ -16,6 +16,10 @@ struct MailFolder: Identifiable, Hashable {
     let id: String          // Vollständiger IMAP-Pfad (z. B. "INBOX.Trash")
     let name: String        // Anzeigename (letztes Pfad-Segment)
     let specialUse: SpecialUse?
+    /// Trennzeichen der Ordnerhierarchie, wie vom Server gemeldet
+    /// (bei manitu "."). Wird gebraucht, um neue Ordner an der
+    /// richtigen Stelle vorzuschlagen.
+    let hierarchyDelimiter: String?
 
     enum SpecialUse: String {
         case drafts, sent, trash, junk, archive, flagged, all
@@ -50,12 +54,13 @@ enum MailActionService {
         uid: Int,
         isRead: Bool,
         accountID: UUID,
-        accountStore: AccountStore
+        accountStore: AccountStore,
+        folder: String = MailFetchService.inboxFolder
     ) async throws {
         try await withIMAPConnection(
             accountID: accountID, accountStore: accountStore
         ) { server in
-            _ = try await server.selectMailbox("INBOX")
+            _ = try await server.selectMailbox(folder)
             let imapUID = SwiftMail.UID(uid)
             let uidSet = UIDSet([imapUID])
             try await server.store(
@@ -71,12 +76,13 @@ enum MailActionService {
         uid: Int,
         isFlagged: Bool,
         accountID: UUID,
-        accountStore: AccountStore
+        accountStore: AccountStore,
+        folder: String = MailFetchService.inboxFolder
     ) async throws {
         try await withIMAPConnection(
             accountID: accountID, accountStore: accountStore
         ) { server in
-            _ = try await server.selectMailbox("INBOX")
+            _ = try await server.selectMailbox(folder)
             let imapUID = SwiftMail.UID(uid)
             let uidSet = UIDSet([imapUID])
             try await server.store(
@@ -96,7 +102,8 @@ enum MailActionService {
     static func deleteMessage(
         uid: Int,
         accountID: UUID,
-        accountStore: AccountStore
+        accountStore: AccountStore,
+        folder: String = MailFetchService.inboxFolder
     ) async throws -> String? {
         try await withIMAPConnection(
             accountID: accountID, accountStore: accountStore
@@ -105,11 +112,11 @@ enum MailActionService {
             let folders = try await fetchMailboxList(server)
             let trashFolder = folders.first { $0.specialUse == .trash }
 
-            _ = try await server.selectMailbox("INBOX")
+            _ = try await server.selectMailbox(folder)
             let imapUID = SwiftMail.UID(uid)
 
             if let trash = trashFolder {
-                try await server.move(
+                _ = try await server.move(
                     message: imapUID, to: trash.id
                 )
                 print("🗑️ Mail UID \(uid) nach \(trash.id) verschoben")
@@ -131,21 +138,51 @@ enum MailActionService {
     // MARK: - Verschieben
 
     /// Verschiebt eine Nachricht in einen anderen Ordner.
+    /// - Returns: die UID im Zielordner, sofern der Server sie meldet
+    ///   (UIDPLUS). Ohne diese Angabe bleibt das Ergebnis nil – der Aufrufer
+    ///   muss die Nachricht dann aus dem Cache entfernen, statt sie umzuziehen.
+    @discardableResult
     static func moveMessage(
         uid: Int,
         toFolder: String,
         accountID: UUID,
-        accountStore: AccountStore
-    ) async throws {
+        accountStore: AccountStore,
+        folder: String = MailFetchService.inboxFolder
+    ) async throws -> UInt32? {
         try await withIMAPConnection(
             accountID: accountID, accountStore: accountStore
         ) { server in
-            _ = try await server.selectMailbox("INBOX")
+            _ = try await server.selectMailbox(folder)
             let imapUID = SwiftMail.UID(uid)
-            try await server.move(
+            let copyUID = try await server.move(
                 message: imapUID, to: toFolder
             )
-            print("📁 Mail UID \(uid) nach \(toFolder) verschoben")
+            let newUID = copyUID?.mapping.first?.destination.value
+            print("📁 Mail UID \(uid) von \(folder) nach \(toFolder) verschoben (neue UID: \(newUID.map(String.init) ?? "unbekannt"))")
+            return newUID
+        }
+    }
+
+    // MARK: - Ordner anlegen
+
+    /// Legt einen Ordner an. Der Server kann den Pfad um sein Namespace-Präfix
+    /// ergänzen, deshalb liefert die Methode den tatsächlich vorhandenen Pfad
+    /// zurück – ermittelt über eine frische Ordnerliste.
+    static func createFolder(
+        _ path: String,
+        accountID: UUID,
+        accountStore: AccountStore
+    ) async throws -> String {
+        try await withIMAPConnection(
+            accountID: accountID, accountStore: accountStore
+        ) { server in
+            try await server.createMailbox(path)
+            print("📁 Ordner \(path) angelegt")
+
+            let folders = try await fetchMailboxList(server)
+            let created = folders.first { $0.id == path }
+                ?? folders.first { $0.id.hasSuffix(path) }
+            return created?.id ?? path
         }
     }
 
@@ -162,6 +199,12 @@ enum MailActionService {
         ) { server in
             try await fetchMailboxList(server)
         }
+    }
+
+    /// Ordnerliste über eine bereits bestehende Verbindung. Der Filterlauf
+    /// baut seine Verbindung selbst auf und braucht die Liste darin.
+    static func mailboxes(on server: SwiftMail.IMAPServer) async throws -> [MailFolder] {
+        try await fetchMailboxList(server)
     }
 
     // MARK: - Interne Helfer
@@ -240,7 +283,8 @@ enum MailActionService {
             return MailFolder(
                 id: fullPath,
                 name: displayName,
-                specialUse: specialUse
+                specialUse: specialUse,
+                hierarchyDelimiter: mailbox.hierarchyDelimiter
             )
         }
         // Spezialordner zuerst, dann alphabetisch

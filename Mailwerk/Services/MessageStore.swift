@@ -31,7 +31,8 @@ final class MessageStore: @unchecked Sendable {
         id, accountID, accountDisplayName, uid, subject, "from", "to", date, \
         isUnread, isFlagged, isAnswered, isForwarded, totalSizeBytes, hasAttachments, \
         textBody, htmlBody, fetchedAt, \
-        toJSON, ccJSON, replyToJSON, rfcMessageID, rfcInReplyTo, rfcReferences
+        toJSON, ccJSON, replyToJSON, rfcMessageID, rfcInReplyTo, rfcReferences, \
+        folder
         """
 
     private static let attachmentColumns =
@@ -39,18 +40,22 @@ final class MessageStore: @unchecked Sendable {
 
     private var db: OpaquePointer?
 
-    private init() {
-        let folder: URL
+    private convenience init() {
+        let directory: URL
         do {
-            folder = try FileManager.default.url(
+            directory = try FileManager.default.url(
                 for: .applicationSupportDirectory, in: .userDomainMask,
                 appropriateFor: nil, create: true
             )
         } catch {
             fatalError("App-Support-Verzeichnis nicht verfügbar: \(error)")
         }
-        let path = folder.appendingPathComponent("Mailwerk.sqlite").path
+        self.init(path: directory.appendingPathComponent("Mailwerk.sqlite").path)
+    }
 
+    /// Öffnet eine Ablage an einem bestimmten Pfad. Neben `shared` nutzen das
+    /// die Tests, die mit einer eigenen Datei im Temp-Verzeichnis arbeiten.
+    init(path: String) {
         // FULLMUTEX: Verbindung wird aus mehreren async-Kontexten genutzt –
         // SQLite serialisiert die Zugriffe intern.
         let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
@@ -127,6 +132,45 @@ final class MessageStore: @unchecked Sendable {
         addColumnIfMissing("rfcInReplyTo", "TEXT")
         addColumnIfMissing("rfcReferences", "TEXT")
         addColumnIfMissing("headersVersion", "INTEGER NOT NULL DEFAULT 0")
+
+        // v0.1.5: Ordner. UIDs sind nur innerhalb eines Ordners eindeutig,
+        // deshalb wandert der Ordner in die Kennung. Bestehende Zeilen
+        // stammen ausnahmslos aus der INBOX.
+        if addColumnIfMissing("folder", "TEXT NOT NULL DEFAULT 'INBOX'") {
+            migrateIDsToFolderScheme()
+        }
+        exec("""
+            CREATE INDEX IF NOT EXISTS idx_message_account_folder
+            ON message(accountID, folder)
+            """)
+    }
+
+    /// Schreibt die Kennungen von "<account>-<uid>" auf "<account>-INBOX-<uid>" um.
+    /// Die Anhänge zuerst, weil ihre Fremdschlüssel sonst ins Leere zeigen.
+    private func migrateIDsToFolderScheme() {
+        withForeignKeysDisabled {
+            exec("BEGIN TRANSACTION")
+            exec("""
+                UPDATE attachment SET
+                    id = (SELECT m.accountID || '-INBOX-' || m.uid
+                          FROM message m WHERE m.id = attachment.messageID)
+                         || substr(attachment.id, length(attachment.messageID) + 1),
+                    messageID = (SELECT m.accountID || '-INBOX-' || m.uid
+                                 FROM message m WHERE m.id = attachment.messageID)
+                WHERE EXISTS (SELECT 1 FROM message m WHERE m.id = attachment.messageID)
+                """)
+            exec("UPDATE message SET id = accountID || '-INBOX-' || uid")
+            exec("COMMIT")
+        }
+    }
+
+    /// Führt einen Block ohne Fremdschlüsselprüfung aus. Nötig, wenn sich
+    /// Primärschlüssel ändern – SQLite kennt kein ON UPDATE CASCADE hier.
+    /// Das Umschalten wirkt nur außerhalb einer Transaktion.
+    private func withForeignKeysDisabled(_ body: () -> Void) {
+        exec("PRAGMA foreign_keys = OFF")
+        body()
+        exec("PRAGMA foreign_keys = ON")
     }
 
     /// Fügt eine Spalte zur message-Tabelle hinzu, falls sie fehlt.
@@ -157,7 +201,7 @@ final class MessageStore: @unchecked Sendable {
         let sql = """
             INSERT INTO message
             (\(Self.messageColumns), headersVersion)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 isUnread = excluded.isUnread,
                 isFlagged = excluded.isFlagged,
@@ -198,7 +242,8 @@ final class MessageStore: @unchecked Sendable {
         bind(stmt, 16, m.htmlBody)
         sqlite3_bind_double(stmt, 17, m.fetchedAt.timeIntervalSince1970)
         bindHeaders(stmt, startingAt: 18, m.headers)          // 18–23
-        sqlite3_bind_int(stmt, 24, Int32(Self.currentHeadersVersion))
+        bind(stmt, 24, m.folder)
+        sqlite3_bind_int(stmt, 25, Int32(Self.currentHeadersVersion))
 
         sqlite3_step(stmt)
     }
@@ -259,12 +304,16 @@ final class MessageStore: @unchecked Sendable {
 
     /// IDs der Nachrichten eines Kontos, deren Header noch nicht dem
     /// aktuellen Stand (`currentHeadersVersion`) entsprechen.
-    func messageIDsNeedingHeaders(forAccount accountID: UUID) -> Set<String> {
-        let sql = "SELECT id FROM message WHERE accountID = ? AND headersVersion < ?"
+    func messageIDsNeedingHeaders(forAccount accountID: UUID, folder: String) -> Set<String> {
+        let sql = """
+            SELECT id FROM message
+            WHERE accountID = ? AND folder = ? AND headersVersion < ?
+            """
         guard let stmt = prepare(sql) else { return [] }
         defer { sqlite3_finalize(stmt) }
         bind(stmt, 1, accountID.uuidString)
-        sqlite3_bind_int(stmt, 2, Int32(Self.currentHeadersVersion))
+        bind(stmt, 2, folder)
+        sqlite3_bind_int(stmt, 3, Int32(Self.currentHeadersVersion))
         var ids = Set<String>()
         while sqlite3_step(stmt) == SQLITE_ROW {
             ids.insert(str(stmt, 0))
@@ -344,18 +393,19 @@ final class MessageStore: @unchecked Sendable {
         return readMessage(stmt)
     }
 
-    func allMessages(accountIDs: [UUID]) -> [CachedMessage] {
+    func allMessages(accountIDs: [UUID], folder: String) -> [CachedMessage] {
         guard !accountIDs.isEmpty else { return [] }
         let ph = accountIDs.map { _ in "?" }.joined(separator: ",")
         let sql = """
             SELECT \(Self.messageColumns) FROM message
-            WHERE accountID IN (\(ph)) ORDER BY date DESC
+            WHERE accountID IN (\(ph)) AND folder = ? ORDER BY date DESC
             """
         guard let stmt = prepare(sql) else { return [] }
         defer { sqlite3_finalize(stmt) }
         for (i, id) in accountIDs.enumerated() {
             bind(stmt, Int32(i + 1), id.uuidString)
         }
+        bind(stmt, Int32(accountIDs.count + 1), folder)
         var result: [CachedMessage] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             result.append(readMessage(stmt))
@@ -363,10 +413,12 @@ final class MessageStore: @unchecked Sendable {
         return result
     }
 
-    func cachedMessageIDs(forAccount accountID: UUID) -> Set<String> {
-        guard let stmt = prepare("SELECT id FROM message WHERE accountID = ?") else { return [] }
+    func cachedMessageIDs(forAccount accountID: UUID, folder: String) -> Set<String> {
+        let sql = "SELECT id FROM message WHERE accountID = ? AND folder = ?"
+        guard let stmt = prepare(sql) else { return [] }
         defer { sqlite3_finalize(stmt) }
         bind(stmt, 1, accountID.uuidString)
+        bind(stmt, 2, folder)
         var ids = Set<String>()
         while sqlite3_step(stmt) == SQLITE_ROW {
             ids.insert(str(stmt, 0))
@@ -388,12 +440,13 @@ final class MessageStore: @unchecked Sendable {
 
     // MARK: - Löschen (für Cache-Bereinigung)
 
-    func deleteMessagesOlderThan(_ date: Date, forAccount accountID: UUID) {
-        let sql = "DELETE FROM message WHERE accountID = ? AND date < ?"
+    func deleteMessagesOlderThan(_ date: Date, forAccount accountID: UUID, folder: String) {
+        let sql = "DELETE FROM message WHERE accountID = ? AND folder = ? AND date < ?"
         guard let stmt = prepare(sql) else { return }
         defer { sqlite3_finalize(stmt) }
         bind(stmt, 1, accountID.uuidString)
-        sqlite3_bind_double(stmt, 2, date.timeIntervalSince1970)
+        bind(stmt, 2, folder)
+        sqlite3_bind_double(stmt, 3, date.timeIntervalSince1970)
         sqlite3_step(stmt)
     }
 
@@ -408,9 +461,55 @@ final class MessageStore: @unchecked Sendable {
         sqlite3_step(stmt)
     }
 
+    // MARK: - Verschieben
+
+    /// Zieht eine gecachte Nachricht in einen anderen Ordner um, nachdem der
+    /// Server sie verschoben hat. Kennung und UID ändern sich dabei, die
+    /// Anhänge ziehen mit – deshalb läuft alles in einer Transaktion.
+    ///
+    /// - Parameter newUID: die vom Server gemeldete UID im Zielordner.
+    /// - Returns: die neue Kennung, oder nil wenn die Nachricht nicht im Cache lag.
+    @discardableResult
+    func relocateMessage(id: String, toFolder folder: String, newUID: UInt32) -> String? {
+        guard let existing = message(id: id) else { return nil }
+        let newID = CachedMessage.makeID(
+            accountID: existing.accountID, folder: folder, uid: newUID
+        )
+        guard newID != id else { return newID }
+
+        withForeignKeysDisabled {
+            exec("BEGIN TRANSACTION")
+
+            // Anhänge zuerst: ihre Kennung beginnt mit der Nachrichten-Kennung.
+            if let stmt = prepare("""
+                UPDATE attachment
+                SET id = ? || substr(id, length(messageID) + 1), messageID = ?
+                WHERE messageID = ?
+                """) {
+                bind(stmt, 1, newID)
+                bind(stmt, 2, newID)
+                bind(stmt, 3, id)
+                sqlite3_step(stmt)
+                sqlite3_finalize(stmt)
+            }
+
+            if let stmt = prepare("UPDATE message SET id = ?, folder = ?, uid = ? WHERE id = ?") {
+                bind(stmt, 1, newID)
+                bind(stmt, 2, folder)
+                sqlite3_bind_int64(stmt, 3, Int64(newUID))
+                bind(stmt, 4, id)
+                sqlite3_step(stmt)
+                sqlite3_finalize(stmt)
+            }
+
+            exec("COMMIT")
+        }
+        return newID
+    }
+
     // MARK: - Interne Helfer
 
-    /// Liest eine Zeile gemäß `messageColumns` (Indizes 0–22).
+    /// Liest eine Zeile gemäß `messageColumns` (Indizes 0–23).
     private func readMessage(_ s: OpaquePointer?) -> CachedMessage {
         let dateVal = sqlite3_column_type(s, 7) != SQLITE_NULL
             ? sqlite3_column_double(s, 7) : nil
@@ -426,6 +525,7 @@ final class MessageStore: @unchecked Sendable {
             id: str(s, 0),
             accountID: UUID(uuidString: str(s, 1)) ?? UUID(),
             accountDisplayName: str(s, 2),
+            folder: str(s, 23),
             uid: UInt32(truncatingIfNeeded: sqlite3_column_int64(s, 3)),
             subject: str(s, 4),
             from: str(s, 5),

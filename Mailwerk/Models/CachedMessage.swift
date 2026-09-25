@@ -27,9 +27,13 @@ struct CachedMessageHeaders: Equatable {
 /// Lokal zwischengespeicherte Nachricht inkl. Body.
 /// Anhänge werden separat in CachedAttachment gehalten.
 struct CachedMessage: Identifiable {
-    let id: String              // "<accountUUID>-<uid>"
+    let id: String              // "<accountUUID>-<folder>-<uid>"
     let accountID: UUID
     let accountDisplayName: String
+    /// IMAP-Ordner, in dem die Nachricht liegt (z. B. "INBOX", "Junk").
+    /// UIDs sind nur innerhalb eines Ordners eindeutig, deshalb gehört der
+    /// Ordner zur Identität einer gecachten Nachricht.
+    let folder: String
     let uid: UInt32
     let subject: String
     let from: String
@@ -45,6 +49,13 @@ struct CachedMessage: Identifiable {
     let htmlBody: String?
     let fetchedAt: Date
     let headers: CachedMessageHeaders
+
+    /// Bildet die Cache-Kennung. Einzige Stelle, an der das Format entsteht –
+    /// die Kennung wird nirgends wieder zerlegt, weil Ordnernamen selbst
+    /// Bindestriche enthalten dürfen.
+    static func makeID(accountID: UUID, folder: String, uid: UInt32) -> String {
+        "\(accountID.uuidString)-\(folder)-\(uid)"
+    }
 }
 
 /// Ein einzelner gecachter Anhang, referenziert über die messageID.

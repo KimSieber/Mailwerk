@@ -71,6 +71,15 @@ final class AccountStore {
         try KeychainService.readPassword(for: account.id)
     }
 
+    /// Merkt den gefundenen bzw. angelegten Spam-Ordner beim Postfach.
+    /// Unbekannte Kennungen werden übergangen.
+    func setSpamFolder(_ folder: String?, for accountID: UUID) {
+        guard let index = accounts.firstIndex(where: { $0.id == accountID }),
+              accounts[index].spamFolder != folder else { return }
+        accounts[index].spamFolder = folder
+        saveAccounts()
+    }
+
     // MARK: - Standard-Postfach
 
     /// Setzt das Standard-Postfach. `nil` entfernt die Einstellung.

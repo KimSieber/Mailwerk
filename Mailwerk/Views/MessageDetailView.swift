@@ -9,6 +9,7 @@ import QuickLook
 struct MessageDetailView: View {
     let message: CachedMessage
     let accountStore: AccountStore
+    let spamFilter: SpamFilterService
     let onChange: (() -> Void)?
 
     @Environment(\.dismiss) private var dismiss
@@ -33,6 +34,42 @@ struct MessageDetailView: View {
     // MARK: - Verfassen (v0.1.4)
     @State private var composeRequest: ComposeRequest?
 
+    // MARK: - Spam (v0.1.5)
+    @State private var pendingSpamAction: SpamActionRequest?
+    @State private var spamStatusMessage: String?
+
+    /// Eine angefragte Listenaktion, die noch bestätigt werden muss.
+    private struct SpamActionRequest: Identifiable {
+        enum Kind { case block, trust }
+        let id = UUID()
+        let kind: Kind
+        let entryKind: FilterEntryKind
+        let value: String
+
+        var title: String {
+            switch kind {
+            case .block: return "\(value) blockieren?"
+            case .trust: return "\(value) vertrauen?"
+            }
+        }
+
+        var explanation: String {
+            let scope = entryKind == .domain
+                ? "Alle künftigen Mails dieser Domain"
+                : "Alle künftigen Mails dieses Absenders"
+            switch kind {
+            case .block:
+                return "\(scope) wandern in den Spam-Ordner. Diese Mail wird mitverschoben."
+            case .trust:
+                return "\(scope) bleiben im Posteingang. Liegt diese Mail im Spam-Ordner, wird sie zurückgeholt."
+            }
+        }
+
+        var confirmLabel: String {
+            kind == .block ? "Blockieren" : "Vertrauen"
+        }
+    }
+
     /// Kapselt die Art der zu verfassenden Nachricht für das Sheet.
     private struct ComposeRequest: Identifiable {
         let id = UUID()
@@ -42,10 +79,12 @@ struct MessageDetailView: View {
     init(
         message: CachedMessage,
         accountStore: AccountStore,
+        spamFilter: SpamFilterService,
         onChange: (() -> Void)? = nil
     ) {
         self.message = message
         self.accountStore = accountStore
+        self.spamFilter = spamFilter
         self.onChange = onChange
         _isUnread = State(initialValue: message.isUnread)
         _isFlagged = State(initialValue: message.isFlagged)
@@ -180,6 +219,33 @@ struct MessageDetailView: View {
         } message: {
             Text("Die Mail wird auf dem Server gelöscht bzw. in den Papierkorb verschoben.")
         }
+        .confirmationDialog(
+            pendingSpamAction?.title ?? "",
+            isPresented: Binding(
+                get: { pendingSpamAction != nil },
+                set: { if !$0 { pendingSpamAction = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingSpamAction
+        ) { request in
+            Button(request.confirmLabel, role: request.kind == .block ? .destructive : nil) {
+                Task { await performSpamAction(request) }
+            }
+            Button("Abbrechen", role: .cancel) { pendingSpamAction = nil }
+        } message: { request in
+            Text(request.explanation)
+        }
+        .alert(
+            "Listeneintrag",
+            isPresented: Binding(
+                get: { spamStatusMessage != nil },
+                set: { if !$0 { spamStatusMessage = nil } }
+            )
+        ) {
+            Button("OK") { spamStatusMessage = nil }
+        } message: {
+            Text(spamStatusMessage ?? "")
+        }
         .sheet(isPresented: $showFolderPicker) {
             FolderPickerSheet(
                 folders: folders,
@@ -199,7 +265,8 @@ struct MessageDetailView: View {
                         uid: Int(message.uid),
                         isRead: true,
                         accountID: message.accountID,
-                        accountStore: accountStore
+                        accountStore: accountStore,
+                        folder: message.folder
                     )
                     MessageStore.shared.updateFlags(messageID: message.id, isUnread: false)
                     isUnread = false
@@ -252,31 +319,43 @@ struct MessageDetailView: View {
 
             // ── Spam ──
             Section {
-                Button(action: {}) {
-                    Label("Als Spam verschieben", systemImage: "xmark.bin")
-                }
-                .disabled(true)
+                if let sender = FilterAddress.sender(fromHeader: message.from) {
+                    Button {
+                        pendingSpamAction = SpamActionRequest(
+                            kind: .block, entryKind: .address, value: sender.address
+                        )
+                    } label: {
+                        Label("\(sender.address) blockieren", systemImage: "person.crop.circle.badge.xmark")
+                    }
 
-                Button(action: {}) {
-                    Label("Absender → Blacklist", systemImage: "person.crop.circle.badge.xmark")
-                }
-                .disabled(true)
+                    Button {
+                        pendingSpamAction = SpamActionRequest(
+                            kind: .block, entryKind: .domain, value: sender.domain
+                        )
+                    } label: {
+                        Label("\(sender.domain) blockieren", systemImage: "globe.badge.chevron.backward")
+                    }
 
-                Button(action: {}) {
-                    Label("Absender-Domain → Blacklist", systemImage: "globe.badge.chevron.backward")
-                }
-                .disabled(true)
+                    Button {
+                        pendingSpamAction = SpamActionRequest(
+                            kind: .trust, entryKind: .address, value: sender.address
+                        )
+                    } label: {
+                        Label("\(sender.address) vertrauen", systemImage: "person.crop.circle.badge.checkmark")
+                    }
 
-                Button(action: {}) {
-                    Label("Absender → Whitelist", systemImage: "person.crop.circle.badge.checkmark")
+                    Button {
+                        pendingSpamAction = SpamActionRequest(
+                            kind: .trust, entryKind: .domain, value: sender.domain
+                        )
+                    } label: {
+                        Label("\(sender.domain) vertrauen", systemImage: "globe")
+                    }
+                } else {
+                    Label("Absender nicht auswertbar", systemImage: "questionmark.circle")
                 }
-                .disabled(true)
-
-                Button(action: {}) {
-                    Label("Absender-Domain → Whitelist", systemImage: "globe")
-                }
-                .disabled(true)
             }
+            .disabled(isProcessingAction)
 
             // ── Sonstiges ──
             Section {
@@ -350,7 +429,8 @@ struct MessageDetailView: View {
                 uid: Int(message.uid),
                 isRead: markAsRead,
                 accountID: message.accountID,
-                accountStore: accountStore
+                accountStore: accountStore,
+                folder: message.folder
             )
             MessageStore.shared.updateFlags(messageID: message.id, isUnread: !markAsRead)
             isUnread = !markAsRead
@@ -371,7 +451,8 @@ struct MessageDetailView: View {
                 uid: Int(message.uid),
                 isFlagged: newFlagged,
                 accountID: message.accountID,
-                accountStore: accountStore
+                accountStore: accountStore,
+                folder: message.folder
             )
             MessageStore.shared.updateFlagged(messageID: message.id, isFlagged: newFlagged)
             isFlagged = newFlagged
@@ -390,7 +471,8 @@ struct MessageDetailView: View {
             try await MailActionService.deleteMessage(
                 uid: Int(message.uid),
                 accountID: message.accountID,
-                accountStore: accountStore
+                accountStore: accountStore,
+                folder: message.folder
             )
             MessageStore.shared.deleteMessage(id: message.id)
             onChange?()
@@ -432,13 +514,47 @@ struct MessageDetailView: View {
                 uid: Int(message.uid),
                 toFolder: folder.id,
                 accountID: message.accountID,
-                accountStore: accountStore
+                accountStore: accountStore,
+                folder: message.folder
             )
             MessageStore.shared.deleteMessage(id: message.id)
             onChange?()
             dismiss()
         } catch {
             errorMessage = "Verschieben fehlgeschlagen: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Spam-Aktionen (v0.1.5)
+
+    @MainActor
+    private func performSpamAction(_ request: SpamActionRequest) async {
+        pendingSpamAction = nil
+        isProcessingAction = true
+        defer { isProcessingAction = false }
+
+        do {
+            let moved: Bool
+            switch request.kind {
+            case .block:
+                moved = try await spamFilter.block(message, kind: request.entryKind)
+            case .trust:
+                moved = try await spamFilter.trust(message, kind: request.entryKind)
+            }
+            onChange?()
+
+            // Verschoben heißt: Diese Ansicht zeigt eine Mail, die hier nicht
+            // mehr liegt – also zurück zur Liste.
+            if moved {
+                dismiss()
+            } else {
+                spamStatusMessage = "\(request.value) steht jetzt auf der \(request.kind == .block ? "Blacklist" : "Whitelist")."
+            }
+        } catch FilterListError.alreadyOnOtherList(let list) {
+            let other = list == .white ? "Whitelist" : "Blacklist"
+            spamStatusMessage = "\(request.value) steht bereits auf der \(other). Entferne den Eintrag dort zuerst."
+        } catch {
+            errorMessage = "Listeneintrag fehlgeschlagen: \(error.localizedDescription)"
         }
     }
 
