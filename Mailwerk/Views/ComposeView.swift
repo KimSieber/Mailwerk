@@ -103,6 +103,7 @@ struct ComposeView: View {
                 handleFileImport(result)
             }
         }
+        .macSheetFrame(.composer)
     }
 
     // MARK: - Kopfbereich

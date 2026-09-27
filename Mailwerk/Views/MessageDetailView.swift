@@ -664,6 +664,7 @@ private struct FolderPickerSheet: View {
                 }
             }
         }
+        .macSheetFrame(.list)
     }
 
     private func icon(for folder: MailFolder) -> String {

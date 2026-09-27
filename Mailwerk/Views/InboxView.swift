@@ -98,7 +98,7 @@ struct InboxView: View {
             }
             .navigationTitle("Mailwerk")
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: Self.progressPlacement) {
                     if viewModel.isLoading && !viewModel.messages.isEmpty {
                         ProgressView()
                     }
@@ -231,6 +231,18 @@ struct InboxView: View {
         } catch {
             errorMessage = "Kennzeichnen fehlgeschlagen: \(error.localizedDescription)"
         }
+    }
+
+    // MARK: - Plattform
+
+    /// Platz für die Ladeanzeige in der Symbolleiste. `.topBarLeading`
+    /// gibt es auf macOS nicht; dort ordnet das System selbst ein.
+    private static var progressPlacement: ToolbarItemPlacement {
+        #if os(macOS)
+        return .automatic
+        #else
+        return .topBarLeading
+        #endif
     }
 }
 

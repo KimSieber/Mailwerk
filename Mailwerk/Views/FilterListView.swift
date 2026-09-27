@@ -6,6 +6,10 @@
 //  löschen und mehrere auf einmal hinzufügen – getrennt durch Komma,
 //  Semikolon, Zeilenumbruch oder Leerzeichen.
 //
+//  Die Ansicht lädt beim Öffnen und erneut, sobald der iCloud-Abgleich
+//  Änderungen von einem anderen Gerät übernommen hat. So bleibt eine
+//  geöffnete Liste aktuell, ohne dass man sie schließen muss.
+//
 
 import SwiftUI
 
@@ -29,11 +33,7 @@ struct FilterListView: View {
                     axis: .vertical
                 )
                 .lineLimit(1...5)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                #if !os(macOS)
-                .keyboardType(.emailAddress)
-                #endif
+                .emailInput()
 
                 Button("Hinzufügen") {
                     Task { await addEntries() }
@@ -85,6 +85,9 @@ struct FilterListView: View {
             }
         }
         .task { await reload() }
+        .onReceive(FilterListCloudEvents.remoteChangesImported) {
+            Task { await reload() }
+        }
         .alert(
             "Listenpflege fehlgeschlagen",
             isPresented: Binding(

@@ -1,0 +1,40 @@
+{
+  "configurations" : [
+    {
+      "id" : "2CD18B00-4928-4DE7-880D-79ABAA7BF9BB",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "performanceAntipatternCheckerEnabled" : true,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:Mailwerk.xcodeproj",
+      "identifier" : "3B8C3B1E305DE0980028B269",
+      "name" : "Mailwerk"
+    },
+    "testInteropMode" : "complete"
+  },
+  "testTargets" : [
+    {
+      "enabled" : false,
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:Mailwerk.xcodeproj",
+        "identifier" : "3B8C3B35305DE09B0028B269",
+        "name" : "MailwerkUITests"
+      }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:Mailwerk.xcodeproj",
+        "identifier" : "3B8C3B2B305DE09B0028B269",
+        "name" : "MailwerkTests"
+      }
+    }
+  ],
+  "version" : 1
+}

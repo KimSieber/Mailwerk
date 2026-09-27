@@ -21,8 +21,7 @@ struct AddAccountView: View {
                     TextField("Absendername", text: $viewModel.senderName)
                         .textContentType(.name)
                     TextField("Benutzername / E-Mail", text: $viewModel.username)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                        .plainTextInput()
                     SecureField("Passwort", text: $viewModel.password)
                 } header: {
                     Text("Konto")
@@ -32,15 +31,13 @@ struct AddAccountView: View {
 
                 Section("IMAP (Empfang)") {
                     TextField("Host", text: $viewModel.imapHost)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                        .plainTextInput()
                     TextField("Port", text: $viewModel.imapPort)
                 }
 
                 Section("SMTP (Versand)") {
                     TextField("Host", text: $viewModel.smtpHost)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                        .plainTextInput()
                     TextField("Port", text: $viewModel.smtpPort)
                 }
 
@@ -90,6 +87,7 @@ struct AddAccountView: View {
                 Text(saveError ?? "")
             }
         }
+        .macSheetFrame(.form)
     }
 
     // MARK: - Aktionen

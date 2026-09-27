@@ -60,8 +60,7 @@ struct EditAccountView: View {
                     TextField("Absendername", text: $senderName)
                         .textContentType(.name)
                     TextField("Benutzername / E-Mail", text: $username)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                        .plainTextInput()
                     SecureField("Neues Passwort (leer = unverändert)", text: $password)
                 } header: {
                     Text("Konto")
@@ -71,18 +70,16 @@ struct EditAccountView: View {
 
                 Section("IMAP (Empfang)") {
                     TextField("Host", text: $imapHost)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                        .plainTextInput()
                     TextField("Port", text: $imapPort)
-                        .keyboardType(.numberPad)
+                        .numberInput()
                 }
 
                 Section("SMTP (Versand)") {
                     TextField("Host", text: $smtpHost)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                        .plainTextInput()
                     TextField("Port", text: $smtpPort)
-                        .keyboardType(.numberPad)
+                        .numberInput()
                 }
 
                 Section("Farbe") {
@@ -137,6 +134,7 @@ struct EditAccountView: View {
                 Text(saveError ?? "")
             }
         }
+        .macSheetFrame(.form)
     }
 
     // MARK: - Aktionen

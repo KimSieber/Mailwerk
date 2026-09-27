@@ -46,11 +46,15 @@ extension HTMLMailView {
     static func createWebView() -> WKWebView {
         let config = WKWebViewConfiguration()
         let webView = WKWebView(frame: .zero, configuration: config)
-        webView.isOpaque = false
-        webView.backgroundColor = .clear
+        // Transparenter Hintergrund, damit die Mail im Hell- und Dunkelmodus
+        // den Hintergrund der App übernimmt. Die beiden Plattformen bieten
+        // dafür unterschiedliche Wege an.
         #if os(macOS)
+        // Auf macOS ist `isOpaque` nur lesbar und `backgroundColor` fehlt.
         webView.setValue(false, forKey: "drawsBackground")
         #else
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
         webView.scrollView.isScrollEnabled = false
         #endif
         return webView

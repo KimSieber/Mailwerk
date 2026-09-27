@@ -66,6 +66,7 @@ struct SpamSettingsView: View {
                 }
             }
         }
+        .macSheetFrame(.list)
     }
 
     private var scoreText: String {

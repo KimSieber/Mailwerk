@@ -98,6 +98,7 @@ struct AccountListView: View {
                 Text(deleteError ?? "")
             }
         }
+        .macSheetFrame(.list)
     }
 
     // MARK: - Standard-Postfach
