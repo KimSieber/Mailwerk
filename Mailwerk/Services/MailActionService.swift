@@ -11,21 +11,6 @@ import Foundation
 import SwiftMail
 import NIOIMAPCore
 
-/// Repräsentiert einen IMAP-Ordner mit Name und optionaler Spezialrolle.
-struct MailFolder: Identifiable, Hashable {
-    let id: String          // Vollständiger IMAP-Pfad (z. B. "INBOX.Trash")
-    let name: String        // Anzeigename (letztes Pfad-Segment)
-    let specialUse: SpecialUse?
-    /// Trennzeichen der Ordnerhierarchie, wie vom Server gemeldet
-    /// (bei manitu "."). Wird gebraucht, um neue Ordner an der
-    /// richtigen Stelle vorzuschlagen.
-    let hierarchyDelimiter: String?
-
-    enum SpecialUse: String {
-        case drafts, sent, trash, junk, archive, flagged, all
-    }
-}
-
 enum MailActionService {
 
     // MARK: - Fehlertypen
@@ -201,6 +186,37 @@ enum MailActionService {
         }
     }
 
+    /// Ordnerliste inklusive INBOX und Namespace-Präfix – Grundlage des
+    /// Ordnerbaums in der Seitenleiste. Das Präfix hat SwiftMail bereits
+    /// beim Anmelden per NAMESPACE erfragt; es kostet keinen eigenen Befehl.
+    static func fetchFolderListing(
+        accountID: UUID,
+        accountStore: AccountStore
+    ) async throws -> FolderListing {
+        try await withIMAPConnection(
+            accountID: accountID, accountStore: accountStore
+        ) { server in
+            let folders = try await fetchMailboxList(server, includeInbox: true)
+            let prefix = await server.namespaces?.personal.first?.prefix
+            return FolderListing(folders: folders, namespacePrefix: prefix)
+        }
+    }
+
+    /// Fertiger Ordnerbaum eines Postfachs für die Seitenleiste.
+    static func fetchFolderTree(
+        for account: MailAccount,
+        accountStore: AccountStore
+    ) async throws -> [FolderNode] {
+        let listing = try await fetchFolderListing(
+            accountID: account.id, accountStore: accountStore
+        )
+        return FolderTreeBuilder.build(
+            folders: listing.folders,
+            namespacePrefix: listing.namespacePrefix,
+            configuredSpamFolder: account.spamFolder
+        )
+    }
+
     /// Ordnerliste über eine bereits bestehende Verbindung. Der Filterlauf
     /// baut seine Verbindung selbst auf und braucht die Liste darin.
     static func mailboxes(on server: SwiftMail.IMAPServer) async throws -> [MailFolder] {
@@ -250,10 +266,12 @@ enum MailActionService {
         return (account, password)
     }
 
-    /// Listet alle Mailboxen auf dem Server und mappt SPECIAL-USE-Attribute.
-    /// INBOX wird herausgefiltert.
+    /// Listet alle Mailboxen auf dem Server und mappt SPECIAL-USE-Attribute
+    /// sowie `\Noselect`. INBOX wird herausgefiltert, außer für den
+    /// Ordnerbaum (`includeInbox`).
     private static func fetchMailboxList(
-        _ server: SwiftMail.IMAPServer
+        _ server: SwiftMail.IMAPServer,
+        includeInbox: Bool = false
     ) async throws -> [MailFolder] {
         let mailboxes = try await server.listMailboxes(wildcard: "*")
 
@@ -266,7 +284,7 @@ enum MailActionService {
             ).last ?? fullPath
             
             // INBOX nicht als Verschiebeziel anbieten
-            if fullPath.uppercased() == "INBOX" { return nil }
+            if !includeInbox && fullPath.uppercased() == "INBOX" { return nil }
             
             // SPECIAL-USE-Attribute auswerten
             let attrs = mailbox.attributes
@@ -284,7 +302,8 @@ enum MailActionService {
                 id: fullPath,
                 name: displayName,
                 specialUse: specialUse,
-                hierarchyDelimiter: mailbox.hierarchyDelimiter
+                hierarchyDelimiter: mailbox.hierarchyDelimiter,
+                isSelectable: mailbox.isSelectable
             )
         }
         // Spezialordner zuerst, dann alphabetisch

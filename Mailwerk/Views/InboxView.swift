@@ -13,6 +13,12 @@ struct InboxView: View {
     @State private var showingAccounts = false
     @State private var showingSpamSettings = false
     @State private var showingCompose = false
+    @State private var showingFolders = false
+    /// Ordnerbäume der Postfächer; nur für diese App-Sitzung.
+    @State private var folderCatalog: FolderCatalog
+    /// In der Leiste aufgeklappte Postfächer. Bewusst nicht gespeichert:
+    /// Nach einem Neustart ist wieder alles zugeklappt.
+    @State private var expandedFolderAccounts: Set<UUID> = []
     @State private var hasLoadedOnce = false
     @State private var errorMessage: String?
     @State private var processingMessageIDs: Set<String> = []
@@ -30,6 +36,9 @@ struct InboxView: View {
             filterLists: filterLists,
             spamSettings: spamSettings
         ))
+        _folderCatalog = State(initialValue: FolderCatalog { account in
+            try await MailActionService.fetchFolderTree(for: account, accountStore: accountStore)
+        })
     }
 
     var body: some View {
@@ -96,8 +105,25 @@ struct InboxView: View {
                     }
                 }
             }
-            .navigationTitle("Mailwerk")
+            // Feine Linie als Abgrenzung unter der Überschrift
+            .safeAreaInset(edge: .top, spacing: 0) {
+                Divider()
+            }
+            .navigationTitle("Alle Eingänge")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
+                ToolbarItem(placement: .navigation) {
+                    Button {
+                        showingFolders = true
+                    } label: {
+                        Label("Ordner", systemImage: "sidebar.left")
+                    }
+                }
+                ToolbarItem(placement: .principal) {
+                    InboxTitle()
+                }
                 ToolbarItem(placement: Self.progressPlacement) {
                     if viewModel.isLoading && !viewModel.messages.isEmpty {
                         ProgressView()
@@ -187,6 +213,14 @@ struct InboxView: View {
                 Text(errorMessage ?? "")
             }
         }
+        .sideDrawer(isPresented: $showingFolders) {
+            FolderSidebarView(
+                accounts: accountStore.accounts,
+                catalog: folderCatalog,
+                expandedAccounts: $expandedFolderAccounts,
+                onSelectAllInboxes: { showingFolders = false }
+            )
+        }
     }
 
     // MARK: - Swipe-Aktionen
@@ -242,6 +276,26 @@ struct InboxView: View {
         return .automatic
         #else
         return .topBarLeading
+        #endif
+    }
+}
+
+/// Überschrift der Liste: klein, mit Symbol für mehrere Eingänge.
+/// Auf dem Mac trägt die Fensterleiste den Titel bereits
+/// (`navigationTitle`), dort bleibt der Platz leer.
+private struct InboxTitle: View {
+    var body: some View {
+        #if os(iOS)
+        HStack(spacing: 6) {
+            Image(systemName: "tray.2")
+                .foregroundStyle(.secondary)
+            Text("Alle Eingänge")
+        }
+        .font(.subheadline.weight(.semibold))
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+        #else
+        EmptyView()
         #endif
     }
 }
