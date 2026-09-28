@@ -413,6 +413,46 @@ final class MessageStore: @unchecked Sendable {
         return result
     }
 
+    /// Gekennzeichnete Nachrichten aus den Posteingängen aller übergebenen
+    /// Konten, absteigend nach Datum.
+    func flaggedInboxMessages(accountIDs: [UUID]) -> [CachedMessage] {
+        guard !accountIDs.isEmpty else { return [] }
+        let ph = accountIDs.map { _ in "?" }.joined(separator: ",")
+        let sql = """
+            SELECT \(Self.messageColumns) FROM message
+            WHERE accountID IN (\(ph)) AND folder = ? AND isFlagged = 1
+            ORDER BY date DESC
+            """
+        guard let stmt = prepare(sql) else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        for (i, id) in accountIDs.enumerated() {
+            bind(stmt, Int32(i + 1), id.uuidString)
+        }
+        bind(stmt, Int32(accountIDs.count + 1), MailFetchService.inboxFolder)
+        var result: [CachedMessage] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            result.append(readMessage(stmt))
+        }
+        return result
+    }
+
+    /// Anzahl gekennzeichneter Nachrichten in den Posteingängen.
+    func flaggedInboxCount(accountIDs: [UUID]) -> Int {
+        guard !accountIDs.isEmpty else { return 0 }
+        let ph = accountIDs.map { _ in "?" }.joined(separator: ",")
+        let sql = """
+            SELECT COUNT(*) FROM message
+            WHERE accountID IN (\(ph)) AND folder = ? AND isFlagged = 1
+            """
+        guard let stmt = prepare(sql) else { return 0 }
+        defer { sqlite3_finalize(stmt) }
+        for (i, id) in accountIDs.enumerated() {
+            bind(stmt, Int32(i + 1), id.uuidString)
+        }
+        bind(stmt, Int32(accountIDs.count + 1), MailFetchService.inboxFolder)
+        return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int(stmt, 0)) : 0
+    }
+
     func cachedMessageIDs(forAccount accountID: UUID, folder: String) -> Set<String> {
         let sql = "SELECT id FROM message WHERE accountID = ? AND folder = ?"
         guard let stmt = prepare(sql) else { return [] }

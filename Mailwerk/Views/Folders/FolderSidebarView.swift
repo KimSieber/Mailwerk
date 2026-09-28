@@ -19,7 +19,9 @@ struct FolderSidebarView: View {
     /// Aufgeklappte Postfächer. Liegt beim Aufrufer, damit der Zustand
     /// das Schließen der Leiste übersteht – aber nicht einen App-Neustart.
     @Binding var expandedAccounts: Set<UUID>
-    let onSelectAllInboxes: () -> Void
+    @Binding var selection: MailboxSelection
+    var flaggedCount: Int = 0
+    let onClose: () -> Void
 
     var body: some View {
         ScrollView {
@@ -27,8 +29,16 @@ struct FolderSidebarView: View {
                 SidebarRow(
                     title: "Alle Eingänge",
                     systemImage: "tray.2",
-                    isSelected: true,
-                    action: onSelectAllInboxes
+                    isSelected: selection == .allInboxes,
+                    action: { select(.allInboxes) }
+                )
+
+                SidebarRow(
+                    title: "Mit Kennzeichnung",
+                    systemImage: "flag",
+                    badge: flaggedCount > 0 ? flaggedCount : nil,
+                    isSelected: selection == .flagged,
+                    action: { select(.flagged) }
                 )
 
                 Divider()
@@ -59,6 +69,11 @@ struct FolderSidebarView: View {
         .task {
             await catalog.loadIfNeeded(accounts)
         }
+    }
+
+    private func select(_ newSelection: MailboxSelection) {
+        selection = newSelection
+        onClose()
     }
 
     private func expansionBinding(for accountID: UUID) -> Binding<Bool> {
@@ -203,6 +218,7 @@ private struct FolderRow: View {
 struct SidebarRow: View {
     let title: String
     let systemImage: String
+    var badge: Int? = nil
     var isSelected = false
     let action: () -> Void
 
@@ -215,6 +231,14 @@ struct SidebarRow: View {
                 Text(title)
                     .foregroundStyle(.primary)
                 Spacer(minLength: 0)
+                if let badge, badge > 0 {
+                    Text("\(badge)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Color.accentColor, in: Capsule())
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 10)

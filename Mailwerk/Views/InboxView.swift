@@ -22,6 +22,7 @@ struct InboxView: View {
     @State private var hasLoadedOnce = false
     @State private var errorMessage: String?
     @State private var processingMessageIDs: Set<String> = []
+    @State private var undoTask: Task<Void, Never>?
 
     init(
         accountStore: AccountStore,
@@ -55,12 +56,16 @@ struct InboxView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if viewModel.messages.isEmpty {
                     ContentUnavailableView(
-                        "Keine Nachrichten",
-                        systemImage: "tray",
+                        viewModel.selection == .flagged
+                            ? "Keine gekennzeichneten Nachrichten"
+                            : "Keine Nachrichten",
+                        systemImage: viewModel.selection == .flagged ? "flag" : "tray",
                         description: Text(
                             accountStore.accounts.isEmpty
                                 ? "Richte zuerst ein Postfach ein."
-                                : "Zieh nach unten, um abzurufen."
+                                : viewModel.selection == .flagged
+                                    ? "Kennzeichne Nachrichten, damit sie hier erscheinen."
+                                    : "Zieh nach unten, um abzurufen."
                         )
                     )
                 } else {
@@ -109,7 +114,7 @@ struct InboxView: View {
             .safeAreaInset(edge: .top, spacing: 0) {
                 Divider()
             }
-            .navigationTitle("Alle Eingänge")
+            .navigationTitle(viewModel.selection.title)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -122,7 +127,7 @@ struct InboxView: View {
                     }
                 }
                 ToolbarItem(placement: .principal) {
-                    InboxTitle()
+                    InboxTitle(selection: viewModel.selection)
                 }
                 ToolbarItem(placement: Self.progressPlacement) {
                     if viewModel.isLoading && !viewModel.messages.isEmpty {
@@ -213,12 +218,26 @@ struct InboxView: View {
                 Text(errorMessage ?? "")
             }
         }
+        .overlay(alignment: .bottom) {
+            if let undo = viewModel.undoUnflag {
+                UndoBanner(
+                    onUndo: { undoUnflag(undo) },
+                    onDismiss: { viewModel.undoUnflag = nil }
+                )
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .padding(.bottom, 16)
+                .padding(.horizontal, 16)
+            }
+        }
+        .animation(.snappy(duration: 0.25), value: viewModel.undoUnflag?.id)
         .sideDrawer(isPresented: $showingFolders) {
             FolderSidebarView(
                 accounts: accountStore.accounts,
                 catalog: folderCatalog,
                 expandedAccounts: $expandedFolderAccounts,
-                onSelectAllInboxes: { showingFolders = false }
+                selection: $viewModel.selection,
+                flaggedCount: viewModel.flaggedCount,
+                onClose: { showingFolders = false }
             )
         }
     }
@@ -261,9 +280,47 @@ struct InboxView: View {
                 folder: message.folder
             )
             MessageStore.shared.updateFlagged(messageID: message.id, isFlagged: newFlagged)
+
+            // In der Kennzeichen-Sicht: Entflaggen bietet „Rückgängig" an.
+            if viewModel.selection == .flagged && !newFlagged {
+                undoTask?.cancel()
+                viewModel.undoUnflag = InboxViewModel.UndoUnflag(
+                    messageID: message.id,
+                    messageUID: message.uid,
+                    accountID: message.accountID,
+                    folder: message.folder
+                )
+                undoTask = Task {
+                    try? await Task.sleep(for: .seconds(5))
+                    guard !Task.isCancelled else { return }
+                    viewModel.undoUnflag = nil
+                }
+            }
+
             viewModel.loadFromCache()
         } catch {
             errorMessage = "Kennzeichnen fehlgeschlagen: \(error.localizedDescription)"
+        }
+    }
+
+    @MainActor
+    private func undoUnflag(_ undo: InboxViewModel.UndoUnflag) {
+        undoTask?.cancel()
+        viewModel.undoUnflag = nil
+        Task {
+            do {
+                try await MailActionService.setFlagged(
+                    uid: Int(undo.messageUID),
+                    isFlagged: true,
+                    accountID: undo.accountID,
+                    accountStore: accountStore,
+                    folder: undo.folder
+                )
+                MessageStore.shared.updateFlagged(messageID: undo.messageID, isFlagged: true)
+                viewModel.loadFromCache()
+            } catch {
+                errorMessage = "Rückgängig fehlgeschlagen: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -280,16 +337,18 @@ struct InboxView: View {
     }
 }
 
-/// Überschrift der Liste: klein, mit Symbol für mehrere Eingänge.
+/// Überschrift der Liste: klein, mit Symbol passend zur Auswahl.
 /// Auf dem Mac trägt die Fensterleiste den Titel bereits
 /// (`navigationTitle`), dort bleibt der Platz leer.
 private struct InboxTitle: View {
+    let selection: MailboxSelection
+
     var body: some View {
         #if os(iOS)
         HStack(spacing: 6) {
-            Image(systemName: "tray.2")
+            Image(systemName: selection.systemImage)
                 .foregroundStyle(.secondary)
-            Text("Alle Eingänge")
+            Text(selection.title)
         }
         .font(.subheadline.weight(.semibold))
         .accessibilityElement(children: .combine)
@@ -297,6 +356,35 @@ private struct InboxTitle: View {
         #else
         EmptyView()
         #endif
+    }
+}
+
+/// „Rückgängig"-Hinweis am unteren Rand. Verschwindet nach 5 Sekunden
+/// oder auf Tipp – je nachdem, was zuerst kommt.
+private struct UndoBanner: View {
+    let onUndo: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack {
+            Text("Kennzeichnung entfernt")
+                .font(.subheadline)
+            Spacer()
+            Button("Rückgängig") { onUndo() }
+                .font(.subheadline.weight(.semibold))
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
     }
 }
 

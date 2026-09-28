@@ -17,6 +17,23 @@ final class InboxViewModel {
     var isLoading = false
     var errorMessage: String?
 
+    /// Aktive Ansicht. Ändert sich durch die Seitenleiste.
+    var selection: MailboxSelection = .allInboxes {
+        didSet { loadFromCache() }
+    }
+
+    /// Nachricht, deren Kennzeichen gerade entfernt wurde – zeigt den
+    /// „Rückgängig"-Hinweis in der Kennzeichen-Sicht.
+    var undoUnflag: UndoUnflag?
+
+    struct UndoUnflag: Identifiable {
+        var id: String { messageID }
+        let messageID: String
+        let messageUID: UInt32
+        let accountID: UUID
+        let folder: String
+    }
+
     /// Ein Postfach ohne Spam-Ordner samt Vorschlag. Angelegt wird nur nach
     /// Bestätigung durch den Nutzer.
     struct PendingSpamFolder: Identifiable {
@@ -49,11 +66,23 @@ final class InboxViewModel {
 
     func loadFromCache() {
         let accountIDs = accountStore.accounts.map(\.id)
-        print("📋 loadFromCache: \(accountIDs.count) Konten → \(accountIDs.map(\.uuidString))")
-        messages = MessageStore.shared.allMessages(
-            accountIDs: accountIDs, folder: MailFetchService.inboxFolder
+        switch selection {
+        case .allInboxes:
+            messages = MessageStore.shared.allMessages(
+                accountIDs: accountIDs, folder: MailFetchService.inboxFolder
+            )
+        case .flagged:
+            messages = MessageStore.shared.flaggedInboxMessages(
+                accountIDs: accountIDs
+            )
+        }
+    }
+
+    /// Anzahl gekennzeichneter Mails in den Posteingängen (für die Leiste).
+    var flaggedCount: Int {
+        MessageStore.shared.flaggedInboxCount(
+            accountIDs: accountStore.accounts.map(\.id)
         )
-        print("📋 loadFromCache: \(messages.count) Nachrichten geladen")
     }
 
     /// Legt den vorgeschlagenen Spam-Ordner an. Beim nächsten Abruf wird
