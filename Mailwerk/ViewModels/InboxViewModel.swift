@@ -16,10 +16,24 @@ final class InboxViewModel {
     var messages: [CachedMessage] = []
     var isLoading = false
     var errorMessage: String?
+    /// Stand der aktuellen Ansicht laut Datenbank (Tabelle folder_sync).
+    /// Überlebt Neustarts und ist auch offline bekannt. `nil` nur, wenn
+    /// kein Postfach eingerichtet ist.
+    var syncState: SyncState?
+    /// `true`, wenn der letzte Abrufversuch dieser Ansicht an der
+    /// Verbindung scheiterte. Wird still im Titel angezeigt, nicht als Alert.
+    var connectionFailed = false
+
+    private let network = NetworkMonitor.shared
 
     /// Aktive Ansicht. Ändert sich durch die Seitenleiste.
     var selection: MailboxSelection = .allInboxes {
-        didSet { loadFromCache() }
+        didSet {
+            // Der Verbindungsstatus gilt für die bisherige Ansicht; die neue
+            // ermittelt ihn bei ihrem eigenen Abruf.
+            connectionFailed = false
+            loadFromCache()
+        }
     }
 
     /// Nachricht, deren Kennzeichen gerade entfernt wurde – zeigt den
@@ -66,6 +80,7 @@ final class InboxViewModel {
 
     func loadFromCache() {
         let accountIDs = accountStore.accounts.map(\.id)
+        syncState = currentSyncState()
         switch selection {
         case .allInboxes:
             messages = MessageStore.shared.allMessages(
@@ -75,7 +90,37 @@ final class InboxViewModel {
             messages = MessageStore.shared.flaggedInboxMessages(
                 accountIDs: accountIDs
             )
+        case .folder(let accountID, let path, _):
+            messages = MessageStore.shared.folderMessages(
+                accountID: accountID, folder: path
+            )
         }
+    }
+
+    /// Stand der gewählten Ansicht. Sammelansichten sind so aktuell wie
+    /// der älteste beteiligte Posteingang.
+    private func currentSyncState() -> SyncState? {
+        let accounts = accountStore.accounts
+        guard !accounts.isEmpty else { return nil }
+        switch selection {
+        case .allInboxes, .flagged:
+            return .oldest(accounts.map {
+                MessageStore.shared.lastSync(accountID: $0.id, folder: MailFetchService.inboxFolder)
+            })
+        case .folder(let accountID, let path, _):
+            return .oldest([MessageStore.shared.lastSync(accountID: accountID, folder: path)])
+        }
+    }
+
+    /// Ordnet einen Abruffehler ein: Verbindungsfehler werden still
+    /// vermerkt, alle anderen als Meldungstext zurückgegeben.
+    private func classify(_ error: Error, context: String) -> String? {
+        if MailFetchService.isConnectionError(error) || !network.isOnline {
+            connectionFailed = true
+            print("📴 \(context): keine Verbindung (\(error.localizedDescription))")
+            return nil
+        }
+        return "\(context): \(error.localizedDescription)"
     }
 
     /// Anzahl gekennzeichneter Mails in den Posteingängen (für die Leiste).
@@ -108,10 +153,50 @@ final class InboxViewModel {
         pendingSpamFolders.removeAll { $0.id == pending.id }
     }
 
+    /// Abruf eines einzelnen Ordners (beim Antippen in der Leiste).
+    /// Zeigt sofort den Cache und lädt im Hintergrund nach.
     @MainActor
-    func refresh() async {
+    func refreshFolder(accountID: UUID, path: String) async {
+        guard let account = accountStore.accounts.first(where: { $0.id == accountID }),
+              let password = try? accountStore.password(for: account)
+        else { return }
+
+        // Ohne Netz gar nicht erst versuchen: Cache zeigen, still vermerken.
+        guard network.isOnline else {
+            connectionFailed = true
+            loadFromCache()
+            return
+        }
+
         isLoading = true
         defer { isLoading = false }
+
+        connectionFailed = false
+        do {
+            try await MailFetchService.refreshAndCache(
+                account: account, password: password, folder: path
+            )
+        } catch {
+            if let message = classify(error, context: account.displayName) {
+                errorMessage = message
+            }
+        }
+        loadFromCache()
+    }
+
+    @MainActor
+    func refresh() async {
+        // Ohne Netz gar nicht erst versuchen: Cache zeigen, still vermerken.
+        guard network.isOnline else {
+            connectionFailed = true
+            loadFromCache()
+            print("📴 Refresh übersprungen: kein Netz")
+            return
+        }
+
+        isLoading = true
+        defer { isLoading = false }
+        connectionFailed = false
 
         print("🔄 Refresh gestartet für \(accountStore.accounts.count) Konten")
 
@@ -140,22 +225,63 @@ final class InboxViewModel {
                             )
                         }
                     } catch {
-                        errors.append("\(account.displayName): Spamfilter – \(error.localizedDescription)")
+                        if let message = classify(error, context: "\(account.displayName): Spamfilter") {
+                            errors.append(message)
+                        }
                         print("⚠️ \(account.displayName): Spamfilter fehlgeschlagen: \(error.localizedDescription)")
                     }
                 }
 
+                // Posteingang abrufen
                 try await MailFetchService.refreshAndCache(
                     account: account, password: password
                 )
+
+                // Spam-Ordner mit abrufen – dort wird am meisten gearbeitet
+                if let spamFolder = account.spamFolder, !spamFolder.isEmpty {
+                    do {
+                        try await MailFetchService.refreshAndCache(
+                            account: account, password: password, folder: spamFolder
+                        )
+                        print("📬 [\(account.displayName)] Spam-Ordner \(spamFolder) abgerufen")
+                    } catch {
+                        print("⚠️ [\(account.displayName)] Spam-Abruf fehlgeschlagen: \(error.localizedDescription)")
+                    }
+                }
                 print("✅ \(account.displayName): Abruf abgeschlossen")
             } catch {
-                errors.append("\(account.displayName): \(error.localizedDescription)")
+                if let message = classify(error, context: account.displayName) {
+                    errors.append(message)
+                }
                 print("❌ \(account.displayName): \(error.localizedDescription)")
             }
 
             // Nach jedem Konto Liste aktualisieren → schrittweiser Aufbau
             loadFromCache()
+
+            // Netz während des Abrufs verloren: die übrigen Postfächer
+            // nicht einzeln in Zeitüberschreitungen laufen lassen.
+            if !network.isOnline {
+                connectionFailed = true
+                print("📴 Refresh abgebrochen: Netz verloren")
+                break
+            }
+        }
+
+        // Wird ein einzelner Ordner angezeigt, diesen ebenfalls abrufen
+        if case .folder(let accountID, let path, _) = selection {
+            if let account = accountStore.accounts.first(where: { $0.id == accountID }),
+               let password = try? accountStore.password(for: account) {
+                do {
+                    try await MailFetchService.refreshAndCache(
+                        account: account, password: password, folder: path
+                    )
+                } catch {
+                    if let message = classify(error, context: "\(account.displayName)/\(path)") {
+                        errors.append(message)
+                    }
+                }
+            }
         }
 
         loadFromCache()

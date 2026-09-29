@@ -6,7 +6,7 @@
 //  ein Tipp darauf schließt die Leiste. Darunter je Postfach ein
 //  aufklappbarer Abschnitt mit dem Ordnerbaum.
 //
-//  v0.1.7a: nur Anzeige. Ordner sind noch nicht auswählbar.
+//  v0.1.7d: Ordner sind auswählbar – Tipp zeigt den Ordnerinhalt.
 //  Unterordner sind immer sichtbar und nur durch Einrückung erkennbar;
 //  auf- und zuklappen lassen sich nur die Postfächer.
 //
@@ -55,6 +55,14 @@ struct FolderSidebarView: View {
                             account: account,
                             state: catalog.state(for: account.id),
                             isExpanded: expansionBinding(for: account.id),
+                            selection: selection,
+                            onSelect: { node in
+                                select(.folder(
+                                    accountID: account.id,
+                                    path: node.id,
+                                    displayName: node.name
+                                ))
+                            },
                             onRetry: { Task { await catalog.retry(account) } }
                         )
                     }
@@ -96,6 +104,8 @@ private struct AccountFolderSection: View {
     let account: MailAccount
     let state: FolderCatalog.State
     @Binding var isExpanded: Bool
+    let selection: MailboxSelection
+    let onSelect: (FolderNode) -> Void
     let onRetry: () -> Void
 
     var body: some View {
@@ -140,6 +150,13 @@ private struct AccountFolderSection: View {
         .accessibilityValue(isExpanded ? "aufgeklappt" : "zugeklappt")
     }
 
+    private func isFolderSelected(_ node: FolderNode) -> Bool {
+        if case .folder(let id, let path, _) = selection {
+            return id == account.id && path == node.id
+        }
+        return false
+    }
+
     @ViewBuilder
     private var content: some View {
         switch state {
@@ -171,8 +188,14 @@ private struct AccountFolderSection: View {
                     .padding(.leading, FolderRow.baseIndent)
                     .padding(.vertical, 6)
             } else {
+                let accountColor = account.colorHex.map { Color(hex: $0) } ?? Color.secondary
                 ForEach(tree.indented()) { entry in
-                    FolderRow(entry: entry)
+                    FolderRow(
+                        entry: entry,
+                        accountColor: accountColor,
+                        isSelected: isFolderSelected(entry.node),
+                        onSelect: { onSelect(entry.node) }
+                    )
                 }
             }
         }
@@ -181,10 +204,13 @@ private struct AccountFolderSection: View {
 
 // MARK: - Ordnerzeile
 
-/// Eine Ordnerzeile. In v0.1.7a reine Anzeige ohne Aktion.
-/// Reine Container (`\Noselect`) erscheinen abgeschwächt.
+/// Eine Ordnerzeile. Wählbare Ordner reagieren auf Tipp; reine
+/// Container (`\Noselect`) erscheinen abgeschwächt und sind nicht tippbar.
 private struct FolderRow: View {
     let entry: IndentedFolder
+    let accountColor: Color
+    var isSelected = false
+    let onSelect: () -> Void
 
     /// Einrückung der obersten Ordnerebene unter dem Postfachnamen –
     /// bündig mit dem Farbpunkt des Postfachs.
@@ -193,20 +219,39 @@ private struct FolderRow: View {
     static let levelIndent: CGFloat = 18
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: entry.node.role.systemImage)
-                .foregroundStyle(entry.node.isSelectable ? Color.accentColor : Color.secondary)
-                .frame(width: 20)
-            Text(entry.node.name)
-                .foregroundStyle(entry.node.isSelectable ? .primary : .secondary)
-                .lineLimit(1)
-            Spacer(minLength: 0)
+        Button(action: onSelect) {
+            HStack(spacing: 10) {
+                if isSelected {
+                    Circle()
+                        .fill(accountColor)
+                        .frame(width: 6, height: 6)
+                } else {
+                    Color.clear.frame(width: 6, height: 6)
+                }
+                Image(systemName: entry.node.role.systemImage)
+                    .foregroundStyle(entry.node.isSelectable ? Color.accentColor : Color.secondary)
+                    .frame(width: 20)
+                Text(entry.node.name)
+                    .foregroundStyle(entry.node.isSelectable ? .primary : .secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .font(.subheadline)
+            .padding(.leading, Self.baseIndent - 16 + CGFloat(entry.depth) * Self.levelIndent)
+            .padding(.trailing, 10)
+            .padding(.vertical, 7)
+            .background {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.accentColor.opacity(0.10))
+                }
+            }
+            .contentShape(Rectangle())
         }
-        .font(.subheadline)
-        .padding(.leading, Self.baseIndent + CGFloat(entry.depth) * Self.levelIndent)
-        .padding(.trailing, 10)
-        .padding(.vertical, 7)
+        .buttonStyle(.plain)
+        .disabled(!entry.node.isSelectable)
         .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityHint(entry.depth > 0 ? "Unterordner, Ebene \(entry.depth + 1)" : "")
     }
 }

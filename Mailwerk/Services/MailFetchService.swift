@@ -57,6 +57,8 @@ enum MailFetchService {
             guard !uids.isEmpty else {
                 print("📬 [\(account.displayName)] Keine UIDs → überspringe")
                 try await server.logout()
+                // Auch ein leerer Ordner ist erfolgreich abgerufen.
+                MessageStore.shared.recordSync(accountID: account.id, folder: folder)
                 return
             }
 
@@ -196,10 +198,30 @@ enum MailFetchService {
                 sinceDate, forAccount: account.id, folder: folder
             )
 
+            // Stand vermerken – erst hier, nach vollständigem Abruf.
+            MessageStore.shared.recordSync(accountID: account.id, folder: folder)
+
         } catch {
             try? await server.disconnect()
             throw error
         }
+    }
+
+    // MARK: - Fehlerarten
+
+    /// `true` bei Fehlern, die nur „keine Verbindung" bedeuten: kein Netz,
+    /// Server nicht erreichbar, Verbindung abgebrochen, Zeitüberschreitung.
+    /// Solche Fehler meldet die App still im Titel statt per Alert.
+    static func isConnectionError(_ error: Error) -> Bool {
+        if let imapError = error as? SwiftMail.IMAPError {
+            switch imapError {
+            case .connectionFailed, .timeout:
+                return true
+            default:
+                break
+            }
+        }
+        return ConnectionErrorClassifier.isConnectionError(error)
     }
 
     // MARK: - Helfer

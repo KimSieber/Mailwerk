@@ -23,6 +23,7 @@ struct InboxView: View {
     @State private var errorMessage: String?
     @State private var processingMessageIDs: Set<String> = []
     @State private var undoTask: Task<Void, Never>?
+    private let network = NetworkMonitor.shared
 
     init(
         accountStore: AccountStore,
@@ -42,8 +43,37 @@ struct InboxView: View {
         })
     }
 
+    /// Verbindungshinweis für die zweite Titelzeile, `nil` = alles in Ordnung.
+    private var connectionStatus: String? {
+        if !network.isOnline { return "Offline" }
+        if viewModel.connectionFailed { return "Keine Verbindung" }
+        return nil
+    }
+
+    /// Ruft die gerade angezeigte Ansicht ab – einen Ordner allein, sonst
+    /// alle Posteingänge samt Spam-Ordnern.
+    @MainActor
+    private func refreshCurrentView() async {
+        if case .folder(let accountID, let path, _) = viewModel.selection {
+            await viewModel.refreshFolder(accountID: accountID, path: path)
+        } else {
+            await viewModel.refresh()
+        }
+    }
+
+    /// Farbe des Postfachs, wenn ein einzelner Ordner gewählt ist.
+    private var selectedAccountColor: Color? {
+        guard let id = viewModel.selection.accountID,
+              let hex = accountStore.accounts.first(where: { $0.id == id })?.colorHex
+        else { return nil }
+        return Color(hex: hex)
+    }
+
     var body: some View {
         NavigationStack {
+            // WICHTIG: Jeder Zweig dieser Group muss genau EIN View liefern.
+            // Modifier an einer Group wirken auf jedes Kind einzeln – bei
+            // zwei Kindern erschiene z. B. die Toolbar doppelt (v0.1.7d).
             Group {
                 if viewModel.messages.isEmpty && viewModel.isLoading {
                     VStack(spacing: 16) {
@@ -55,19 +85,28 @@ struct InboxView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if viewModel.messages.isEmpty {
-                    ContentUnavailableView(
-                        viewModel.selection == .flagged
-                            ? "Keine gekennzeichneten Nachrichten"
-                            : "Keine Nachrichten",
-                        systemImage: viewModel.selection == .flagged ? "flag" : "tray",
-                        description: Text(
-                            accountStore.accounts.isEmpty
-                                ? "Richte zuerst ein Postfach ein."
-                                : viewModel.selection == .flagged
-                                    ? "Kennzeichne Nachrichten, damit sie hier erscheinen."
-                                    : "Zieh nach unten, um abzurufen."
-                        )
-                    )
+                    GeometryReader { geo in
+                        ScrollView {
+                            VStack(spacing: 0) {
+                                ContentUnavailableView(
+                                    viewModel.selection == .flagged
+                                        ? "Keine gekennzeichneten Nachrichten"
+                                        : "Keine Nachrichten",
+                                    systemImage: viewModel.selection == .flagged ? "flag" : "tray",
+                                    description: Text(
+                                        accountStore.accounts.isEmpty
+                                            ? "Richte zuerst ein Postfach ein."
+                                            : viewModel.selection == .flagged
+                                                ? "Kennzeichne Nachrichten, damit sie hier erscheinen."
+                                                : viewModel.selection.accountID != nil
+                                                    ? "Dieser Ordner enthält keine Nachrichten."
+                                                    : "Zieh nach unten, um abzurufen."
+                                    )
+                                )
+                            }
+                            .frame(minHeight: geo.size.height)
+                        }
+                    }
                 } else {
                     List(viewModel.messages) { message in
                         NavigationLink {
@@ -110,6 +149,9 @@ struct InboxView: View {
                     }
                 }
             }
+            .refreshable {
+                await refreshCurrentView()
+            }
             // Feine Linie als Abgrenzung unter der Überschrift
             .safeAreaInset(edge: .top, spacing: 0) {
                 Divider()
@@ -127,7 +169,12 @@ struct InboxView: View {
                     }
                 }
                 ToolbarItem(placement: .principal) {
-                    InboxTitle(selection: viewModel.selection)
+                    InboxTitle(
+                        selection: viewModel.selection,
+                        accountColor: selectedAccountColor,
+                        syncState: viewModel.syncState,
+                        connectionStatus: connectionStatus
+                    )
                 }
                 ToolbarItem(placement: Self.progressPlacement) {
                     if viewModel.isLoading && !viewModel.messages.isEmpty {
@@ -159,11 +206,22 @@ struct InboxView: View {
                     }
                 }
             }
-            .refreshable { await viewModel.refresh() }
             .task {
                 guard !hasLoadedOnce else { return }
                 hasLoadedOnce = true
                 await viewModel.refresh()
+            }
+            .onChange(of: network.isOnline) { wasOnline, isOnline in
+                // Netz ist zurück: aktuelle Ansicht selbst abrufen.
+                guard isOnline, !wasOnline else { return }
+                Task { await refreshCurrentView() }
+            }
+            .onChange(of: viewModel.selection) { _, newSelection in
+                // Cache sofort zeigen (didSet in selection), dann im
+                // Hintergrund vom Server nachladen.
+                if case .folder(let accountID, let path, _) = newSelection {
+                    Task { await viewModel.refreshFolder(accountID: accountID, path: path) }
+                }
             }
             .sheet(isPresented: $showingAccounts) {
                 AccountListView(accountStore: accountStore)
@@ -338,24 +396,61 @@ struct InboxView: View {
 }
 
 /// Überschrift der Liste: klein, mit Symbol passend zur Auswahl.
+/// Bei einem gewählten Ordner erscheint ein Farbpunkt des Postfachs.
 /// Auf dem Mac trägt die Fensterleiste den Titel bereits
 /// (`navigationTitle`), dort bleibt der Platz leer.
 private struct InboxTitle: View {
     let selection: MailboxSelection
+    var accountColor: Color?
+    /// Stand der Ansicht; erscheint als zweite Zeile. Der untere
+    /// Bildschirmrand bleibt so frei (später für die Suche vorgesehen).
+    var syncState: SyncState?
+    /// „Offline" bzw. „Keine Verbindung", sonst `nil`.
+    var connectionStatus: String?
 
     var body: some View {
         #if os(iOS)
-        HStack(spacing: 6) {
-            Image(systemName: selection.systemImage)
-                .foregroundStyle(.secondary)
-            Text(selection.title)
+        VStack(spacing: 1) {
+            HStack(spacing: 6) {
+                if let color = accountColor {
+                    Circle()
+                        .fill(color)
+                        .frame(width: 7, height: 7)
+                }
+                Image(systemName: selection.systemImage)
+                    .foregroundStyle(.secondary)
+                Text(selection.title)
+            }
+            .font(.subheadline.weight(.semibold))
+
+            if let syncState {
+                // Minütlich neu berechnen, damit „vor 5 Minuten" mitläuft.
+                TimelineView(.periodic(from: .now, by: 60)) { _ in
+                    statusLine(syncState)
+                        .font(.caption2)
+                        .foregroundStyle(connectionStatus == nil ? Color.secondary : Color.orange)
+                }
+            }
         }
-        .font(.subheadline.weight(.semibold))
+        .lineLimit(1)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
         #else
         EmptyView()
         #endif
+    }
+
+    private func statusLine(_ state: SyncState) -> Text {
+        switch (state, connectionStatus) {
+        case (.at(let date), nil):
+            return Text("Aktualisiert: \(date, format: .relative(presentation: .named))")
+        case (.at(let date), let status?):
+            return Text("\(status) · Stand: \(date, format: .relative(presentation: .named))")
+        case (.never, nil):
+            return Text("Noch nicht abgerufen")
+        case (.never, let status?):
+            return Text("\(status) · noch nicht abgerufen")
+        }
     }
 }
 

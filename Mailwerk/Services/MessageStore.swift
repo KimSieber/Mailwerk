@@ -143,6 +143,18 @@ final class MessageStore: @unchecked Sendable {
             CREATE INDEX IF NOT EXISTS idx_message_account_folder
             ON message(accountID, folder)
             """)
+
+        // v0.1.7d: Stand je Ordner. Eigene Tabelle, weil auch leere
+        // Ordner einen Stand haben – aus den Nachrichten ließe er sich
+        // dort nicht ableiten.
+        exec("""
+            CREATE TABLE IF NOT EXISTS folder_sync (
+                accountID TEXT NOT NULL,
+                folder TEXT NOT NULL,
+                lastSyncAt REAL NOT NULL,
+                PRIMARY KEY (accountID, folder)
+            )
+            """)
     }
 
     /// Schreibt die Kennungen von "<account>-<uid>" auf "<account>-INBOX-<uid>" um.
@@ -411,6 +423,50 @@ final class MessageStore: @unchecked Sendable {
             result.append(readMessage(stmt))
         }
         return result
+    }
+
+    /// Nachrichten eines einzelnen Ordners eines Kontos.
+    func folderMessages(accountID: UUID, folder: String) -> [CachedMessage] {
+        let sql = """
+            SELECT \(Self.messageColumns) FROM message
+            WHERE accountID = ? AND folder = ? ORDER BY date DESC
+            """
+        guard let stmt = prepare(sql) else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, accountID.uuidString)
+        bind(stmt, 2, folder)
+        var result: [CachedMessage] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            result.append(readMessage(stmt))
+        }
+        return result
+    }
+
+    // MARK: - Stand je Ordner
+
+    /// Vermerkt einen erfolgreichen Abruf eines Ordners.
+    func recordSync(accountID: UUID, folder: String, at date: Date = Date()) {
+        let sql = """
+            INSERT INTO folder_sync (accountID, folder, lastSyncAt) VALUES (?, ?, ?)
+            ON CONFLICT(accountID, folder) DO UPDATE SET lastSyncAt = excluded.lastSyncAt
+            """
+        guard let stmt = prepare(sql) else { return }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, accountID.uuidString)
+        bind(stmt, 2, folder)
+        sqlite3_bind_double(stmt, 3, date.timeIntervalSince1970)
+        sqlite3_step(stmt)
+    }
+
+    /// Letzter erfolgreicher Abruf eines Ordners, `nil` = noch nie.
+    func lastSync(accountID: UUID, folder: String) -> Date? {
+        let sql = "SELECT lastSyncAt FROM folder_sync WHERE accountID = ? AND folder = ?"
+        guard let stmt = prepare(sql) else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, accountID.uuidString)
+        bind(stmt, 2, folder)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0))
     }
 
     /// Gekennzeichnete Nachrichten aus den Posteingängen aller übergebenen
