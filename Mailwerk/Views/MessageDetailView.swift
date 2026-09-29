@@ -5,6 +5,7 @@
 
 import SwiftUI
 import QuickLook
+import WebKit
 
 struct MessageDetailView: View {
     let message: CachedMessage
@@ -21,6 +22,7 @@ struct MessageDetailView: View {
     @State private var downloadingIDs: Set<String> = []
     @State private var errorMessage: String?
     @State private var showDeleteAttachmentsConfirm = false
+    @State private var showShareSheet = false
 
     // MARK: - Basis-Aktionen (v0.1.2)
     @State private var isUnread: Bool
@@ -246,6 +248,9 @@ struct MessageDetailView: View {
         } message: {
             Text(spamStatusMessage ?? "")
         }
+        .sheet(isPresented: $showShareSheet) {
+            MailShareSheet(message: message, attachments: attachments)
+        }
         .sheet(isPresented: $showFolderPicker) {
             FolderPickerSheet(
                 folders: folders,
@@ -320,54 +325,58 @@ struct MessageDetailView: View {
             // ── Spam ──
             Section {
                 if let sender = FilterAddress.sender(fromHeader: message.from) {
-                    Button {
-                        pendingSpamAction = SpamActionRequest(
-                            kind: .block, entryKind: .address, value: sender.address
-                        )
-                    } label: {
-                        Label("\(sender.address) blockieren", systemImage: "person.crop.circle.badge.xmark")
-                    }
+                    Menu {
+                        Button {
+                            pendingSpamAction = SpamActionRequest(
+                                kind: .block, entryKind: .address, value: sender.address
+                            )
+                        } label: {
+                            Label("\(sender.address) blockieren", systemImage: "person.crop.circle.badge.xmark")
+                        }
 
-                    Button {
-                        pendingSpamAction = SpamActionRequest(
-                            kind: .block, entryKind: .domain, value: sender.domain
-                        )
-                    } label: {
-                        Label("\(sender.domain) blockieren", systemImage: "globe.badge.chevron.backward")
-                    }
+                        Button {
+                            pendingSpamAction = SpamActionRequest(
+                                kind: .block, entryKind: .domain, value: sender.domain
+                            )
+                        } label: {
+                            Label("\(sender.domain) blockieren", systemImage: "globe.badge.chevron.backward")
+                        }
 
-                    Button {
-                        pendingSpamAction = SpamActionRequest(
-                            kind: .trust, entryKind: .address, value: sender.address
-                        )
-                    } label: {
-                        Label("\(sender.address) vertrauen", systemImage: "person.crop.circle.badge.checkmark")
-                    }
+                        Button {
+                            pendingSpamAction = SpamActionRequest(
+                                kind: .trust, entryKind: .address, value: sender.address
+                            )
+                        } label: {
+                            Label("\(sender.address) vertrauen", systemImage: "person.crop.circle.badge.checkmark")
+                        }
 
-                    Button {
-                        pendingSpamAction = SpamActionRequest(
-                            kind: .trust, entryKind: .domain, value: sender.domain
-                        )
+                        Button {
+                            pendingSpamAction = SpamActionRequest(
+                                kind: .trust, entryKind: .domain, value: sender.domain
+                            )
+                        } label: {
+                            Label("\(sender.domain) vertrauen", systemImage: "globe")
+                        }
                     } label: {
-                        Label("\(sender.domain) vertrauen", systemImage: "globe")
+                        Label("Spam / Vertrauen", systemImage: "shield")
                     }
-                } else {
-                    Label("Absender nicht auswertbar", systemImage: "questionmark.circle")
                 }
             }
             .disabled(isProcessingAction)
 
             // ── Sonstiges ──
             Section {
-                Button(action: {}) {
+                Button {
+                    showShareSheet = true
+                } label: {
                     Label("Teilen", systemImage: "square.and.arrow.up")
                 }
-                .disabled(true)
 
-                Button(action: {}) {
+                Button {
+                    printMessage()
+                } label: {
                     Label("Drucken", systemImage: "printer")
                 }
-                .disabled(true)
 
                 if hasLocalAttachmentData {
                     Button(role: .destructive) {
@@ -556,6 +565,122 @@ struct MessageDetailView: View {
         } catch {
             errorMessage = "Listeneintrag fehlgeschlagen: \(error.localizedDescription)"
         }
+    }
+
+    // MARK: - Teilen & Drucken
+
+    private func printMessage() {
+        let html = Self.printableHTML(for: message, attachments: attachments)
+        let printer = MailPrinter()
+        printer.print(html: html)
+    }
+
+    /// Formatiertes HTML mit Header-Informationen für Druck und Teilen.
+    static func printableHTML(for message: CachedMessage, attachments: [CachedAttachment] = []) -> String {
+        var header = "<b>Von:</b> \(Self.escaped(message.from))<br>"
+        header += "<b>An:</b> \(Self.escaped(message.to))<br>"
+        if !message.headers.ccList.isEmpty {
+            header += "<b>Kopie:</b> \(Self.escaped(message.headers.ccList.joined(separator: ", ")))<br>"
+        }
+        if let date = message.date {
+            let fmt = DateFormatter()
+            fmt.dateStyle = .full
+            fmt.timeStyle = .short
+            fmt.locale = Locale(identifier: "de_DE")
+            header += "<b>Datum:</b> \(fmt.string(from: date))<br>"
+        }
+        header += "<b>Betreff:</b> \(Self.escaped(message.subject))<br>"
+
+        let body = message.htmlBody ?? "<pre>\(Self.escaped(message.textBody ?? ""))</pre>"
+
+        return """
+            <!DOCTYPE html>
+            <html>
+            <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body {
+                    font-family: -apple-system, Helvetica, sans-serif;
+                    font-size: 12pt;
+                    color: #333;
+                    margin: 0;
+                    padding: 0;
+                    word-wrap: break-word;
+                    overflow-wrap: break-word;
+                }
+                .mail-header {
+                    border-bottom: 1px solid #ccc;
+                    padding-bottom: 8pt;
+                    margin-bottom: 12pt;
+                    font-size: 10pt;
+                    line-height: 1.6;
+                }
+                table, div, td, th, img, video, object {
+                    max-width: 100% !important;
+                    height: auto !important;
+                }
+                table[width], td[width], th[width] {
+                    width: auto !important;
+                }
+                img { display: block; }
+                pre, code {
+                    white-space: pre-wrap;
+                    word-wrap: break-word;
+                    max-width: 100%;
+                }
+            </style>
+            </head>
+            <body>
+            <div class="mail-header">\(header)</div>
+            \(body)
+            \(attachmentSection(attachments))
+            </body>
+            </html>
+            """
+    }
+
+    private static func attachmentSection(_ attachments: [CachedAttachment]) -> String {
+        guard !attachments.isEmpty else { return "" }
+        var rows = ""
+        for a in attachments {
+            let icon = attachmentIcon(for: a.contentType)
+            let size = formattedSize(a.sizeBytes)
+            rows += "<tr><td style=\"padding:4pt 8pt 4pt 0\">\(icon)</td>"
+            rows += "<td style=\"padding:4pt 0\">\(escaped(a.filename))</td>"
+            rows += "<td style=\"padding:4pt 0 4pt 12pt;color:#888\">\(size)</td></tr>"
+        }
+        return """
+            <div style="border-top:1px solid #ccc;margin-top:16pt;padding-top:8pt;font-size:10pt">
+            <b>Anlagen (\(attachments.count)):</b>
+            <table style="margin-top:4pt">\(rows)</table>
+            </div>
+            """
+    }
+
+    private static func attachmentIcon(for contentType: String) -> String {
+        let ct = contentType.lowercased()
+        if ct.hasPrefix("image/") { return "🖼️" }
+        if ct.contains("pdf") { return "📄" }
+        if ct.contains("zip") || ct.contains("archive") || ct.contains("compressed") { return "📦" }
+        if ct.contains("text/") { return "📝" }
+        if ct.contains("audio/") { return "🎵" }
+        if ct.contains("video/") { return "🎬" }
+        return "📎"
+    }
+
+    private static func formattedSize(_ bytes: Int) -> String {
+        if bytes < 1024 { return "\(bytes) B" }
+        let kb = Double(bytes) / 1024
+        if kb < 1024 { return String(format: "%.0f KB", kb) }
+        let mb = kb / 1024
+        return String(format: "%.1f MB", mb)
+    }
+
+    private static func escaped(_ text: String) -> String {
+        text.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
     }
 
     // MARK: - Anlagen lokal löschen
