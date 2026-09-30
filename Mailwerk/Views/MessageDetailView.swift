@@ -30,8 +30,6 @@ struct MessageDetailView: View {
     @State private var isProcessingAction = false
     @State private var showDeleteMessageConfirm = false
     @State private var showFolderPicker = false
-    @State private var folders: [MailFolder] = []
-    @State private var isLoadingFolders = false
 
     // MARK: - Verfassen (v0.1.4)
     @State private var composeRequest: ComposeRequest?
@@ -266,11 +264,14 @@ struct MessageDetailView: View {
             MailShareSheet(message: message, attachments: attachments)
         }
         .sheet(isPresented: $showFolderPicker) {
-            FolderPickerSheet(
-                folders: folders,
-                isLoading: isLoadingFolders
-            ) { folder in
-                Task { await moveMessageAction(to: folder) }
+            if let account = accountStore.accounts.first(where: { $0.id == message.accountID }) {
+                FolderMoveSheet(
+                    account: account,
+                    currentFolder: message.folder,
+                    accountStore: accountStore
+                ) { path in
+                    Task { await moveMessageAction(to: path) }
+                }
             }
         }
         .task {
@@ -329,7 +330,7 @@ struct MessageDetailView: View {
                 .disabled(isProcessingAction)
 
                 Button {
-                    presentFolderPicker()
+                    showFolderPicker = true
                 } label: {
                     Label("In Ordner verschieben", systemImage: "folder")
                 }
@@ -505,37 +506,17 @@ struct MessageDetailView: View {
         }
     }
 
-    private func presentFolderPicker() {
-        showFolderPicker = true
-        guard folders.isEmpty else { return }
-        Task { await loadFolders() }
-    }
-
+    /// Verschiebt die Mail in den gewählten Ordner (Server-Pfad) und
+    /// entfernt sie aus dem Cache des bisherigen Ordners.
     @MainActor
-    private func loadFolders() async {
-        isLoadingFolders = true
-        defer { isLoadingFolders = false }
-
-        do {
-            folders = try await MailActionService.fetchFolders(
-                accountID: message.accountID,
-                accountStore: accountStore
-            )
-        } catch {
-            errorMessage = "Ordnerliste konnte nicht geladen werden: \(error.localizedDescription)"
-            showFolderPicker = false
-        }
-    }
-
-    @MainActor
-    private func moveMessageAction(to folder: MailFolder) async {
+    private func moveMessageAction(to path: String) async {
         isProcessingAction = true
         defer { isProcessingAction = false }
 
         do {
             try await MailActionService.moveMessage(
                 uid: Int(message.uid),
-                toFolder: folder.id,
+                toFolder: path,
                 accountID: message.accountID,
                 accountStore: accountStore,
                 folder: message.folder
@@ -758,64 +739,6 @@ struct MessageDetailView: View {
                     shareURLs[attachment.id] = url
                 }
             }
-        }
-    }
-}
-
-// MARK: - Ordner-Auswahl (Sheet)
-
-private struct FolderPickerSheet: View {
-    let folders: [MailFolder]
-    let isLoading: Bool
-    let onSelect: (MailFolder) -> Void
-
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            Group {
-                if isLoading {
-                    ProgressView("Ordner werden geladen …")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if folders.isEmpty {
-                    ContentUnavailableView(
-                        "Keine Ordner gefunden",
-                        systemImage: "folder"
-                    )
-                } else {
-                    List(folders) { folder in
-                        Button {
-                            onSelect(folder)
-                            dismiss()
-                        } label: {
-                            Label(folder.name, systemImage: icon(for: folder))
-                        }
-                    }
-                }
-            }
-            .navigationTitle("In Ordner verschieben")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Abbrechen") { dismiss() }
-                }
-            }
-        }
-        .macSheetFrame(.list)
-    }
-
-    private func icon(for folder: MailFolder) -> String {
-        switch folder.specialUse {
-        case .trash:   return "trash"
-        case .sent:    return "paperplane"
-        case .drafts:  return "doc"
-        case .junk:    return "xmark.bin"
-        case .archive: return "archivebox"
-        case .flagged: return "flag"
-        case .all:     return "tray.full"
-        case nil:      return "folder"
         }
     }
 }

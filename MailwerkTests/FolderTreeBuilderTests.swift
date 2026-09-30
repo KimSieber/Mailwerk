@@ -342,4 +342,25 @@ struct FolderTreeBuilderTests {
         let tree = build([folder("INBOX"), folder("Kaputt&AP")], prefix: "")
         #expect(tree.contains { $0.id == "Kaputt&AP" && $0.name == "Kaputt&AP" })
     }
+
+    // MARK: - Verschieben-Ziel (v0.1.8c)
+
+    @Test func moveTargetExcludesCurrentFolderAndContainers() {
+        let test = FolderNode(id: "Test", name: "Test", role: .regular, isSelectable: true, children: [])
+        let container = FolderNode(id: "Ablage", name: "Ablage", role: .regular, isSelectable: false, children: [])
+        let spam = FolderNode(id: "Junk", name: "Spam", role: .junk, isSelectable: true, children: [])
+
+        #expect(test.isMoveTarget(from: "INBOX"))
+        #expect(!test.isMoveTarget(from: "Test"))
+        #expect(!container.isMoveTarget(from: "INBOX"))
+        #expect(spam.isMoveTarget(from: "INBOX"))
+    }
+
+    @Test func inboxIsTargetExceptFromInboxInAnySpelling() {
+        let inbox = FolderNode(id: "INBOX", name: "Posteingang", role: .inbox, isSelectable: true, children: [])
+        #expect(inbox.isMoveTarget(from: "Archive"))
+        #expect(inbox.isMoveTarget(from: "INBOX.Testeingang"))
+        #expect(!inbox.isMoveTarget(from: "INBOX"))
+        #expect(!inbox.isMoveTarget(from: "Inbox"))
+    }
 }

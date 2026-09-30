@@ -378,12 +378,7 @@ private struct FolderRow: View {
                 } else {
                     Color.clear.frame(width: 6, height: 6)
                 }
-                Image(systemName: entry.node.role.systemImage)
-                    .foregroundStyle(entry.node.isSelectable ? Color.accentColor : Color.secondary)
-                    .frame(width: 20)
-                Text(entry.node.name)
-                    .foregroundStyle(entry.node.isSelectable ? .primary : .secondary)
-                    .lineLimit(1)
+                FolderLabel(node: entry.node, isEnabled: entry.node.isSelectable)
                 Spacer(minLength: 0)
             }
             .font(.subheadline)

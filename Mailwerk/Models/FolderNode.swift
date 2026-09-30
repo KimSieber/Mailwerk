@@ -65,6 +65,19 @@ nonisolated struct IndentedFolder: Identifiable, Hashable, Sendable {
     var id: String { node.id }
 }
 
+nonisolated extension FolderNode {
+    /// Kann eine Mail aus `currentFolder` hierher verschoben werden?
+    /// Nicht in den eigenen Ordner und nicht in reine Container-Ordner
+    /// (`\Noselect`), die keine Mails aufnehmen (v0.1.8c).
+    func isMoveTarget(from currentFolder: String) -> Bool {
+        guard isSelectable else { return false }
+        // „INBOX“ ist laut RFC 3501 unabhängig von der Schreibweise.
+        let bothInbox = id.caseInsensitiveCompare("INBOX") == .orderedSame
+            && currentFolder.caseInsensitiveCompare("INBOX") == .orderedSame
+        return id != currentFolder && !bothInbox
+    }
+}
+
 nonisolated extension Array where Element == FolderNode {
     /// Baum in Anzeigereihenfolge: jeder Ordner, direkt gefolgt von
     /// seinen Unterordnern (Tiefensuche, Reihenfolge des Baums bleibt).

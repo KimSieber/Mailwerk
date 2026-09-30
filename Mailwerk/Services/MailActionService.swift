@@ -269,19 +269,6 @@ enum MailActionService {
 
     // MARK: - Ordnerliste
 
-    /// Holt die Liste aller IMAP-Ordner für ein Konto.
-    /// INBOX wird herausgefiltert (wir sind ja schon dort).
-    static func fetchFolders(
-        accountID: UUID,
-        accountStore: AccountStore
-    ) async throws -> [MailFolder] {
-        try await withIMAPConnection(
-            accountID: accountID, accountStore: accountStore
-        ) { server in
-            try await fetchMailboxList(server)
-        }
-    }
-
     /// Ordnerliste inklusive INBOX und Namespace-Präfix – Grundlage des
     /// Ordnerbaums in der Seitenleiste. Das Präfix hat SwiftMail bereits
     /// beim Anmelden per NAMESPACE erfragt; es kostet keinen eigenen Befehl.
