@@ -107,21 +107,6 @@ struct MessageStoreFolderTests {
         #expect(store.cachedMessageIDs(forAccount: Self.account, folder: "Junk").count == 1)
     }
 
-    @Test("Die Bereinigung alter Mails trifft nur den angegebenen Ordner")
-    func cleanupPerFolder() {
-        let store = MessageStore(path: temporaryPath())
-        let old = Date(timeIntervalSince1970: 1_000_000)
-        store.saveMessage(message(folder: "INBOX", uid: 1, date: old))
-        store.saveMessage(message(folder: "Junk", uid: 1, date: old))
-
-        store.deleteMessagesOlderThan(
-            Date(timeIntervalSince1970: 2_000_000), forAccount: Self.account, folder: "INBOX"
-        )
-
-        #expect(store.allMessages(accountIDs: [Self.account], folder: "INBOX").isEmpty)
-        #expect(store.allMessages(accountIDs: [Self.account], folder: "Junk").count == 1)
-    }
-
     @Test("Das Löschen eines Ordners räumt Nachrichten, Anhänge und Stand nur dieses Ordners ab")
     func deleteFolderClearsOnlyThatFolder() {
         let store = MessageStore(path: temporaryPath())
@@ -144,6 +129,31 @@ struct MessageStoreFolderTests {
         #expect(store.windowStart(accountID: Self.account, folder: "Test.Neu") == nil)
         #expect(store.folderMessages(accountID: Self.account, folder: "Test").count == 1)
         #expect(store.lastSync(accountID: Self.account, folder: "Test") != nil)
+    }
+
+    // MARK: - Ordnerliste (v0.1.8b)
+
+    @Test("Die Ordnerliste eines Postfachs wird gespeichert, ersetzt und bleibt je Postfach getrennt")
+    func folderListingRoundTrip() {
+        let path = temporaryPath()
+        let listing = FolderListing(folders: [
+            MailFolder(id: "INBOX", name: "INBOX", specialUse: nil, hierarchyDelimiter: "."),
+            MailFolder(id: "Gr&APYA3w-e", name: "Gr&APYA3w-e", specialUse: nil, hierarchyDelimiter: "."),
+            MailFolder(id: "Junk", name: "Junk", specialUse: .junk, hierarchyDelimiter: ".", isSelectable: false)
+        ], namespacePrefix: "")
+
+        let store = MessageStore(path: path)
+        #expect(store.folderListing(accountID: Self.account) == nil)
+        store.saveFolderListing(listing, accountID: Self.account)
+
+        // Übersteht ein erneutes Öffnen (App-Neustart).
+        let reopened = MessageStore(path: path)
+        #expect(reopened.folderListing(accountID: Self.account) == listing)
+        #expect(reopened.folderListing(accountID: UUID()) == nil)
+
+        let changed = FolderListing(folders: [listing.folders[0]], namespacePrefix: "")
+        reopened.saveFolderListing(changed, accountID: Self.account)
+        #expect(reopened.folderListing(accountID: Self.account) == changed)
     }
 
     // MARK: - Umzug

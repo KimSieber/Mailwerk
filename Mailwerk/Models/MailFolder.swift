@@ -12,7 +12,7 @@
 
 import Foundation
 
-nonisolated struct MailFolder: Identifiable, Hashable, Sendable {
+nonisolated struct MailFolder: Identifiable, Hashable, Sendable, Codable {
     let id: String          // Vollständiger IMAP-Pfad (z. B. "INBOX.Trash")
     let name: String        // Letztes Pfad-Segment in Server-Form (modified UTF-7);
                             // lesbar über `MailboxNameCodec.displayName`
@@ -25,14 +25,15 @@ nonisolated struct MailFolder: Identifiable, Hashable, Sendable {
     /// `var` mit Vorgabewert, damit bestehende Aufrufe unverändert bleiben.
     var isSelectable: Bool = true
 
-    nonisolated enum SpecialUse: String, Sendable {
+    nonisolated enum SpecialUse: String, Sendable, Codable {
         case drafts, sent, trash, junk, archive, flagged, all
     }
 }
 
 /// Ordnerliste eines Postfachs, wie sie der Server beim Anmelden und
 /// beim LIST meldet. Grundlage für den Ordnerbaum der Seitenleiste.
-nonisolated struct FolderListing: Sendable {
+/// Seit v0.1.8b `Codable`: wird je Postfach im Cache gespeichert.
+nonisolated struct FolderListing: Sendable, Codable, Equatable {
     /// Alle Ordner des Kontos, INBOX eingeschlossen.
     let folders: [MailFolder]
     /// Präfix des persönlichen Namespace (etwa „INBOX.“; manitu meldet

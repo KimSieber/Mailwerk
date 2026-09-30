@@ -30,7 +30,7 @@ final class InboxViewModel {
     /// zeigt das selbst an, bis zum nächsten Versuch oder Ansichtswechsel.
     var olderConnectionFailed = false
     /// Ordner, für die der Server nichts Älteres mehr hat. Nur für diese
-    /// Sitzung – nach dem Neustart gilt ohnehin wieder das Standardfenster.
+    /// Sitzung – nach einem Neustart stellt ein Tipp das erneut fest.
     private var exhaustedFolders: Set<String> = []
 
     private let network = NetworkMonitor.shared

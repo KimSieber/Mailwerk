@@ -126,7 +126,9 @@ struct FolderCatalogTests {
         #expect(names(catalog.state(for: a.id)) == ["Neu"])
     }
 
-    @Test func failedReloadReplacesOldTreeWithError() async {
+    /// v0.1.8b: Ein gescheitertes Neuladen lässt den Baum stehen
+    /// (bis v0.1.8a wurde er durch die Fehlermeldung ersetzt).
+    @Test func failedReloadKeepsExistingTree() async {
         let fake = FakeLoader()
         let catalog = makeCatalog(fake)
         let a = account("a")
@@ -135,7 +137,7 @@ struct FolderCatalogTests {
         fake.failing = [a.id]
         await catalog.reload([a])
 
-        #expect(catalog.state(for: a.id) == .failed("Anmeldung fehlgeschlagen"))
+        #expect(names(catalog.state(for: a.id)) == ["Posteingang"])
     }
 
     @Test func cancelledFirstLoadReturnsToIdleAndLoadsAgain() async {
@@ -174,5 +176,67 @@ struct FolderCatalogTests {
 
         #expect(catalog.state(for: a.id) == .idle)
         #expect(catalog.states.count == 1)
+    }
+
+    // MARK: - Gespeicherter Baum (v0.1.8b)
+
+    private func cachedTree(_ name: String) -> [FolderNode] {
+        [FolderNode(id: "INBOX", name: name, role: .inbox, isSelectable: true, children: [])]
+    }
+
+    @Test func cachedTreeIsShownWhenServerFails() async {
+        let fake = FakeLoader()
+        let a = account("a")
+        fake.failing = [a.id]
+        let catalog = FolderCatalog(
+            loader: { account in try await fake.load(account) },
+            cached: { _ in self.cachedTree("Gespeichert") }
+        )
+
+        await catalog.loadIfNeeded([a])
+
+        #expect(names(catalog.state(for: a.id)) == ["Gespeichert"])
+        #expect(fake.calls[a.id] == 1)
+    }
+
+    @Test func serverTreeReplacesCachedTree() async {
+        let fake = FakeLoader()
+        let a = account("a")
+        let catalog = FolderCatalog(
+            loader: { account in try await fake.load(account) },
+            cached: { _ in self.cachedTree("Gespeichert") }
+        )
+
+        await catalog.loadIfNeeded([a])
+
+        #expect(names(catalog.state(for: a.id)) == ["Posteingang"])
+    }
+
+    @Test func cachedTreeIsFetchedOnlyOncePerSession() async {
+        let fake = FakeLoader()
+        let a = account("a")
+        let catalog = FolderCatalog(
+            loader: { account in try await fake.load(account) },
+            cached: { _ in self.cachedTree("Gespeichert") }
+        )
+
+        await catalog.loadIfNeeded([a])
+        await catalog.loadIfNeeded([a])
+
+        #expect(fake.calls[a.id] == 1)
+    }
+
+    @Test func withoutCacheFailureIsReported() async {
+        let fake = FakeLoader()
+        let a = account("a")
+        fake.failing = [a.id]
+        let catalog = FolderCatalog(
+            loader: { account in try await fake.load(account) },
+            cached: { _ in nil }
+        )
+
+        await catalog.loadIfNeeded([a])
+
+        #expect(catalog.state(for: a.id) == .failed("Anmeldung fehlgeschlagen"))
     }
 }

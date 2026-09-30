@@ -2,6 +2,13 @@
 //  HTMLMailView.swift
 //  Mailwerk
 //
+//  v0.1.8b: Zu breite Mails werden nach dem Laden auf Bildschirmbreite
+//  verkleinert (CSS-`zoom` am body). Auslöser war eine DHL-Mail, deren
+//  Sprachleiste als Tabellenzeile eine Mindestbreite von ~590 px erzwingt;
+//  `max-width` hilft gegen Tabellen-Mindestbreiten nicht. Nach dem
+//  Verkleinern ist die Seite so breit wie der Bildschirm – wie jede
+//  passende Mail, sodass Zoomen per Geste wie gewohnt funktioniert.
+//
 
 import SwiftUI
 import WebKit
@@ -169,8 +176,30 @@ extension HTMLMailView {
             }
         }
 
+        /// Verkleinert eine zu breite Mail auf die Breite der Ansicht (nur
+        /// einmal je Laden) und liefert danach die Höhe für den Rahmen.
+        ///
+        /// Höhe: Für nicht verkleinerte Mails wie bisher `body.scrollHeight`.
+        /// Bei verkleinerten Mails meldet `body` je nach Engine unverkleinerte
+        /// Werte; dort gilt die Höhe des Dokuments. Sie ist nie kleiner als
+        /// der aktuelle Rahmen – unkritisch, weil zuerst im kleinen
+        /// Startrahmen gemessen wird.
+        ///
+        /// Das Skript gehört der App; JavaScript aus der Mail bleibt aus.
+        private static let fitAndMeasureScript = """
+            (function () {
+                var root = document.documentElement, body = document.body;
+                if (!body) { return 0; }
+                if (!body.style.zoom) {
+                    var visible = root.clientWidth, full = root.scrollWidth;
+                    if (full > visible + 1) { body.style.zoom = String(visible / full); }
+                }
+                return body.style.zoom ? root.scrollHeight : body.scrollHeight;
+            })()
+            """
+
         private func measureHeight(_ webView: WKWebView) {
-            webView.evaluateJavaScript("document.body.scrollHeight") { result, _ in
+            webView.evaluateJavaScript(Self.fitAndMeasureScript) { result, _ in
                 if let height = result as? CGFloat, height > 0 {
                     DispatchQueue.main.async {
                         self.parent.contentHeight = height

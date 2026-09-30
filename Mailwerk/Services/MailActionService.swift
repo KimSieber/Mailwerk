@@ -298,7 +298,9 @@ enum MailActionService {
         }
     }
 
-    /// Fertiger Ordnerbaum eines Postfachs für die Seitenleiste.
+    /// Fertiger Ordnerbaum eines Postfachs für die Seitenleiste. Die
+    /// Ordnerliste wird dabei im Cache gespeichert (v0.1.8b), damit die
+    /// Leiste auch offline ihre Ordner zeigt.
     static func fetchFolderTree(
         for account: MailAccount,
         accountStore: AccountStore
@@ -306,11 +308,8 @@ enum MailActionService {
         let listing = try await fetchFolderListing(
             accountID: account.id, accountStore: accountStore
         )
-        return FolderTreeBuilder.build(
-            folders: listing.folders,
-            namespacePrefix: listing.namespacePrefix,
-            configuredSpamFolder: account.spamFolder
-        )
+        MessageStore.shared.saveFolderListing(listing, accountID: account.id)
+        return FolderTreeBuilder.build(listing: listing, configuredSpamFolder: account.spamFolder)
     }
 
     /// Ordnerliste über eine bereits bestehende Verbindung. Der Filterlauf

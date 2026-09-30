@@ -44,25 +44,6 @@ struct SyncWindowTests {
         #expect(second.since < second.before)
     }
 
-    @Test func cleanupUsesStandardStartWithoutWindow() {
-        let standard = date(2026, 8, 31, 12)
-        #expect(SyncWindow.cleanupCutoff(standardStart: standard, windowStart: nil) == standard)
-    }
-
-    @Test func cleanupUsesEarlierWindowStart() {
-        let standard = date(2026, 8, 31, 12)
-        let window = date(2026, 7, 2)
-        #expect(SyncWindow.cleanupCutoff(standardStart: standard, windowStart: window) == window)
-    }
-
-    @Test func cleanupNeverGoesBeyondStandard() {
-        // Ein (veralteter) Fensterbeginn nach dem Standardbeginn darf
-        // das Fenster nicht verkleinern.
-        let standard = date(2026, 8, 31, 12)
-        let window = date(2026, 9, 10)
-        #expect(SyncWindow.cleanupCutoff(standardStart: standard, windowStart: window) == standard)
-    }
-
     // MARK: - Ablage
 
     private func makeStore() -> MessageStore {
@@ -106,27 +87,19 @@ struct SyncWindowTests {
         #expect(store.windowStart(accountID: account, folder: "INBOX.Trash") == nil)
     }
 
-    @Test func resetRemovesWindowsAndOlderMailsOnlyThere() {
-        let store = makeStore()
-        let standard = date(2026, 8, 31, 12)
-        // Posteingang mit nachgeladener alter Mail
-        store.saveMessage(message(folder: "INBOX", uid: 1, date: date(2026, 9, 20)))
-        store.saveMessage(message(folder: "INBOX", uid: 2, date: date(2026, 8, 10)))
-        store.setWindowStart(date(2026, 8, 1), accountID: account, folder: "INBOX")
-        // Ordner ohne erweitertes Fenster: bleibt unangetastet
-        store.saveMessage(message(folder: "Archiv", uid: 3, date: date(2026, 8, 10)))
-
-        store.resetWindows(standardStart: standard)
-
-        #expect(store.windowStart(accountID: account, folder: "INBOX") == nil)
-        #expect(store.folderMessages(accountID: account, folder: "INBOX").map(\.uid) == [1])
-        #expect(store.folderMessages(accountID: account, folder: "Archiv").map(\.uid) == [3])
-    }
-
-    @Test func resetWithoutWindowsChangesNothing() {
-        let store = makeStore()
-        store.saveMessage(message(folder: "INBOX", uid: 1, date: date(2026, 8, 10)))
-        store.resetWindows(standardStart: date(2026, 8, 31, 12))
-        #expect(store.folderMessages(accountID: account, folder: "INBOX").count == 1)
+    /// v0.1.8b: Fensterbeginn und nachgeladene Mails überstehen einen
+    /// Neustart (neu geöffnete Ablage auf derselben Datei).
+    @Test func windowAndOlderMailsSurviveRestart() {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MailwerkTests-\(UUID().uuidString).sqlite").path
+        do {
+            let store = MessageStore(path: path)
+            store.saveMessage(message(folder: "INBOX", uid: 1, date: date(2026, 9, 20)))
+            store.saveMessage(message(folder: "INBOX", uid: 2, date: date(2025, 3, 10)))
+            store.setWindowStart(date(2025, 3, 1), accountID: account, folder: "INBOX")
+        }
+        let reopened = MessageStore(path: path)
+        #expect(reopened.windowStart(accountID: account, folder: "INBOX") == date(2025, 3, 1))
+        #expect(reopened.folderMessages(accountID: account, folder: "INBOX").map(\.uid) == [1, 2])
     }
 }

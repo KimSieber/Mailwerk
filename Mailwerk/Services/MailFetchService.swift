@@ -31,6 +31,10 @@ enum MailFetchService {
 
     /// Holt neue Nachrichten eines Ordners (letzte 30 Tage), cacht Body
     /// und – bei Mails ≤ 5 MB – auch die Anhänge lokal.
+    ///
+    /// v0.1.8b: Im Posteingang zusätzlich alle gekennzeichneten Mails,
+    /// unabhängig vom Alter – „Mit Kennzeichnung“ ist damit vollständig.
+    /// Nach Alter wird nichts mehr aus dem Cache gelöscht.
     static func refreshAndCache(
         account: MailAccount,
         password: String,
@@ -46,13 +50,28 @@ enum MailFetchService {
             let sinceDate = Calendar.current.date(
                 byAdding: .day, value: -syncDays, to: Date()
             )!
-            let uids: [SwiftMail.UID] = try await server.search(
+            var uids: [SwiftMail.UID] = try await server.search(
                 criteria: [.since(sinceDate)],
                 sortCriteria: [.descending(.date)],
                 calendar: Calendar(identifier: .gregorian)
             )
 
             print("📬 [\(account.displayName)/\(folder)] SEARCH ergab \(uids.count) UIDs (seit \(sinceDate))")
+
+            // Gekennzeichnete Mails des Posteingangs, auch ältere. Die Menge
+            // ist klein, die Antwort bleibt weit unter den Puffergrenzen.
+            // Bereits gecachte Mails bekommen dabei ihre Flags abgeglichen.
+            if folder == inboxFolder {
+                let flagged: [SwiftMail.UID] = try await server.search(
+                    criteria: [.flagged],
+                    sortCriteria: [.descending(.date)],
+                    calendar: Calendar(identifier: .gregorian)
+                )
+                let known = Set(uids.map(\.value))
+                let older = flagged.filter { !known.contains($0.value) }
+                uids += older
+                print("📬 [\(account.displayName)/\(folder)] Gekennzeichnet: \(flagged.count), davon älter: \(older.count)")
+            }
 
             guard !uids.isEmpty else {
                 print("📬 [\(account.displayName)] Keine UIDs → überspringe")
@@ -65,16 +84,6 @@ enum MailFetchService {
             try await cacheMessages(uids: uids, server: server, account: account, folder: folder)
 
             try await server.logout()
-
-            // Alte Nachrichten jenseits des Fensters bereinigen. Wurden
-            // ältere Mails nachgeladen, reicht das Fenster weiter zurück.
-            let cutoff = SyncWindow.cleanupCutoff(
-                standardStart: sinceDate,
-                windowStart: MessageStore.shared.windowStart(accountID: account.id, folder: folder)
-            )
-            MessageStore.shared.deleteMessagesOlderThan(
-                cutoff, forAccount: account.id, folder: folder
-            )
 
             // Stand vermerken – erst hier, nach vollständigem Abruf.
             MessageStore.shared.recordSync(accountID: account.id, folder: folder)

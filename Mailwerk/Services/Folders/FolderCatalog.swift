@@ -2,15 +2,21 @@
 //  FolderCatalog.swift
 //  Mailwerk
 //
-//  Hält die Ordnerbäume aller Postfächer für die Seitenleiste – nur für
-//  die laufende App-Sitzung, ein Cache folgt in einer späteren Version.
+//  Hält die Ordnerbäume aller Postfächer für die Seitenleiste.
 //
 //  Geladen wird beim ersten Öffnen der Leiste, alle Postfächer parallel.
 //  Jedes Postfach hat seinen eigenen Zustand: Scheitert eines, zeigen die
 //  anderen trotzdem ihre Ordner.
 //
-//  Der eigentliche Abruf wird als `Loader` übergeben. So bleibt der
-//  Katalog ohne IMAP-Bezug und lässt sich ohne Server testen.
+//  v0.1.8b – offline verfügbar: Ein gespeicherter Baum (`CachedLoader`)
+//  erscheint sofort, danach wird einmal je Sitzung vom Server geladen.
+//  Scheitert ein Abruf, bleibt ein vorhandener Baum stehen – ohne
+//  Fehlermeldung, wie bei der Mail-Liste. „Konnte nicht geladen werden“
+//  erscheint nur, wenn es gar keinen Baum gibt.
+//
+//  Abruf und gespeicherter Baum werden als Closures übergeben. So bleibt
+//  der Katalog ohne IMAP- und Datenbankbezug und lässt sich ohne Server
+//  testen.
 //
 
 import Foundation
@@ -32,26 +38,39 @@ final class FolderCatalog {
     /// (Compiler-Fehler in Swift 6.2). Der eigentliche Netzwerkverkehr läuft
     /// ohnehin im Actor von SwiftMail, der Main-Actor wartet nur.
     typealias Loader = @MainActor (MailAccount) async throws -> [FolderNode]
+    /// Gespeicherter Baum eines Postfachs, `nil`, wenn keiner vorliegt.
+    typealias CachedLoader = @MainActor (MailAccount) -> [FolderNode]?
 
     private(set) var states: [UUID: State] = [:]
     @ObservationIgnored private let loader: Loader
+    @ObservationIgnored private let cached: CachedLoader
     /// Postfächer mit laufendem Abruf. Getrennt vom Zustand, weil ein
     /// geladenes Postfach beim Neuladen `.loaded` bleibt.
     @ObservationIgnored private var inFlight: Set<UUID> = []
+    /// Postfächer, für die in dieser Sitzung schon ein Abruf lief
+    /// (erfolgreich oder gescheitert). Ein abgebrochener zählt nicht.
+    @ObservationIgnored private var attempted: Set<UUID> = []
 
-    init(loader: @escaping Loader) {
+    init(loader: @escaping Loader, cached: @escaping CachedLoader = { _ in nil }) {
         self.loader = loader
+        self.cached = cached
     }
 
     func state(for accountID: UUID) -> State {
         states[accountID] ?? .idle
     }
 
-    /// Lädt nur Postfächer, die noch nie geladen wurden. Zustände
-    /// entfernter Postfächer werden dabei verworfen.
+    /// Zeigt gespeicherte Bäume sofort und lädt Postfächer, für die in
+    /// dieser Sitzung noch kein Abruf lief. Zustände entfernter Postfächer
+    /// werden dabei verworfen.
     func loadIfNeeded(_ accounts: [MailAccount]) async {
         prune(keeping: accounts)
-        await load(accounts.filter { state(for: $0.id) == .idle })
+        for account in accounts where state(for: account.id) == .idle {
+            if let tree = cached(account) {
+                states[account.id] = .loaded(tree)
+            }
+        }
+        await load(accounts.filter { !attempted.contains($0.id) })
     }
 
     /// Lädt alle Postfächer neu (Pull-to-Refresh). Bereits geladene
@@ -90,16 +109,21 @@ final class FolderCatalog {
         }
         do {
             let tree = try await loader(account)
+            attempted.insert(account.id)
             states[account.id] = .loaded(tree)
             print("📁 [\(account.displayName)] \(tree.count) Ordner auf oberster Ebene")
         } catch where error is CancellationError || Task.isCancelled {
             // Abgebrochen, etwa weil die Leiste geschlossen wurde. Das ist
             // kein Fehler des Postfachs: Zustand zurücksetzen, damit beim
             // nächsten Öffnen neu geladen wird.
+            attempted.remove(account.id)
             states[account.id] = (previous == .loading) ? .idle : previous
         } catch {
-            states[account.id] = .failed(error.localizedDescription)
+            attempted.insert(account.id)
             print("⚠️ [\(account.displayName)] Ordnerliste fehlgeschlagen: \(error.localizedDescription)")
+            // Vorhandenen (auch gespeicherten) Baum stehen lassen.
+            if case .loaded = previous { return }
+            states[account.id] = .failed(error.localizedDescription)
         }
     }
 
@@ -108,5 +132,6 @@ final class FolderCatalog {
         for id in states.keys where !ids.contains(id) {
             states.removeValue(forKey: id)
         }
+        attempted.formIntersection(ids)
     }
 }

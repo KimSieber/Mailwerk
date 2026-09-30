@@ -4,8 +4,9 @@
 //
 //  Zeitfenster des Caches je Ordner. Standard sind die letzten 30 Tage;
 //  „Ältere Nachrichten laden" schiebt den Fensterbeginn blockweise zurück.
-//  Nachgeladene Mails bleiben bis zum nächsten App-Start, danach gilt
-//  wieder das Standardfenster (Entscheidung v0.1.7e).
+//  Nachgeladene Mails bleiben dauerhaft im Cache, der Fensterbeginn
+//  übersteht Neustarts (v0.1.8b; bis v0.1.7e galt das nur bis zum
+//  App-Start). Nach Alter wird nichts mehr gelöscht.
 //
 //  Reine Datumslogik, damit sie ohne Server testbar ist.
 //
@@ -32,18 +33,11 @@ nonisolated enum SyncWindow {
     }
 
     /// Nächster Zeitraum vor `start`. Der Beginn liegt auf Tagesanfang,
-    /// damit das Aufräumen (exakter Zeitvergleich) keine Mails des
-    /// Grenztags entfernt, die SEARCH SINCE (tagesgenau) geliefert hat.
+    /// weil SEARCH SINCE tagesgenau arbeitet – so schließen die Zeiträume
+    /// lückenlos aneinander an.
     static func nextBlock(before start: Date, days: Int, calendar: Calendar = .current) -> Block {
         let earlier = calendar.date(byAdding: .day, value: -days, to: start)!
         return Block(since: calendar.startOfDay(for: earlier), before: start)
-    }
-
-    /// Ab wann beim Refresh aufgeräumt wird: am Standardbeginn oder – wenn
-    /// ältere Mails nachgeladen wurden – am früheren Fensterbeginn.
-    static func cleanupCutoff(standardStart: Date, windowStart: Date?) -> Date {
-        guard let windowStart else { return standardStart }
-        return min(standardStart, windowStart)
     }
 }
 

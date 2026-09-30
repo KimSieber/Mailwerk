@@ -79,6 +79,15 @@ nonisolated enum FolderTreeBuilder {
             .sorted(by: topLevelOrder)
     }
 
+    /// Baum aus einer gespeicherten oder frisch geladenen Ordnerliste.
+    static func build(listing: FolderListing, configuredSpamFolder: String?) -> [FolderNode] {
+        build(
+            folders: listing.folders,
+            namespacePrefix: listing.namespacePrefix,
+            configuredSpamFolder: configuredSpamFolder
+        )
+    }
+
     // MARK: - Rollen
 
     private static func assignRoles(

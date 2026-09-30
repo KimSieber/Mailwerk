@@ -38,9 +38,16 @@ struct InboxView: View {
             filterLists: filterLists,
             spamSettings: spamSettings
         ))
-        _folderCatalog = State(initialValue: FolderCatalog { account in
-            try await MailActionService.fetchFolderTree(for: account, accountStore: accountStore)
-        })
+        _folderCatalog = State(initialValue: FolderCatalog(
+            loader: { account in
+                try await MailActionService.fetchFolderTree(for: account, accountStore: accountStore)
+            },
+            cached: { account in
+                MessageStore.shared.folderListing(accountID: account.id).map {
+                    FolderTreeBuilder.build(listing: $0, configuredSpamFolder: account.spamFolder)
+                }
+            }
+        ))
     }
 
     /// Zeile „Ältere Nachrichten laden" am Listenende.

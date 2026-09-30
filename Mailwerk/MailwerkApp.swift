@@ -18,14 +18,8 @@ struct MailwerkApp: App {
 
     init() {
         modelContainer = Self.makeContainer()
-
-        // Nachgeladene ältere Mails gelten nur bis zum App-Neustart
-        // (Entscheidung v0.1.7e): Fenster zurücksetzen und die dafür
-        // geladenen Mails entfernen. Bewusst hier und nicht in einer View,
-        // weil das App-Init genau einmal pro Start läuft.
-        MessageStore.shared.resetWindows(
-            standardStart: SyncWindow.standardStart(now: Date(), days: MailFetchService.syncDays)
-        )
+        // v0.1.8b: Nachgeladene ältere Mails bleiben dauerhaft im Cache –
+        // das Zurücksetzen der Zeitfenster beim Start (v0.1.7e) entfällt.
     }
 
     var body: some Scene {

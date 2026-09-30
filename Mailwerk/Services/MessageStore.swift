@@ -157,13 +157,24 @@ final class MessageStore: @unchecked Sendable {
             """)
 
         // v0.1.7e: erweitertes Zeitfenster je Ordner („Ältere laden").
-        // Eine Zeile gibt es nur, solange nachgeladen wurde.
+        // Eine Zeile gibt es nur, wenn nachgeladen wurde; seit v0.1.8b
+        // bleibt sie dauerhaft.
         exec("""
             CREATE TABLE IF NOT EXISTS folder_window (
                 accountID TEXT NOT NULL,
                 folder TEXT NOT NULL,
                 windowStart REAL NOT NULL,
                 PRIMARY KEY (accountID, folder)
+            )
+            """)
+
+        // v0.1.8b: Ordnerliste je Postfach (JSON), damit die Seitenleiste
+        // auch offline ihre Ordner zeigt. Eine Zeile je Postfach.
+        exec("""
+            CREATE TABLE IF NOT EXISTS folder_listing (
+                accountID TEXT PRIMARY KEY,
+                json TEXT NOT NULL,
+                savedAt REAL NOT NULL
             )
             """)
     }
@@ -506,28 +517,6 @@ final class MessageStore: @unchecked Sendable {
         sqlite3_step(stmt)
     }
 
-    /// Setzt alle erweiterten Fenster zurück (App-Start) und entfernt die
-    /// dafür nachgeladenen Mails sofort – auch offline und auch in Ordnern,
-    /// die danach nicht geöffnet werden.
-    /// - Parameter standardStart: Beginn des Standardfensters.
-    func resetWindows(standardStart: Date) {
-        guard let stmt = prepare("SELECT accountID, folder FROM folder_window") else { return }
-        var windows: [(UUID, String)] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            if let id = UUID(uuidString: str(stmt, 0)) {
-                windows.append((id, str(stmt, 1)))
-            }
-        }
-        sqlite3_finalize(stmt)
-
-        exec("BEGIN TRANSACTION")
-        for (accountID, folder) in windows {
-            deleteMessagesOlderThan(standardStart, forAccount: accountID, folder: folder)
-        }
-        exec("DELETE FROM folder_window")
-        exec("COMMIT")
-    }
-
     /// Gekennzeichnete Nachrichten aus den Posteingängen aller übergebenen
     /// Konten, absteigend nach Datum.
     func flaggedInboxMessages(accountIDs: [UUID]) -> [CachedMessage] {
@@ -593,17 +582,39 @@ final class MessageStore: @unchecked Sendable {
         return result
     }
 
-    // MARK: - Löschen (für Cache-Bereinigung)
+    // MARK: - Ordnerliste (v0.1.8b)
 
-    func deleteMessagesOlderThan(_ date: Date, forAccount accountID: UUID, folder: String) {
-        let sql = "DELETE FROM message WHERE accountID = ? AND folder = ? AND date < ?"
+    /// Speichert die Ordnerliste eines Postfachs; ersetzt die bisherige.
+    func saveFolderListing(_ listing: FolderListing, accountID: UUID) {
+        guard let data = try? JSONEncoder().encode(listing),
+              let json = String(data: data, encoding: .utf8) else { return }
+        let sql = """
+            INSERT INTO folder_listing (accountID, json, savedAt) VALUES (?, ?, ?)
+            ON CONFLICT(accountID) DO UPDATE SET json = excluded.json, savedAt = excluded.savedAt
+            """
         guard let stmt = prepare(sql) else { return }
         defer { sqlite3_finalize(stmt) }
         bind(stmt, 1, accountID.uuidString)
-        bind(stmt, 2, folder)
-        sqlite3_bind_double(stmt, 3, date.timeIntervalSince1970)
+        bind(stmt, 2, json)
+        sqlite3_bind_double(stmt, 3, Date().timeIntervalSince1970)
         sqlite3_step(stmt)
     }
+
+    /// Gespeicherte Ordnerliste eines Postfachs, `nil`, wenn keine vorliegt
+    /// oder sie nicht mehr lesbar ist.
+    func folderListing(accountID: UUID) -> FolderListing? {
+        guard let stmt = prepare("SELECT json FROM folder_listing WHERE accountID = ?") else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, accountID.uuidString)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return try? JSONDecoder().decode(FolderListing.self, from: Data(str(stmt, 0).utf8))
+    }
+
+    // MARK: - Löschen
+
+    // v0.1.8b: Kein Löschen nach Alter mehr (`deleteMessagesOlderThan`,
+    // `resetWindows` entfallen). Mails verlassen den Cache nur, wenn sie
+    // in Mailwerk gelöscht/verschoben werden oder ihr Ordner gelöscht wird.
 
     /// Entfernt alles, was der Cache zu einem Ordner hält: Nachrichten
     /// (über ON DELETE CASCADE samt Anhängen), Stand und Zeitfenster.
