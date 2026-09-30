@@ -9,10 +9,9 @@
 //  das Webmail ebenso wie für weitere Mailwerk-Installationen auf iPad
 //  oder Mac – für den Abgleich sind beide dasselbe.
 //
-//  Datensparsam: Statt für jede Mail die Flags zu holen, genügen vier
-//  kompakte UID-Listen des Servers (alle, ungelesen, gekennzeichnet,
-//  beantwortet). Daraus ergibt sich, was im Cache fehlt und welche Flags
-//  sich geändert haben.
+//  Grundlage ist der Stand des ganzen Ordners, den der Aufrufer mit
+//  einer einzigen Flag-Abfrage holt (v0.1.8e). Daraus ergibt sich, was im
+//  Cache fehlt und welche Flags sich geändert haben.
 //
 //  Verschwundene UIDs werden nur aus dem Cache dieses Ordners entfernt.
 //  Wohin eine Mail gegangen ist, sagt IMAP nicht – sie kann gelöscht oder
@@ -31,8 +30,9 @@ nonisolated struct ServerFolderState: Equatable {
     var unseen: Set<UInt32>
     var flagged: Set<UInt32>
     var answered: Set<UInt32>
-    /// UIDs mit `$Forwarded`. `nil`, wenn der Server das Schlüsselwort
-    /// nicht unterstützt – dann bleibt dieses Kennzeichen unangetastet.
+    /// UIDs mit `$Forwarded`. `nil`, wenn das Kennzeichen nicht ermittelt
+    /// werden konnte – dann bleibt es im Cache unangetastet. manitu meldet
+    /// es (v0.1.8e).
     var forwarded: Set<UInt32>?
 }
 
@@ -85,28 +85,6 @@ nonisolated enum ServerReconciliation {
                 updated.isForwarded = forwarded.contains(message.uid)
             }
             if updated != message { plan.flagUpdates.append(updated) }
-        }
-        return plan
-    }
-
-    /// Korrigiert die Kennzeichnung gecachter Mails, die älter als der
-    /// geladene Zeitraum sind (v0.1.8d).
-    ///
-    /// Für diesen Bereich hat Mailwerk keine vollständige UID-Liste des
-    /// Servers – eine Suche über den ganzen Ordner sprengt den
-    /// Antwortpuffer (Fund v0.1.7e). Deshalb wird hier nur die
-    /// Kennzeichnung aufgehoben, wenn der Server sie nicht mehr meldet.
-    /// Gelöscht wird nichts: Fehlt eine UID in der Trefferliste, heißt das
-    /// nur, dass sie nicht gekennzeichnet ist.
-    static func unflagPlan(
-        olderFlagged: [CachedFlagState],
-        serverFlagged: Set<UInt32>
-    ) -> Plan {
-        var plan = Plan()
-        for message in olderFlagged where !serverFlagged.contains(message.uid) {
-            var updated = message
-            updated.isFlagged = false
-            plan.flagUpdates.append(updated)
         }
         return plan
     }

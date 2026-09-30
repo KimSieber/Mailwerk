@@ -151,32 +151,4 @@ struct ServerReconciliationTests {
         #expect(result.flagUpdates.first?.isUnread == false)
         #expect(result.flagUpdates.last?.isFlagged == true)
     }
-
-    // MARK: - Ältere gekennzeichnete Mails
-
-    @Test func olderFlaggedMailKeepsItsFlagWhenServerStillReportsIt() {
-        let result = ServerReconciliation.unflagPlan(
-            olderFlagged: [cached(5, flagged: true)],
-            serverFlagged: [5]
-        )
-        #expect(result.isEmpty)
-    }
-
-    @Test func olderFlaggedMailIsUnflaggedWhenServerDropsIt() {
-        let result = ServerReconciliation.unflagPlan(
-            olderFlagged: [cached(5, flagged: true), cached(6, flagged: true)],
-            serverFlagged: [6]
-        )
-        #expect(result.flagUpdates.map(\.id) == ["msg-5"])
-        #expect(result.flagUpdates.first?.isFlagged == false)
-    }
-
-    /// Außerhalb des geladenen Zeitraums wird nie gelöscht.
-    @Test func olderMailsAreNeverRemoved() {
-        let result = ServerReconciliation.unflagPlan(
-            olderFlagged: [cached(5, flagged: true)],
-            serverFlagged: []
-        )
-        #expect(result.removedIDs.isEmpty)
-    }
 }

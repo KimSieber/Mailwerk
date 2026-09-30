@@ -348,19 +348,6 @@ final class MessageStore: @unchecked Sendable {
         )
     }
 
-    /// Gekennzeichnete Mails eines Ordners vor `before`. Für sie liegt
-    /// keine vollständige Server-Liste vor; nur die Kennzeichnung wird
-    /// abgeglichen (siehe `ServerReconciliation.unflagPlan`).
-    func cachedFlaggedStates(accountID: UUID, folder: String, before: Date) -> [CachedFlagState] {
-        flagStates(
-            sql: """
-                SELECT id, uid, isUnread, isFlagged, isAnswered, isForwarded FROM message
-                WHERE accountID = ? AND folder = ? AND date < ? AND isFlagged = 1
-                """,
-            accountID: accountID, folder: folder, date: before
-        )
-    }
-
     private func flagStates(sql: String, accountID: UUID, folder: String, date: Date) -> [CachedFlagState] {
         guard let stmt = prepare(sql) else { return [] }
         defer { sqlite3_finalize(stmt) }

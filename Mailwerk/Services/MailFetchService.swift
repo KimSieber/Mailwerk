@@ -53,12 +53,6 @@ enum MailFetchService {
             let sinceDate = Calendar.current.date(
                 byAdding: .day, value: -syncDays, to: Date()
             )!
-            // Der Abgleich deckt den ganzen geladenen Zeitraum ab, also
-            // auch nachgeladene ältere Mails.
-            let windowStart = min(
-                sinceDate,
-                MessageStore.shared.windowStart(accountID: account.id, folder: folder) ?? sinceDate
-            )
             var uids: [SwiftMail.UID] = try await server.search(
                 criteria: [.since(sinceDate)],
                 sortCriteria: [.descending(.date)],
@@ -84,10 +78,7 @@ enum MailFetchService {
 
             guard !uids.isEmpty else {
                 print("📬 [\(account.displayName)] Keine UIDs → überspringe")
-                try await reconcile(
-                    server: server, account: account, folder: folder,
-                    since: windowStart, searchCalendar: Calendar(identifier: .gregorian)
-                )
+                try await reconcile(server: server, account: account, folder: folder)
                 try await server.logout()
                 // Auch ein leerer Ordner ist erfolgreich abgerufen.
                 MessageStore.shared.recordSync(accountID: account.id, folder: folder)
@@ -96,10 +87,7 @@ enum MailFetchService {
 
             try await cacheMessages(uids: uids, server: server, account: account, folder: folder)
 
-            try await reconcile(
-                server: server, account: account, folder: folder,
-                since: windowStart, searchCalendar: Calendar(identifier: .gregorian)
-            )
+            try await reconcile(server: server, account: account, folder: folder)
 
             try await server.logout()
 
@@ -119,131 +107,60 @@ enum MailFetchService {
     /// übernommen. Der Server ist führend – egal ob die Änderung aus dem
     /// Webmail oder von einer anderen Mailwerk-Installation stammt.
     ///
-    /// Datensparsam über vier kurze Suchen, die nur UID-Listen liefern.
-    /// Genutzt wird ESEARCH (`extendedSearch`): Die Antwort fasst Bereiche
-    /// zusammen („1:8780“) und bleibt dadurch klein. Sie decken den
-    /// geladenen Zeitraum ab (`since`), nicht den ganzen Ordner: Dessen
-    /// vollständige UID-Liste sprengte als einfaches SEARCH den
-    /// Antwortpuffer (Fund v0.1.7e). Für ältere Mails wird deshalb im
-    /// Posteingang nur die Kennzeichnung korrigiert und nie gelöscht.
+    /// v0.1.8e: **Eine** Abfrage der Flags über den ganzen Ordner
+    /// (`UID FETCH 1:* (FLAGS)`) statt fünf Suchen über den geladenen
+    /// Zeitraum. Das ist schneller (eine Laufzeit zum Server statt fünf)
+    /// und deckt auch sehr alte Mails ab. Die 8-KB-Grenze je Antwortzeile
+    /// (Fund v0.1.8d) greift hier nicht: Jede Mail ist eine eigene kurze
+    /// Zeile. Die Sonderbehandlung älterer gekennzeichneter Mails
+    /// entfällt damit.
     ///
-    /// Der Ordner muss bereits ausgewählt sein. Schlägt eine Suche fehl,
+    /// Der Ordner muss bereits ausgewählt sein. Schlägt die Abfrage fehl,
     /// wirft die Methode – gelöscht wird dann nichts.
     private static func reconcile(
         server: SwiftMail.IMAPServer,
         account: MailAccount,
-        folder: String,
-        since: Date,
-        searchCalendar: Calendar
+        folder: String
     ) async throws {
         let started = Date()
 
-        func uids(_ extra: SwiftMail.SearchCriteria...) async throws -> Set<UInt32> {
-            let result: SwiftMail.ExtendedSearchResult<SwiftMail.UID> = try await server.extendedSearch(
-                criteria: [.since(since)] + extra, calendar: searchCalendar
-            )
-            return Set((result.all?.toArray() ?? []).map(\.value))
+        // Alle Mails des Ordners mit ihren Flags – eine einzige Abfrage.
+        let infos = try await server.fetchMessageInfos(
+            uidRange: SwiftMail.UID(1)...,
+            options: [.flags]
+        )
+        let fetchDone = Date()
+
+        var state = ServerFolderState(all: [], unseen: [], flagged: [], answered: [], forwarded: [])
+        for info in infos {
+            guard let uid = info.uid?.value else { continue }
+            let flags = FlagState(info.flags)
+            state.all.insert(uid)
+            if flags.isUnread { state.unseen.insert(uid) }
+            if flags.isFlagged { state.flagged.insert(uid) }
+            if flags.isAnswered { state.answered.insert(uid) }
+            if flags.isForwarded { state.forwarded?.insert(uid) }
         }
 
-        let all = try await uids()
-        let unseen = try await uids(.unseen)
-        let flagged = try await uids(.flagged)
-        let answered = try await uids(.answered)
-        // $Forwarded ist kein Standard-Flag. Meldet der Server dazu einen
-        // Fehler, bleibt dieses Kennzeichen im Cache unangetastet.
-        let forwarded = try? await uids(.keyword("$Forwarded"))
-
-        let state = ServerFolderState(
-            all: all, unseen: unseen, flagged: flagged,
-            answered: answered, forwarded: forwarded
-        )
-        let searchDone = Date()
-
-        var plan = ServerReconciliation.plan(
+        let plan = ServerReconciliation.plan(
             cached: MessageStore.shared.cachedFlagStates(
-                accountID: account.id, folder: folder, since: since
+                accountID: account.id, folder: folder, since: .distantPast
             ),
             server: state,
             keepUIDsAbove: ServerReconciliation.highestUID(in: state)
         )
-
-        // Ältere gekennzeichnete Mails: nur im Posteingang, wo die Suche
-        // nach gekennzeichneten Mails über den ganzen Ordner läuft.
-        if folder == inboxFolder {
-            let flaggedResult: SwiftMail.ExtendedSearchResult<SwiftMail.UID> = try await server.extendedSearch(
-                criteria: [.flagged], calendar: searchCalendar
-            )
-            let olderFlagged = (flaggedResult.all?.toArray() ?? []).map(\.value)
-            let older = ServerReconciliation.unflagPlan(
-                olderFlagged: MessageStore.shared.cachedFlaggedStates(
-                    accountID: account.id, folder: folder, before: since
-                ),
-                serverFlagged: Set(olderFlagged)
-            )
-            plan.flagUpdates += older.flagUpdates
-        }
-
         MessageStore.shared.apply(plan)
 
-        let searchMillis = Int(searchDone.timeIntervalSince(started) * 1000)
+        let fetchMillis = Int(fetchDone.timeIntervalSince(started) * 1000)
         let totalMillis = Int(Date().timeIntervalSince(started) * 1000)
         print("""
-            🔁 [\(account.displayName)/\(folder)] Abgleich: \(all.count) UIDs im Zeitraum, \
+            🔁 [\(account.displayName)/\(folder)] Abgleich: \(state.all.count) Mails im Ordner, \
+            \(state.forwarded?.count ?? 0) mit \(forwardedKeyword), \
             \(plan.removedIDs.count) entfernt, \(plan.flagUpdates.count) Flags geändert \
-            (Suchen \(searchMillis) ms, gesamt \(totalMillis) ms)
+            (Abfrage \(fetchMillis) ms, gesamt \(totalMillis) ms)
             """)
-
-        #if DEBUG
-        await measureFullFolderSearch(server: server, account: account, folder: folder)
-        #endif
     }
 
-    #if DEBUG
-    /// Diagnose (v0.1.8d): Wie lange dauert eine Suche über den *ganzen*
-    /// Ordner, und kommt die Antwort überhaupt durch? Verglichen werden
-    /// ESEARCH (Bereiche, kompakt) und einfaches SEARCH (jede UID einzeln,
-    /// Fund v0.1.7e: sprengt den Antwortpuffer). Grundlage für die
-    /// Entscheidung, ob der Abgleich später den ganzen Ordner abdecken
-    /// kann.
-    ///
-    /// Ergebnis (2026-09-30, manitu): ESEARCH liefert auch 8780 UIDs in
-    /// rund 230 ms, das einfache SEARCH scheitert ab etwa 1000 UIDs mit
-    /// `PayloadTooLargeError` – NIOIMAP begrenzt eine Antwortzeile fest
-    /// auf 8 KB. Ein solcher Fehler reißt außerdem die Verbindung ab.
-    /// Deshalb steht die Messung auf `false`; zum Nachmessen auf `true`.
-    private static let measuresFullFolderSearch = false
-
-    private static func measureFullFolderSearch(
-        server: SwiftMail.IMAPServer,
-        account: MailAccount,
-        folder: String
-    ) async {
-        guard measuresFullFolderSearch else { return }
-
-        let esearchStart = Date()
-        do {
-            let result: SwiftMail.ExtendedSearchResult<SwiftMail.UID> = try await server.extendedSearch(criteria: [.all])
-            let count = result.all?.count ?? 0
-            let millis = Int(Date().timeIntervalSince(esearchStart) * 1000)
-            print("📐 [\(account.displayName)/\(folder)] ESEARCH ALL: \(count) UIDs in \(millis) ms")
-        } catch {
-            let millis = Int(Date().timeIntervalSince(esearchStart) * 1000)
-            print("📐 [\(account.displayName)/\(folder)] ESEARCH ALL fehlgeschlagen nach \(millis) ms: \(error.localizedDescription)")
-        }
-
-        let searchStart = Date()
-        do {
-            let all: [SwiftMail.UID] = try await server.search(
-                criteria: [.all], sortCriteria: [.ascending(.date)]
-            )
-            let millis = Int(Date().timeIntervalSince(searchStart) * 1000)
-            print("📐 [\(account.displayName)/\(folder)] SEARCH ALL (einzelne UIDs): \(all.count) in \(millis) ms")
-        } catch {
-            let millis = Int(Date().timeIntervalSince(searchStart) * 1000)
-            print("📐 [\(account.displayName)/\(folder)] SEARCH ALL fehlgeschlagen nach \(millis) ms: \(error.localizedDescription)")
-        }
-    }
-    #endif
 
     // MARK: - Ältere Nachrichten
 
