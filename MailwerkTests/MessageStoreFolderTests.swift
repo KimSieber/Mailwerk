@@ -156,6 +156,47 @@ struct MessageStoreFolderTests {
         #expect(reopened.folderListing(accountID: Self.account) == changed)
     }
 
+    // MARK: - Postfach entfernen (v0.1.8d)
+
+    @Test("Das Entfernen eines Postfachs räumt dessen Cache vollständig ab, andere bleiben unberührt")
+    func deleteAccountClearsEverythingForThatAccountOnly() {
+        let path = temporaryPath()
+        let other = UUID()
+        let store = MessageStore(path: path)
+
+        let doomed = message(folder: "INBOX", uid: 1)
+        store.saveMessage(doomed)
+        store.saveAttachment(CachedAttachment(
+            id: "\(doomed.id)-2", messageID: doomed.id, filename: "a.pdf",
+            contentType: "application/pdf", sizeBytes: 3, data: Data([1, 2, 3])
+        ))
+        store.recordSync(accountID: Self.account, folder: "INBOX")
+        store.setWindowStart(Date(timeIntervalSince1970: 1), accountID: Self.account, folder: "INBOX")
+        store.saveFolderListing(
+            FolderListing(folders: [
+                MailFolder(id: "INBOX", name: "INBOX", specialUse: nil, hierarchyDelimiter: ".")
+            ], namespacePrefix: ""),
+            accountID: Self.account
+        )
+        // Zweites Postfach als Gegenprobe.
+        store.recordSync(accountID: other, folder: "INBOX")
+        store.saveFolderListing(FolderListing(folders: [], namespacePrefix: ""), accountID: other)
+
+        #expect(store.deleteAccount(accountID: Self.account) == 1)
+
+        #expect(store.folderMessages(accountID: Self.account, folder: "INBOX").isEmpty)
+        #expect(store.attachments(forMessage: doomed.id).isEmpty)
+        #expect(store.lastSync(accountID: Self.account, folder: "INBOX") == nil)
+        #expect(store.windowStart(accountID: Self.account, folder: "INBOX") == nil)
+        #expect(store.folderListing(accountID: Self.account) == nil)
+
+        #expect(store.lastSync(accountID: other, folder: "INBOX") != nil)
+        #expect(store.folderListing(accountID: other) != nil)
+
+        // Nach erneutem Öffnen ist nichts zurück.
+        #expect(MessageStore(path: path).folderListing(accountID: Self.account) == nil)
+    }
+
     // MARK: - Umzug
 
     @Test("Eine Nachricht zieht mitsamt Anhang in einen anderen Ordner um")

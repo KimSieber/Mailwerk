@@ -4,6 +4,16 @@
 //
 //  Created by Kim Sieber on 18.09.26.
 //
+//  v0.1.8d: Ein Postfach zu entfernen löscht auch seinen gesamten Cache
+//  und sein Passwort aus dem Schlüsselbund. Deshalb gibt es davor eine
+//  Rückfrage – auch beim Wischen.
+//
+//  Bewusst ein Hinweisdialog (`alert`) statt eines `confirmationDialog`
+//  wie an anderen Stellen: Der erscheint mittig und zeigt beide Knöpfe.
+//  Ein `confirmationDialog` wird am Listeneintrag als Sprechblase gezeigt
+//  und blendet „Abbrechen“ aus, weil ein Tipp daneben abbricht – für eine
+//  nicht umkehrbare Aktion zu wenig deutlich.
+//
 
 import SwiftUI
 
@@ -12,6 +22,8 @@ struct AccountListView: View {
     @State private var showingAddAccount = false
     @State private var editingAccount: MailAccount?
     @State private var deleteError: String?
+    /// Postfächer, deren Entfernen gerade bestätigt werden soll.
+    @State private var pendingDeletion: [MailAccount]?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -47,7 +59,11 @@ struct AccountListView: View {
                             }
                             .tint(.primary)
                         }
-                        .onDelete(perform: deleteAccounts)
+                        .onDelete { offsets in
+                            // Erst bestätigen lassen – die Indizes gelten
+                            // nur jetzt, also die Postfächer gleich merken.
+                            pendingDeletion = offsets.map { accountStore.accounts[$0] }
+                        }
                     }
 
                     Section {
@@ -87,6 +103,19 @@ struct AccountListView: View {
                 EditAccountView(accountStore: accountStore, account: account)
             }
             .alert(
+                deletionTitle,
+                isPresented: Binding(
+                    get: { pendingDeletion != nil },
+                    set: { if !$0 { pendingDeletion = nil } }
+                ),
+                presenting: pendingDeletion
+            ) { accounts in
+                Button("Abbrechen", role: .cancel) { pendingDeletion = nil }
+                Button("Entfernen", role: .destructive) { deleteAccounts(accounts) }
+            } message: { _ in
+                Text("Die gespeicherten Mails und das Passwort werden gelöscht. Auf dem Server bleibt alles erhalten.")
+            }
+            .alert(
                 "Löschen fehlgeschlagen",
                 isPresented: Binding(
                     get: { deleteError != nil },
@@ -112,10 +141,17 @@ struct AccountListView: View {
 
     // MARK: - Löschen
 
-    private func deleteAccounts(at offsets: IndexSet) {
-        // Erst die Konten ermitteln, dann löschen – sonst verschieben sich
-        // die Indizes nach jedem removeAccount().
-        let toDelete = offsets.map { accountStore.accounts[$0] }
+    /// Titel der Rückfrage – nennt das Postfach beim Namen.
+    private var deletionTitle: String {
+        guard let pendingDeletion else { return "" }
+        if pendingDeletion.count == 1, let account = pendingDeletion.first {
+            return "„\(account.displayName)“ entfernen?"
+        }
+        return "\(pendingDeletion.count) Postfächer entfernen?"
+    }
+
+    private func deleteAccounts(_ toDelete: [MailAccount]) {
+        pendingDeletion = nil
         var failures: [String] = []
 
         for account in toDelete {

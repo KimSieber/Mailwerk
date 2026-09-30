@@ -50,6 +50,11 @@ final class AccountStore {
         accounts.removeAll { $0.id == account.id }
         saveAccounts()
 
+        // v0.1.8d: Ohne Postfach hat sein Cache keinen Zweck mehr –
+        // Mails, Anhänge, Stände, Zeitfenster und Ordnerliste entfernen.
+        let removed = MessageStore.shared.deleteAccount(accountID: account.id)
+        print("🗑️ [\(account.displayName)] Postfach entfernt, \(removed) Mails aus dem Cache gelöscht")
+
         // Gelöschtes Standard-Postfach → Standard zurücksetzen
         if defaultAccountID == account.id {
             setDefaultAccount(nil)

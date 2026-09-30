@@ -334,6 +334,70 @@ final class MessageStore: @unchecked Sendable {
         sqlite3_step(stmt)
     }
 
+    // MARK: - Server-Abgleich (v0.1.8d)
+
+    /// Flags der gecachten Mails eines Ordners ab `since` – die Grundlage
+    /// für den Abgleich mit dem Server.
+    func cachedFlagStates(accountID: UUID, folder: String, since: Date) -> [CachedFlagState] {
+        flagStates(
+            sql: """
+                SELECT id, uid, isUnread, isFlagged, isAnswered, isForwarded FROM message
+                WHERE accountID = ? AND folder = ? AND date >= ?
+                """,
+            accountID: accountID, folder: folder, date: since
+        )
+    }
+
+    /// Gekennzeichnete Mails eines Ordners vor `before`. Für sie liegt
+    /// keine vollständige Server-Liste vor; nur die Kennzeichnung wird
+    /// abgeglichen (siehe `ServerReconciliation.unflagPlan`).
+    func cachedFlaggedStates(accountID: UUID, folder: String, before: Date) -> [CachedFlagState] {
+        flagStates(
+            sql: """
+                SELECT id, uid, isUnread, isFlagged, isAnswered, isForwarded FROM message
+                WHERE accountID = ? AND folder = ? AND date < ? AND isFlagged = 1
+                """,
+            accountID: accountID, folder: folder, date: before
+        )
+    }
+
+    private func flagStates(sql: String, accountID: UUID, folder: String, date: Date) -> [CachedFlagState] {
+        guard let stmt = prepare(sql) else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, accountID.uuidString)
+        bind(stmt, 2, folder)
+        sqlite3_bind_double(stmt, 3, date.timeIntervalSince1970)
+        var result: [CachedFlagState] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            result.append(CachedFlagState(
+                id: str(stmt, 0),
+                uid: UInt32(sqlite3_column_int64(stmt, 1)),
+                isUnread: sqlite3_column_int(stmt, 2) == 1,
+                isFlagged: sqlite3_column_int(stmt, 3) == 1,
+                isAnswered: sqlite3_column_int(stmt, 4) == 1,
+                isForwarded: sqlite3_column_int(stmt, 5) == 1
+            ))
+        }
+        return result
+    }
+
+    /// Wendet einen Abgleichsplan in einer Transaktion an.
+    func apply(_ plan: ServerReconciliation.Plan) {
+        guard !plan.isEmpty else { return }
+        exec("BEGIN TRANSACTION")
+        for id in plan.removedIDs { deleteMessage(id: id) }
+        for state in plan.flagUpdates {
+            updateServerFlags(
+                messageID: state.id,
+                isUnread: state.isUnread,
+                isFlagged: state.isFlagged,
+                isAnswered: state.isAnswered,
+                isForwarded: state.isForwarded
+            )
+        }
+        exec("COMMIT")
+    }
+
     // MARK: - Header nachfüllen
 
     /// IDs der Nachrichten eines Kontos, deren Header noch nicht dem
@@ -615,6 +679,35 @@ final class MessageStore: @unchecked Sendable {
     // v0.1.8b: Kein Löschen nach Alter mehr (`deleteMessagesOlderThan`,
     // `resetWindows` entfallen). Mails verlassen den Cache nur, wenn sie
     // in Mailwerk gelöscht/verschoben werden oder ihr Ordner gelöscht wird.
+
+    /// Entfernt alles, was der Cache zu einem Postfach hält: Nachrichten
+    /// (über ON DELETE CASCADE samt Anhängen), Stände, Zeitfenster und die
+    /// gespeicherte Ordnerliste. Wird aufgerufen, wenn das Postfach in
+    /// Mailwerk entfernt wird (v0.1.8d).
+    /// - Returns: Anzahl der gelöschten Nachrichten – für die Protokollzeile.
+    @discardableResult
+    func deleteAccount(accountID: UUID) -> Int {
+        let removed = messageCount(accountID: accountID)
+        exec("BEGIN TRANSACTION")
+        for table in ["message", "folder_sync", "folder_window", "folder_listing"] {
+            guard let stmt = prepare("DELETE FROM \(table) WHERE accountID = ?") else {
+                exec("ROLLBACK")
+                return 0
+            }
+            bind(stmt, 1, accountID.uuidString)
+            sqlite3_step(stmt)
+            sqlite3_finalize(stmt)
+        }
+        exec("COMMIT")
+        return removed
+    }
+
+    private func messageCount(accountID: UUID) -> Int {
+        guard let stmt = prepare("SELECT COUNT(*) FROM message WHERE accountID = ?") else { return 0 }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, accountID.uuidString)
+        return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int(stmt, 0)) : 0
+    }
 
     /// Entfernt alles, was der Cache zu einem Ordner hält: Nachrichten
     /// (über ON DELETE CASCADE samt Anhängen), Stand und Zeitfenster.
