@@ -174,11 +174,19 @@ struct EditAccountView: View {
         let testPassword: String
         if !password.isEmpty {
             testPassword = password
-        } else if let existing = try? accountStore.password(for: account) {
-            testPassword = existing
         } else {
-            testResult = .failure("Kein Passwort vorhanden")
-            return
+            // Gespeichertes Passwort lesen – ein Keychain-Fehler wird
+            // benannt, statt als „kein Passwort" zu erscheinen.
+            do {
+                guard let existing = try accountStore.password(for: account) else {
+                    testResult = .failure("Kein Passwort vorhanden")
+                    return
+                }
+                testPassword = existing
+            } catch {
+                testResult = .failure("Passwort konnte nicht gelesen werden: \(error.localizedDescription)")
+                return
+            }
         }
 
         isTesting = true

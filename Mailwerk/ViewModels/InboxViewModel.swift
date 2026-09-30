@@ -24,6 +24,15 @@ final class InboxViewModel {
     /// Verbindung scheiterte. Wird still im Titel angezeigt, nicht als Alert.
     var connectionFailed = false
 
+    /// Läuft gerade „Ältere Nachrichten laden"?
+    var isLoadingOlder = false
+    /// Letzter Nachladeversuch scheiterte an der Verbindung – die Zeile
+    /// zeigt das selbst an, bis zum nächsten Versuch oder Ansichtswechsel.
+    var olderConnectionFailed = false
+    /// Ordner, für die der Server nichts Älteres mehr hat. Nur für diese
+    /// Sitzung – nach dem Neustart gilt ohnehin wieder das Standardfenster.
+    private var exhaustedFolders: Set<String> = []
+
     private let network = NetworkMonitor.shared
 
     /// Aktive Ansicht. Ändert sich durch die Seitenleiste.
@@ -32,6 +41,7 @@ final class InboxViewModel {
             // Der Verbindungsstatus gilt für die bisherige Ansicht; die neue
             // ermittelt ihn bei ihrem eigenen Abruf.
             connectionFailed = false
+            olderConnectionFailed = false
             loadFromCache()
         }
     }
@@ -112,6 +122,110 @@ final class InboxViewModel {
         }
     }
 
+    // MARK: - Ältere Nachrichten
+
+    /// Ordner, deren Fenster die aktuelle Ansicht bilden: bei einem Ordner
+    /// dieser allein, bei „Alle Eingänge" die Posteingänge aller Postfächer.
+    /// Die Kennzeichen-Sicht lädt nicht nach.
+    private var olderTargets: [(account: MailAccount, folder: String)] {
+        switch selection {
+        case .allInboxes:
+            return accountStore.accounts.map { ($0, MailFetchService.inboxFolder) }
+        case .flagged:
+            return []
+        case .folder(let accountID, let path, _):
+            guard let account = accountStore.accounts.first(where: { $0.id == accountID }) else { return [] }
+            return [(account, path)]
+        }
+    }
+
+    private func exhaustedKey(_ accountID: UUID, _ folder: String) -> String {
+        "\(accountID.uuidString)|\(folder)"
+    }
+
+    /// Ordner der Ansicht, für die es noch Älteres geben kann.
+    private var openOlderTargets: [(account: MailAccount, folder: String)] {
+        olderTargets.filter { !exhaustedFolders.contains(exhaustedKey($0.account.id, $0.folder)) }
+    }
+
+    /// Zeile „Ältere Nachrichten laden" anzeigen? Nicht in der
+    /// Kennzeichen-Sicht und nicht ohne Postfächer.
+    var showsOlderRow: Bool { !olderTargets.isEmpty }
+
+    /// `true`, wenn der Server für alle Ordner der Ansicht nichts Älteres hat.
+    var olderExhausted: Bool { showsOlderRow && openOlderTargets.isEmpty }
+
+    /// Bis zu welchem Tag ein Tipp mindestens lädt – für die Beschriftung.
+    /// Bei mehreren Postfächern der späteste der nächsten Zeiträume.
+    var nextOlderDate: Date? {
+        let standard = SyncWindow.standardStart(now: Date(), days: MailFetchService.syncDays)
+        return openOlderTargets
+            .map { target -> Date in
+                let start = MessageStore.shared.windowStart(accountID: target.account.id, folder: target.folder)
+                    ?? standard
+                return SyncWindow.nextBlock(before: start, days: MailFetchService.syncDays).since
+            }
+            .max()
+    }
+
+    /// Lädt für die aktuelle Ansicht den nächsten älteren Zeitraum nach.
+    @MainActor
+    func loadOlder() async {
+        guard !isLoadingOlder else { return }
+        guard network.isOnline else {
+            connectionFailed = true
+            olderConnectionFailed = true
+            return
+        }
+        isLoadingOlder = true
+        defer { isLoadingOlder = false }
+        olderConnectionFailed = false
+
+        var errors: [String] = []
+        for target in openOlderTargets {
+            let key = exhaustedKey(target.account.id, target.folder)
+            do {
+                let password = try readPassword(for: target.account)
+                let result = try await MailFetchService.fetchOlder(
+                    account: target.account, password: password, folder: target.folder
+                )
+                switch result {
+                case .noOlder:
+                    exhaustedFolders.insert(key)
+                case .loaded(let count, _, let hasMore):
+                    print("📬 [\(target.account.displayName)/\(target.folder)] \(count) ältere Nachrichten geladen")
+                    if !hasMore { exhaustedFolders.insert(key) }
+                }
+            } catch {
+                if let message = classify(error, context: target.account.displayName) {
+                    errors.append(message)
+                } else {
+                    olderConnectionFailed = true
+                }
+                if !network.isOnline { break }
+            }
+            loadFromCache()
+        }
+        loadFromCache()
+        if !errors.isEmpty {
+            errorMessage = errors.joined(separator: "\n")
+        }
+    }
+
+    /// Fehlendes Passwort im Schlüsselbund.
+    private struct MissingPasswordError: LocalizedError {
+        var errorDescription: String? { "kein Passwort gefunden" }
+    }
+
+    /// Liest das Passwort eines Postfachs. Keychain-Fehler und ein
+    /// fehlendes Passwort werden geworfen statt still verschluckt.
+    private func readPassword(for account: MailAccount) throws -> String {
+        guard let password = try accountStore.password(for: account) else {
+            throw MissingPasswordError()
+        }
+        return password
+    }
+
     /// Ordnet einen Abruffehler ein: Verbindungsfehler werden still
     /// vermerkt, alle anderen als Meldungstext zurückgegeben.
     private func classify(_ error: Error, context: String) -> String? {
@@ -157,9 +271,14 @@ final class InboxViewModel {
     /// Zeigt sofort den Cache und lädt im Hintergrund nach.
     @MainActor
     func refreshFolder(accountID: UUID, path: String) async {
-        guard let account = accountStore.accounts.first(where: { $0.id == accountID }),
-              let password = try? accountStore.password(for: account)
-        else { return }
+        guard let account = accountStore.accounts.first(where: { $0.id == accountID }) else { return }
+        let password: String
+        do {
+            password = try readPassword(for: account)
+        } catch {
+            errorMessage = "\(account.displayName): \(error.localizedDescription)"
+            return
+        }
 
         // Ohne Netz gar nicht erst versuchen: Cache zeigen, still vermerken.
         guard network.isOnline else {
@@ -270,9 +389,9 @@ final class InboxViewModel {
 
         // Wird ein einzelner Ordner angezeigt, diesen ebenfalls abrufen
         if case .folder(let accountID, let path, _) = selection {
-            if let account = accountStore.accounts.first(where: { $0.id == accountID }),
-               let password = try? accountStore.password(for: account) {
+            if let account = accountStore.accounts.first(where: { $0.id == accountID }) {
                 do {
+                    let password = try readPassword(for: account)
                     try await MailFetchService.refreshAndCache(
                         account: account, password: password, folder: path
                     )

@@ -35,6 +35,8 @@ struct MessageDetailView: View {
 
     // MARK: - Verfassen (v0.1.4)
     @State private var composeRequest: ComposeRequest?
+    /// Getippter mailto:-Link aus der Mail → neue Mail in Mailwerk.
+    @State private var mailtoRequest: MailtoLink?
 
     // MARK: - Spam (v0.1.5)
     @State private var pendingSpamAction: SpamActionRequest?
@@ -127,7 +129,11 @@ struct MessageDetailView: View {
 
                 // MARK: - Body
                 if let html = message.htmlBody {
-                    HTMLMailView(html: html, contentHeight: $webViewHeight)
+                    HTMLMailView(
+                        html: html,
+                        contentHeight: $webViewHeight,
+                        onMailto: { mailtoRequest = $0 }
+                    )
                         .frame(height: max(100, webViewHeight))
                 } else if let text = message.textBody {
                     Text(text)
@@ -179,6 +185,14 @@ struct MessageDetailView: View {
                     messageMenu
                 }
             }
+        }
+        .sheet(item: $mailtoRequest) { link in
+            ComposeView(
+                accountStore: accountStore,
+                kind: .new,
+                mailto: link,
+                onSent: { onChange?() }
+            )
         }
         .sheet(item: $composeRequest) { request in
             ComposeView(

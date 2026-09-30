@@ -34,12 +34,25 @@ final class NetworkMonitor {
         // Das vermeidet die Warnung „Reference to captured var 'self' in
         // concurrently-executing code".
         monitor.pathUpdateHandler = { @Sendable [weak self] path in
-            let online = path.status == .satisfied
+            let online = Self.isUsable(path)
             Task { @MainActor [weak self] in
                 self?.update(online: online)
             }
         }
         monitor.start(queue: queue)
+    }
+
+    /// Echte Internetverbindung nur über WLAN, Mobilfunk oder Kabel.
+    ///
+    /// `status == .satisfied` allein genügt nicht: Im Flugmodus bleibt bei
+    /// gekoppelter Apple Watch eine Bluetooth-Verbindung bestehen, die das
+    /// System als Netzpfad (Typ „other") meldet – ins Internet führt sie
+    /// nicht (Fund v0.1.7e). VPNs laufen über WLAN/Mobilfunk und werden
+    /// über die darunterliegende Schnittstelle weiter erkannt.
+    nonisolated private static func isUsable(_ path: NWPath) -> Bool {
+        guard path.status == .satisfied else { return false }
+        let internetTypes: [NWInterface.InterfaceType] = [.wifi, .cellular, .wiredEthernet]
+        return path.availableInterfaces.contains { internetTypes.contains($0.type) }
     }
 
     private func update(online: Bool) {

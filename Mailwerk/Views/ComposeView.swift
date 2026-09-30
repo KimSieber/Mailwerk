@@ -41,11 +41,12 @@ struct ComposeView: View {
         accountStore: AccountStore,
         kind: ComposeKind,
         original: CachedMessage? = nil,
+        mailto: MailtoLink? = nil,
         onSent: @escaping () -> Void = {}
     ) {
         _model = State(
             initialValue: ComposeViewModel(
-                accountStore: accountStore, kind: kind, original: original
+                accountStore: accountStore, kind: kind, original: original, mailto: mailto
             )
         )
         self.onSent = onSent

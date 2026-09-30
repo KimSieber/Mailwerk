@@ -10,6 +10,8 @@ import WebKit
 struct HTMLMailView: NSViewRepresentable {
     let html: String
     @Binding var contentHeight: CGFloat
+    /// Getippter mailto:-Link – öffnet eine neue Mail in Mailwerk.
+    var onMailto: ((MailtoLink) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -20,6 +22,7 @@ struct HTMLMailView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
+        context.coordinator.parent = self
         Self.loadHTML(html, in: webView)
     }
 }
@@ -27,6 +30,8 @@ struct HTMLMailView: NSViewRepresentable {
 struct HTMLMailView: UIViewRepresentable {
     let html: String
     @Binding var contentHeight: CGFloat
+    /// Getippter mailto:-Link – öffnet eine neue Mail in Mailwerk.
+    var onMailto: ((MailtoLink) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -37,6 +42,7 @@ struct HTMLMailView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
+        context.coordinator.parent = self
         Self.loadHTML(html, in: webView)
     }
 }
@@ -45,6 +51,10 @@ struct HTMLMailView: UIViewRepresentable {
 extension HTMLMailView {
     static func createWebView() -> WKWebView {
         let config = WKWebViewConfiguration()
+        // Skripte aus der Mail nie ausführen (wie Apple Mail). Die App
+        // selbst misst die Höhe weiter per evaluateJavaScript – das ist
+        // davon nicht betroffen.
+        config.defaultWebpagePreferences.allowsContentJavaScript = false
         let webView = WKWebView(frame: .zero, configuration: config)
         // Transparenter Hintergrund, damit die Mail im Hell- und Dunkelmodus
         // den Hintergrund der App übernimmt. Die beiden Plattformen bieten
@@ -55,13 +65,9 @@ extension HTMLMailView {
         #else
         webView.isOpaque = false
         webView.backgroundColor = .clear
+        // Scrollen übernimmt der äußere ScrollView; Tippen (Links) und
+        // Textauswahl bleiben in der Mail möglich.
         webView.scrollView.isScrollEnabled = false
-        // Interaktion vollständig deaktivieren: Der äußere SwiftUI-
-        // ScrollView übernimmt das Scrollen, und Links sind in einer
-        // Mail-Vorschau nicht nötig. Ohne das fressen komplexe
-        // HTML-Mails (Google u. a.) die Gesten, und das Aktionsmenü
-        // lässt sich nicht mehr scrollen.
-        webView.isUserInteractionEnabled = false
         #endif
         return webView
     }
@@ -121,6 +127,36 @@ extension HTMLMailView {
 
         init(_ parent: HTMLMailView) {
             self.parent = parent
+        }
+
+        /// Die Mail selbst navigiert nie weg. Erlaubt ist nur das Laden
+        /// des eigenen Inhalts (about:blank aus loadHTMLString); getippte
+        /// Links gehen gezielt nach außen oder in eine neue Mail.
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction
+        ) async -> WKNavigationActionPolicy {
+            guard let url = navigationAction.request.url else { return .cancel }
+
+            if navigationAction.navigationType == .linkActivated {
+                switch MailLinkAction(url: url) {
+                case .openExternally(let target):
+                    #if os(macOS)
+                    _ = NSWorkspace.shared.open(target)
+                    #else
+                    _ = await UIApplication.shared.open(target)
+                    #endif
+                case .compose(let link):
+                    parent.onMailto?(link)
+                case .ignore:
+                    print("🔗 Link ignoriert: \(url.scheme ?? "?")")
+                }
+                return .cancel
+            }
+
+            // Eigener Inhalt: erlaubt. Alles andere (Weiterleitungen,
+            // Formulare, iframes, Meta-Refresh): blockiert.
+            return url.scheme == "about" ? .allow : .cancel
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

@@ -44,7 +44,12 @@ final class ComposeViewModel {
 
     let controller = RichTextController()
 
-    init(accountStore: AccountStore, kind: ComposeKind, original: CachedMessage? = nil) {
+    init(
+        accountStore: AccountStore,
+        kind: ComposeKind,
+        original: CachedMessage? = nil,
+        mailto: MailtoLink? = nil
+    ) {
         self.accountStore = accountStore
         self.kind = kind
         self.original = original
@@ -100,6 +105,24 @@ final class ComposeViewModel {
                 subject: subject, attachmentCount: attachments.count
             )
         }
+
+        // Getippter mailto:-Link aus einer Mail: Felder vorbelegen.
+        // Ungültige Adressen fallen weg.
+        if let mailto {
+            to = mailto.to.compactMap { MailAddress(parsing: $0) }
+            cc = mailto.cc.compactMap { MailAddress(parsing: $0) }
+            bcc = mailto.bcc.compactMap { MailAddress(parsing: $0) }
+            showBcc = !bcc.isEmpty
+            if let linkSubject = mailto.subject { subject = linkSubject }
+            if let linkBody = mailto.body {
+                body = NSAttributedString(string: linkBody, attributes: RichTextController.defaultAttributes)
+            }
+            initialBody = body
+            initialState = State(
+                to: to, cc: cc, bcc: bcc,
+                subject: subject, attachmentCount: attachments.count
+            )
+        }
     }
 
     // MARK: - Änderungserkennung
@@ -114,6 +137,9 @@ final class ComposeViewModel {
     }
 
     private var initialState: State
+    /// Vorbelegter Text (nur aus mailto:-Links); unverändert zählt er
+    /// beim Abbrechen nicht als Eingabe.
+    private var initialBody = NSAttributedString()
 
     private var currentState: State {
         State(to: to, cc: cc, bcc: bcc, subject: subject, attachmentCount: attachments.count)
@@ -138,7 +164,7 @@ final class ComposeViewModel {
     /// true, wenn der Nutzer etwas geändert hat, das beim Abbrechen verloren
     /// ginge. Eine reine Vorbelegung (Antworten, Weiterleiten) zählt nicht.
     var hasContent: Bool {
-        body.length > 0 || currentState != initialState
+        (body.length > 0 && !body.isEqual(to: initialBody)) || currentState != initialState
     }
 
     var totalAttachmentBytes: Int {

@@ -155,6 +155,17 @@ final class MessageStore: @unchecked Sendable {
                 PRIMARY KEY (accountID, folder)
             )
             """)
+
+        // v0.1.7e: erweitertes Zeitfenster je Ordner („Ältere laden").
+        // Eine Zeile gibt es nur, solange nachgeladen wurde.
+        exec("""
+            CREATE TABLE IF NOT EXISTS folder_window (
+                accountID TEXT NOT NULL,
+                folder TEXT NOT NULL,
+                windowStart REAL NOT NULL,
+                PRIMARY KEY (accountID, folder)
+            )
+            """)
     }
 
     /// Schreibt die Kennungen von "<account>-<uid>" auf "<account>-INBOX-<uid>" um.
@@ -467,6 +478,54 @@ final class MessageStore: @unchecked Sendable {
         bind(stmt, 2, folder)
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
         return Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0))
+    }
+
+    // MARK: - Zeitfenster je Ordner
+
+    /// Beginn des erweiterten Fensters, `nil` = Standardfenster.
+    func windowStart(accountID: UUID, folder: String) -> Date? {
+        let sql = "SELECT windowStart FROM folder_window WHERE accountID = ? AND folder = ?"
+        guard let stmt = prepare(sql) else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, accountID.uuidString)
+        bind(stmt, 2, folder)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0))
+    }
+
+    func setWindowStart(_ date: Date, accountID: UUID, folder: String) {
+        let sql = """
+            INSERT INTO folder_window (accountID, folder, windowStart) VALUES (?, ?, ?)
+            ON CONFLICT(accountID, folder) DO UPDATE SET windowStart = excluded.windowStart
+            """
+        guard let stmt = prepare(sql) else { return }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, accountID.uuidString)
+        bind(stmt, 2, folder)
+        sqlite3_bind_double(stmt, 3, date.timeIntervalSince1970)
+        sqlite3_step(stmt)
+    }
+
+    /// Setzt alle erweiterten Fenster zurück (App-Start) und entfernt die
+    /// dafür nachgeladenen Mails sofort – auch offline und auch in Ordnern,
+    /// die danach nicht geöffnet werden.
+    /// - Parameter standardStart: Beginn des Standardfensters.
+    func resetWindows(standardStart: Date) {
+        guard let stmt = prepare("SELECT accountID, folder FROM folder_window") else { return }
+        var windows: [(UUID, String)] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let id = UUID(uuidString: str(stmt, 0)) {
+                windows.append((id, str(stmt, 1)))
+            }
+        }
+        sqlite3_finalize(stmt)
+
+        exec("BEGIN TRANSACTION")
+        for (accountID, folder) in windows {
+            deleteMessagesOlderThan(standardStart, forAccount: accountID, folder: folder)
+        }
+        exec("DELETE FROM folder_window")
+        exec("COMMIT")
     }
 
     /// Gekennzeichnete Nachrichten aus den Posteingängen aller übergebenen

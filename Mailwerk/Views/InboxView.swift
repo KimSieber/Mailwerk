@@ -43,6 +43,18 @@ struct InboxView: View {
         })
     }
 
+    /// Zeile „Ältere Nachrichten laden" am Listenende.
+    private var olderRow: some View {
+        OlderMessagesRow(
+            isLoading: viewModel.isLoadingOlder,
+            isExhausted: viewModel.olderExhausted,
+            isOnline: network.isOnline,
+            connectionFailed: viewModel.olderConnectionFailed,
+            nextDate: viewModel.nextOlderDate,
+            action: { Task { await viewModel.loadOlder() } }
+        )
+    }
+
     /// Verbindungshinweis für die zweite Titelzeile, `nil` = alles in Ordnung.
     private var connectionStatus: String? {
         if !network.isOnline { return "Offline" }
@@ -103,49 +115,65 @@ struct InboxView: View {
                                                     : "Zieh nach unten, um abzurufen."
                                     )
                                 )
+                                // Auch ein leerer Ordner kann ältere Mails haben
+                                // (z. B. ein Archiv ohne Eingänge der letzten 30 Tage).
+                                if viewModel.showsOlderRow && !accountStore.accounts.isEmpty {
+                                    olderRow
+                                        .padding(.horizontal)
+                                }
                             }
                             .frame(minHeight: geo.size.height)
                         }
                     }
                 } else {
-                    List(viewModel.messages) { message in
-                        NavigationLink {
-                            MessageDetailView(
-                                message: message,
-                                accountStore: accountStore,
-                                spamFilter: viewModel.spamFilter,
-                                onChange: { viewModel.loadFromCache() }
-                            )
-                        } label: {
-                            InboxRow(
-                                message: message,
-                                colorHex: accountStore.accounts
-                                    .first(where: { $0.id == message.accountID })?.colorHex
-                            )
-                        }
-                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                            Button {
-                                Task { await toggleRead(message) }
+                    List {
+                        ForEach(viewModel.messages) { message in
+                            NavigationLink {
+                                MessageDetailView(
+                                    message: message,
+                                    accountStore: accountStore,
+                                    spamFilter: viewModel.spamFilter,
+                                    onChange: { viewModel.loadFromCache() }
+                                )
                             } label: {
-                                Label(
-                                    message.isUnread ? "Gelesen" : "Ungelesen",
-                                    systemImage: message.isUnread ? "envelope.open" : "envelope.badge"
+                                InboxRow(
+                                    message: message,
+                                    colorHex: accountStore.accounts
+                                        .first(where: { $0.id == message.accountID })?.colorHex
                                 )
                             }
-                            .tint(.blue)
-                        }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            Button {
-                                Task { await toggleFlag(message) }
-                            } label: {
-                                Label(
-                                    message.isFlagged ? "Entflaggen" : "Flaggen",
-                                    systemImage: message.isFlagged ? "flag.slash" : "flag"
-                                )
+                            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                                Button {
+                                    Task { await toggleRead(message) }
+                                } label: {
+                                    Label(
+                                        message.isUnread ? "Gelesen" : "Ungelesen",
+                                        systemImage: message.isUnread ? "envelope.open" : "envelope.badge"
+                                    )
+                                }
+                                .tint(.blue)
                             }
-                            .tint(.orange)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button {
+                                    Task { await toggleFlag(message) }
+                                } label: {
+                                    Label(
+                                        message.isFlagged ? "Entflaggen" : "Flaggen",
+                                        systemImage: message.isFlagged ? "flag.slash" : "flag"
+                                    )
+                                }
+                                .tint(.orange)
+                            }
+                            .disabled(processingMessageIDs.contains(message.id))
                         }
-                        .disabled(processingMessageIDs.contains(message.id))
+
+                        // Letzte Zeile der Liste – gehört IN die List, damit
+                        // der Zweig ein einzelnes View bleibt.
+                        if viewModel.showsOlderRow {
+                            Section {
+                                olderRow
+                            }
+                        }
                     }
                 }
             }
@@ -451,6 +479,56 @@ private struct InboxTitle: View {
         case (.never, let status?):
             return Text("\(status) · noch nicht abgerufen")
         }
+    }
+}
+
+/// Bewusste Aktion am Listenende: den nächsten älteren Zeitraum laden.
+private struct OlderMessagesRow: View {
+    let isLoading: Bool
+    let isExhausted: Bool
+    let isOnline: Bool
+    /// Letzter Versuch scheiterte an der Verbindung.
+    let connectionFailed: Bool
+    let nextDate: Date?
+    let action: () -> Void
+
+    var body: some View {
+        Group {
+            if isExhausted {
+                Text("Keine älteren Nachrichten")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                Button(action: action) {
+                    HStack(spacing: 10) {
+                        if isLoading {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "clock.arrow.circlepath")
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(isLoading ? "Ältere Nachrichten werden geladen …" : "Ältere Nachrichten laden")
+                            if !isOnline {
+                                Text("Offline – nicht verfügbar")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else if connectionFailed && !isLoading {
+                                Text("Keine Verbindung – erneut versuchen")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            } else if let nextDate, !isLoading {
+                                Text("bis \(nextDate, format: .dateTime.day().month(.abbreviated).year())")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .disabled(isLoading || !isOnline)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
     }
 }
 
