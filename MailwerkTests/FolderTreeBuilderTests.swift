@@ -40,7 +40,8 @@ struct FolderTreeBuilderTests {
         )
     }
 
-    /// manitu-typische Liste: alles unter „INBOX.“.
+    /// Liste eines Servers mit Namespace-Präfix „INBOX.“ (alles darunter).
+    /// manitu selbst meldet kein Präfix, siehe `realManituFolders`.
     private var manituFolders: [MailFolder] {
         [
             folder("INBOX"),
@@ -285,5 +286,60 @@ struct FolderTreeBuilderTests {
     @Test func existingInitializerStillDefaultsToSelectable() {
         let folder = MailFolder(id: "INBOX.A", name: "A", specialUse: nil, hierarchyDelimiter: ".")
         #expect(folder.isSelectable)
+    }
+
+    // MARK: - manitu (echte LIST-Ausgabe, v0.1.8a)
+
+    /// LIST-Ausgabe eines manitu-Postfachs vom 2026-09-30.
+    /// NAMESPACE: (("" ".")) – kein Präfix, Trennzeichen „.“.
+    private var realManituFolders: [MailFolder] {
+        [
+            folder("Test"),
+            folder("Test.Untertest2"),
+            folder("Archive"),
+            folder("Sent", specialUse: .sent),
+            folder("Drafts", specialUse: .drafts),
+            folder("Trash", specialUse: .trash),
+            folder("Junk", specialUse: .junk),
+            folder("INBOX.Testeingang"),
+            folder("INBOX")
+        ]
+    }
+
+    @Test func manituWithoutPrefixMatchesSidebar() {
+        let tree = build(realManituFolders, prefix: "")
+        #expect(tree.map(\.name) == ["Posteingang", "Entwürfe", "Gesendet", "Archiv",
+                                     "Spam", "Papierkorb", "Test"])
+        #expect(tree.first?.children.map(\.id) == ["INBOX.Testeingang"])
+        #expect(tree.first { $0.id == "Test" }?.children.map(\.id) == ["Test.Untertest2"])
+    }
+
+    // MARK: - Umlaute (modified UTF-7, v0.1.8a)
+
+    @Test func encodedNamesAreDecodedForDisplay() {
+        let tree = build([
+            folder("INBOX"),
+            folder("Rechnungen M&APw-ller"),
+            folder("Rechnungen M&APw-ller.Gr&APYA3w-e"),
+            folder("INBOX.Gesch&AOQ-ft")
+        ], prefix: "")
+        let rechnungen = tree.first { $0.id == "Rechnungen M&APw-ller" }
+        #expect(rechnungen?.name == "Rechnungen Müller")
+        #expect(rechnungen?.children.first?.name == "Größe")
+        #expect(rechnungen?.children.first?.id == "Rechnungen M&APw-ller.Gr&APYA3w-e")
+        #expect(tree.first?.children.first?.name == "Geschäft")
+        #expect(tree.first?.children.first?.id == "INBOX.Gesch&AOQ-ft")
+    }
+
+    @Test func encodedCandidateNameIsRecognized() {
+        let tree = build([folder("INBOX"), folder("Entw&APw-rfe")], prefix: "")
+        let drafts = tree.first { $0.id == "Entw&APw-rfe" }
+        #expect(drafts?.role == .drafts)
+        #expect(drafts?.name == "Entwürfe")
+    }
+
+    @Test func invalidEncodingKeepsServerName() {
+        let tree = build([folder("INBOX"), folder("Kaputt&AP")], prefix: "")
+        #expect(tree.contains { $0.id == "Kaputt&AP" && $0.name == "Kaputt&AP" })
     }
 }

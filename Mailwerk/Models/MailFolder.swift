@@ -14,7 +14,8 @@ import Foundation
 
 nonisolated struct MailFolder: Identifiable, Hashable, Sendable {
     let id: String          // Vollständiger IMAP-Pfad (z. B. "INBOX.Trash")
-    let name: String        // Anzeigename (letztes Pfad-Segment)
+    let name: String        // Letztes Pfad-Segment in Server-Form (modified UTF-7);
+                            // lesbar über `MailboxNameCodec.displayName`
     let specialUse: SpecialUse?
     /// Trennzeichen der Ordnerhierarchie, wie vom Server gemeldet
     /// (bei manitu "."). Wird gebraucht, um neue Ordner an der
@@ -34,7 +35,7 @@ nonisolated struct MailFolder: Identifiable, Hashable, Sendable {
 nonisolated struct FolderListing: Sendable {
     /// Alle Ordner des Kontos, INBOX eingeschlossen.
     let folders: [MailFolder]
-    /// Präfix des persönlichen Namespace (bei manitu „INBOX.“),
-    /// `nil`, wenn der Server keins meldet.
+    /// Präfix des persönlichen Namespace (etwa „INBOX.“; manitu meldet
+    /// ein leeres Präfix), `nil`, wenn der Server keins meldet.
     let namespacePrefix: String?
 }

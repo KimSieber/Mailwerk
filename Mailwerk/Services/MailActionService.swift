@@ -6,6 +6,11 @@
 //  Ordnerliste abrufen. Reine Server-Operationen – der lokale Cache wird
 //  vom Aufrufer (ViewModel/View) nach erfolgreicher Aktion aktualisiert.
 //
+//  v0.1.8a: Ordner anlegen (mit Namensprüfung) und leere Ordner löschen.
+//  Das Löschen läuft als einzige Aktion nicht über SwiftMail, sondern über
+//  `FolderDeletion` + `IMAPLineConnection` (Rückbau, sobald SwiftMail
+//  DELETE öffentlich anbietet).
+//
 
 import Foundation
 import SwiftMail
@@ -171,6 +176,97 @@ enum MailActionService {
         }
     }
 
+    /// Legt einen Ordner an, den der Nutzer in der Seitenleiste benannt hat.
+    /// Namensprüfung und Pfad bestimmt `FolderCreationPlanner` anhand einer
+    /// frischen Ordnerliste aus derselben Verbindung – so zählen auch Ordner,
+    /// die gerade erst anderswo angelegt wurden.
+    /// - Parameters:
+    ///   - name: lesbarer Name, wie eingegeben.
+    ///   - parentPath: Server-Pfad des übergeordneten Ordners, `nil` für
+    ///     die oberste Ebene.
+    /// - Returns: Server-Pfad des neuen Ordners.
+    /// - Throws: `FolderCreationPlanner.PlanError` bei ungültigem oder
+    ///   doppeltem Namen, sonst `ActionError`.
+    @discardableResult
+    static func createFolder(
+        named name: String,
+        parentPath: String?,
+        accountID: UUID,
+        accountStore: AccountStore
+    ) async throws -> String {
+        try await withIMAPConnection(
+            accountID: accountID, accountStore: accountStore
+        ) { server in
+            let folders = try await fetchMailboxList(server, includeInbox: true)
+            let prefix = await server.namespaces?.personal.first?.prefix
+            let path = try FolderCreationPlanner.plan(
+                name: name,
+                parentPath: parentPath,
+                listing: FolderListing(folders: folders, namespacePrefix: prefix)
+            )
+            try await server.createMailbox(path)
+            print("📁 Ordner \(path) angelegt")
+            return path
+        }
+    }
+
+    // MARK: - Ordner löschen
+
+    /// Port, auf dem der eigene IMAP-Weg zum Löschen arbeitet (TLS ab dem
+    /// ersten Byte). Andere Ports bietet die Seitenleiste nicht an.
+    static let folderDeletionPort = 993
+
+    /// Zeitbudget für den gesamten Lösch-Dialog.
+    private static let folderDeletionTimeout: Duration = .seconds(30)
+
+    /// Löscht einen leeren Ordner – über den eigenen IMAP-Weg, weil
+    /// SwiftMail 1.12.0 kein öffentliches DELETE anbietet (Technical Debt;
+    /// zurückbauen, sobald es das gibt). Prüfung auf Mails und Unterordner
+    /// und das Löschen laufen in einer Verbindung, siehe `FolderDeletion`.
+    /// - Returns: `.deleted` oder den Grund, warum nicht gelöscht wurde.
+    static func deleteFolder(
+        _ path: String,
+        accountID: UUID,
+        accountStore: AccountStore
+    ) async throws -> FolderDeletion.Outcome {
+        let (account, password) = try resolveCredentials(
+            accountID: accountID, accountStore: accountStore
+        )
+        guard account.imapPort == folderDeletionPort else {
+            throw ActionError.operationFailed(
+                "Ordner lassen sich nur bei einer Verbindung über Port \(folderDeletionPort) löschen."
+            )
+        }
+
+        let connection = try IMAPLineConnection(host: account.imapHost, port: account.imapPort)
+        // Nach Ablauf der Zeit wird die Verbindung getrennt; das beendet
+        // auch einen hängenden Lesevorgang mit einem Fehler.
+        let watchdog = Task {
+            try await Task.sleep(for: folderDeletionTimeout)
+            connection.close()
+        }
+        defer {
+            watchdog.cancel()
+            connection.close()
+        }
+
+        do {
+            try await connection.open()
+            let outcome = try await FolderDeletion.run(
+                on: connection,
+                username: account.username,
+                password: password,
+                path: path
+            )
+            print("📁 Ordner \(path) löschen: \(outcome)")
+            return outcome
+        } catch let error as FolderDeletion.DeletionError {
+            throw error
+        } catch {
+            throw ActionError.operationFailed(error.localizedDescription)
+        }
+    }
+
     // MARK: - Ordnerliste
 
     /// Holt die Liste aller IMAP-Ordner für ein Konto.
@@ -244,6 +340,11 @@ enum MailActionService {
             let result = try await body(server)
             try await server.logout()
             return result
+        } catch let error as FolderCreationPlanner.PlanError {
+            // Eingabefehler unverändert weiterreichen: Die Meldung richtet
+            // sich an den Nutzer, nicht an die Verbindung.
+            try? await server.disconnect()
+            throw error
         } catch {
             try? await server.disconnect()
             throw ActionError.operationFailed(error.localizedDescription)

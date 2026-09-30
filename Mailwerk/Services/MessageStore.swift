@@ -605,6 +605,25 @@ final class MessageStore: @unchecked Sendable {
         sqlite3_step(stmt)
     }
 
+    /// Entfernt alles, was der Cache zu einem Ordner hält: Nachrichten
+    /// (über ON DELETE CASCADE samt Anhängen), Stand und Zeitfenster.
+    /// Wird nach dem Löschen des Ordners auf dem Server aufgerufen (v0.1.8a).
+    /// Unterordner bleiben unberührt – gelöscht werden nur leere Ordner.
+    func deleteFolder(accountID: UUID, folder: String) {
+        exec("BEGIN TRANSACTION")
+        for table in ["message", "folder_sync", "folder_window"] {
+            guard let stmt = prepare("DELETE FROM \(table) WHERE accountID = ? AND folder = ?") else {
+                exec("ROLLBACK")
+                return
+            }
+            bind(stmt, 1, accountID.uuidString)
+            bind(stmt, 2, folder)
+            sqlite3_step(stmt)
+            sqlite3_finalize(stmt)
+        }
+        exec("COMMIT")
+    }
+
     /// Entfernt eine einzelne Nachricht (und über ON DELETE CASCADE
     /// automatisch ihre Anhänge) aus dem Cache. Wird nach erfolgreichem
     /// serverseitigem Löschen/Verschieben aufgerufen.

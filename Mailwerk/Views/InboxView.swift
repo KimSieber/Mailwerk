@@ -323,9 +323,39 @@ struct InboxView: View {
                 expandedAccounts: $expandedFolderAccounts,
                 selection: $viewModel.selection,
                 flaggedCount: viewModel.flaggedCount,
+                onCreateFolder: { account, parentPath, name in
+                    _ = try await MailActionService.createFolder(
+                        named: name,
+                        parentPath: parentPath,
+                        accountID: account.id,
+                        accountStore: accountStore
+                    )
+                },
+                onDeleteFolder: { account, node in
+                    try await deleteFolder(node, in: account)
+                },
                 onClose: { showingFolders = false }
             )
         }
+    }
+
+    // MARK: - Ordner löschen
+
+    /// Löscht einen leeren Ordner auf dem Server, räumt danach seinen
+    /// Cache ab und verlässt die Ansicht, falls sie gerade offen ist.
+    @MainActor
+    private func deleteFolder(_ node: FolderNode, in account: MailAccount) async throws -> FolderDeletion.Outcome {
+        let outcome = try await MailActionService.deleteFolder(
+            node.id, accountID: account.id, accountStore: accountStore
+        )
+        if outcome == .deleted || outcome == .notFound {
+            MessageStore.shared.deleteFolder(accountID: account.id, folder: node.id)
+            if case .folder(let accountID, let path, _) = viewModel.selection,
+               accountID == account.id, path == node.id {
+                viewModel.selection = .allInboxes
+            }
+        }
+        return outcome
     }
 
     // MARK: - Swipe-Aktionen

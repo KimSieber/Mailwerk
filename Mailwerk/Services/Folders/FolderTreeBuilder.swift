@@ -5,10 +5,12 @@
 //  Baut aus der flachen Ordnerliste eines Postfachs den Ordnerbaum für
 //  die Seitenleiste.
 //
-//  1. Namespace-Präfix entfernen: Legt der Server alle Ordner unter
-//     „INBOX.“ ab (manitu), stehen sie in der Anzeige auf derselben Ebene
-//     wie der Posteingang. Grundlage ist die NAMESPACE-Auskunft des
-//     Servers, nicht der Ordnername – ohne Auskunft bleibt der Pfad, wie er ist.
+//  1. Namespace-Präfix entfernen: Legt ein Server alle Ordner unter
+//     „INBOX.“ ab, stehen sie in der Anzeige auf derselben Ebene wie der
+//     Posteingang. Grundlage ist die NAMESPACE-Auskunft des Servers, nicht
+//     der Ordnername – ohne Auskunft bleibt der Pfad, wie er ist.
+//     manitu meldet kein Präfix (`(("" "."))`): Ordner liegen auf oberster
+//     Ebene („Test“), Unterordner des Posteingangs heißen „INBOX.Name“.
 //  2. Pfade am Trennzeichen zerlegen und verschachteln. Fehlt eine
 //     Zwischenebene in der Liste, wird sie als nicht wählbarer Knoten ergänzt.
 //  3. Rollen bestimmen: INBOX, dann SPECIAL-USE (RFC 6154), dann
@@ -16,6 +18,9 @@
 //     für Rollen, die der Server nicht selbst gemeldet hat. Den Spam-Ordner
 //     bestimmt `SpamFolderResolver`, damit Filter und Anzeige übereinstimmen.
 //  4. Sortieren: oberste Ebene nach Rolle, sonst alphabetisch.
+//
+//  v0.1.8a: Namen werden für die Anzeige aus modified UTF-7 dekodiert
+//  (`MailboxNameCodec`). Pfade (`FolderNode.id`) bleiben in Server-Form.
 //
 //  Reine Logik, deshalb `nonisolated` und ohne IMAP-Zugriff.
 //
@@ -41,7 +46,8 @@ nonisolated enum FolderTreeBuilder {
     /// - Parameters:
     ///   - folders: vollständige Ordnerliste des Kontos, INBOX eingeschlossen.
     ///   - namespacePrefix: Präfix des persönlichen Namespace laut Server
-    ///     (bei manitu „INBOX.“), `nil` oder leer, wenn keins gemeldet wurde.
+    ///     (etwa „INBOX.“), `nil` oder leer, wenn keins gemeldet wurde –
+    ///     bei manitu leer.
     ///   - configuredSpamFolder: für das Konto gemerkter Spam-Ordner.
     static func build(
         folders: [MailFolder],
@@ -128,7 +134,8 @@ nonisolated enum FolderTreeBuilder {
         path.caseInsensitiveCompare(inboxPath) == .orderedSame
     }
 
-    /// Pfadsegmente für die Anzeige, ohne Namespace-Präfix.
+    /// Pfadsegmente ohne Namespace-Präfix, noch in Server-Form (kodiert) –
+    /// so passen sie zur Pfad-Rekonstruktion in `ancestorPath`.
     /// INBOX selbst ist immer ein einzelnes Segment auf oberster Ebene.
     private static func displaySegments(
         of folder: MailFolder,
@@ -146,8 +153,12 @@ nonisolated enum FolderTreeBuilder {
         return path.components(separatedBy: delimiter).filter { !$0.isEmpty }
     }
 
+    /// Letztes Segment, dekodiert – für den Abgleich mit gebräuchlichen
+    /// Namen wie „entwürfe“, die der Server kodiert meldet.
     private static func lastSegment(of folder: MailFolder, namespacePrefix: String?) -> String {
-        displaySegments(of: folder, namespacePrefix: namespacePrefix).last ?? folder.id
+        MailboxNameCodec.displayName(
+            displaySegments(of: folder, namespacePrefix: namespacePrefix).last ?? folder.id
+        )
     }
 
     /// Präfixvergleich; der INBOX-Anteil ist laut RFC 3501 nicht
@@ -239,7 +250,7 @@ nonisolated enum FolderTreeBuilder {
             if let existing = current.children[key] {
                 node = existing
             } else {
-                node = Draft(id: id, name: segment)
+                node = Draft(id: id, name: MailboxNameCodec.displayName(segment))
                 current.children[key] = node
             }
             if isLast {
@@ -273,10 +284,12 @@ nonisolated enum FolderTreeBuilder {
                   node.role != .regular,
                   node.role.displayName != nil
             else { return node }
-            // Servernamen aus der ID zurückholen: letztes Pfadsegment.
-            let serverName = node.id.components(separatedBy: ".").last
-                ?? node.id.components(separatedBy: "/").last
-                ?? node.id
+            // Servernamen aus der ID zurückholen: letztes Pfadsegment, dekodiert.
+            let serverName = MailboxNameCodec.displayName(
+                node.id.components(separatedBy: ".").last
+                    ?? node.id.components(separatedBy: "/").last
+                    ?? node.id
+            )
             return FolderNode(
                 id: node.id,
                 name: serverName,

@@ -122,6 +122,30 @@ struct MessageStoreFolderTests {
         #expect(store.allMessages(accountIDs: [Self.account], folder: "Junk").count == 1)
     }
 
+    @Test("Das Löschen eines Ordners räumt Nachrichten, Anhänge und Stand nur dieses Ordners ab")
+    func deleteFolderClearsOnlyThatFolder() {
+        let store = MessageStore(path: temporaryPath())
+        let doomed = message(folder: "Test.Neu", uid: 1)
+        store.saveMessage(doomed)
+        store.saveAttachment(CachedAttachment(
+            id: "\(doomed.id)-2", messageID: doomed.id, filename: "a.pdf",
+            contentType: "application/pdf", sizeBytes: 3, data: Data([1, 2, 3])
+        ))
+        store.recordSync(accountID: Self.account, folder: "Test.Neu")
+        store.setWindowStart(Date(timeIntervalSince1970: 1), accountID: Self.account, folder: "Test.Neu")
+        store.saveMessage(message(folder: "Test", uid: 1))
+        store.recordSync(accountID: Self.account, folder: "Test")
+
+        store.deleteFolder(accountID: Self.account, folder: "Test.Neu")
+
+        #expect(store.folderMessages(accountID: Self.account, folder: "Test.Neu").isEmpty)
+        #expect(store.attachments(forMessage: doomed.id).isEmpty)
+        #expect(store.lastSync(accountID: Self.account, folder: "Test.Neu") == nil)
+        #expect(store.windowStart(accountID: Self.account, folder: "Test.Neu") == nil)
+        #expect(store.folderMessages(accountID: Self.account, folder: "Test").count == 1)
+        #expect(store.lastSync(accountID: Self.account, folder: "Test") != nil)
+    }
+
     // MARK: - Umzug
 
     @Test("Eine Nachricht zieht mitsamt Anhang in einen anderen Ordner um")
