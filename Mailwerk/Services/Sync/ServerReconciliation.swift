@@ -12,10 +12,14 @@
 //  Grundlage ist der Stand des ganzen Ordners, den der Aufrufer mit
 //  einer einzigen Flag-Abfrage holt. Daraus ergibt sich:
 //  - welche Flags sich geändert haben,
-//  - welche Mails es auf dem Server nicht mehr gibt,
-//  - welche Mails auf dem Server liegen, aber im Cache fehlen (z. B.
-//    eine im Webmail verschobene oder kopierte Mail mit altem Datum,
-//    die der zeitfensterbasierte SEARCH nicht findet).
+//  - welche Mails es auf dem Server nicht mehr gibt.
+//
+//  Mails, die auf dem Server liegen, aber im Cache fehlen, sind nicht
+//  Teil des Plans – neue Mails holt der Abruf. Bekannte Einschränkung:
+//  Eine im Webmail in einen Ordner verschobene oder kopierte Mail mit
+//  altem Eingangsdatum findet der zeitfensterbasierte Abruf nicht. Die
+//  Lösung folgt mit dem Sync-Zustand je Ordner (UIDVALIDITY und höchste
+//  gesehene UID).
 //
 //  Verschwundene UIDs werden nur aus dem Cache dieses Ordners entfernt.
 //  Wohin eine Mail gegangen ist, sagt IMAP nicht – sie kann gelöscht oder
@@ -70,15 +74,9 @@ nonisolated enum ServerReconciliation {
         var removedIDs: [String] = []
         /// Mails mit geänderten Flags, mit ihrem neuen Stand.
         var flagUpdates: [CachedFlagState] = []
-        /// UIDs, die auf dem Server liegen, aber im Cache fehlen. Der
-        /// Aufrufer lädt sie nach. Sortiert aufsteigend, damit ältere
-        /// Mails zuerst gespeichert werden.
-        var missingUIDs: [UInt32] = []
 
         /// true, wenn es nichts zu tun gibt.
-        var isEmpty: Bool {
-            removedIDs.isEmpty && flagUpdates.isEmpty && missingUIDs.isEmpty
-        }
+        var isEmpty: Bool { removedIDs.isEmpty && flagUpdates.isEmpty }
     }
 
     /// Vergleicht Cache und Server und liefert den Änderungsplan.
@@ -86,12 +84,8 @@ nonisolated enum ServerReconciliation {
     /// Verarbeitung: Iteriert über die gecachten Mails und prüft jede gegen
     /// den Server-Stand. Mails, die es auf dem Server nicht mehr gibt (und
     /// deren UID ≤ `keepUIDsAbove` liegt), werden als entfernt gemeldet.
-    /// Mails mit geänderten Flags werden als Update gemeldet. Anschließend
-    /// wird die Differenz Server minus Cache berechnet: UIDs, die auf dem
-    /// Server liegen, aber im Cache fehlen, werden als `missingUIDs`
-    /// gemeldet – das schließt Mails ein, die im Webmail verschoben oder
-    /// kopiert wurden und deren altes Eingangsdatum außerhalb des
-    /// Zeitfensters liegt.
+    /// Mails mit geänderten Flags werden als Update gemeldet. UIDs, die
+    /// nur auf dem Server liegen, bleiben unberücksichtigt.
     ///
     /// - Parameters:
     ///   - cached: Alle gecachten Mails dieses Ordners.
@@ -100,19 +94,14 @@ nonisolated enum ServerReconciliation {
     ///     Gedacht für Mails, die nach der Server-Abfrage eingetroffen und
     ///     schon gecacht sind – sie stünden sonst fälschlich als „gelöscht"
     ///     da. Die Grenze ist die höchste UID der Server-Abfrage.
-    /// - Returns: Änderungsplan mit Entfernungen, Flag-Updates und
-    ///   fehlenden UIDs.
+    /// - Returns: Änderungsplan mit Entfernungen und Flag-Updates.
     static func plan(
         cached: [CachedFlagState],
         server: ServerFolderState,
         keepUIDsAbove: UInt32
     ) -> Plan {
         var plan = Plan()
-        var cachedUIDs = Set<UInt32>()
-
         for message in cached {
-            cachedUIDs.insert(message.uid)
-
             guard server.all.contains(message.uid) else {
                 if message.uid <= keepUIDsAbove { plan.removedIDs.append(message.id) }
                 continue
@@ -126,16 +115,6 @@ nonisolated enum ServerReconciliation {
             }
             if updated != message { plan.flagUpdates.append(updated) }
         }
-
-        // UIDs, die auf dem Server liegen, aber im Cache fehlen.
-        // Nur UIDs ≤ keepUIDsAbove: höhere wurden möglicherweise gerade
-        // erst vom regulären Abruf gecacht und erscheinen nicht in der
-        // Server-Antwort, die vor dem Abruf geholt wurde.
-        let missing = server.all.subtracting(cachedUIDs)
-            .filter { $0 <= keepUIDsAbove }
-            .sorted()
-        plan.missingUIDs = missing
-
         return plan
     }
 

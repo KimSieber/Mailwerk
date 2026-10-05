@@ -9,9 +9,12 @@
 //    im Posteingang) mit anschließendem Abgleich.
 //  - `fetchOlder`: Zeitfenster blockweise zurückschieben.
 //  - `reconcile` (privat): Vergleicht den ganzen Ordner mit dem Cache,
-//    entfernt Gelöschtes, aktualisiert Flags und holt fehlende Mails nach,
-//    die der zeitfensterbasierte SEARCH nicht findet (z. B. eine im
-//    Webmail verschobene Mail mit altem Eingangsdatum).
+//    entfernt Gelöschtes und aktualisiert Flags.
+//
+//  Bekannte Einschränkung: Eine im Webmail in einen Ordner verschobene
+//  oder kopierte Mail mit altem Eingangsdatum findet der zeitfenster-
+//  basierte Abruf nicht. Die Lösung folgt mit dem Sync-Zustand je
+//  Ordner (UIDVALIDITY und höchste gesehene UID).
 //
 //  Abgrenzung: `MailActionService` setzt Flags und verschiebt Mails;
 //  `MailSendService` versendet. Die Darstellung liegt im ViewModel.
@@ -56,9 +59,7 @@ enum MailFetchService {
     /// 2. `cacheMessages` speichert neue Mails samt Body und Anhängen
     ///    (≤ 5 MB) und aktualisiert Flags bekannter Mails.
     /// 3. `reconcile` vergleicht den ganzen Ordner mit dem Cache: entfernt
-    ///    Gelöschtes, aktualisiert Flags und holt Mails nach, die der
-    ///    SEARCH nicht fand (z. B. eine im Webmail verschobene Mail mit
-    ///    altem Eingangsdatum).
+    ///    Gelöschtes und aktualisiert Flags.
     ///
     /// - Parameters:
     ///   - account: Postfach.
@@ -134,11 +135,10 @@ enum MailFetchService {
     /// Verarbeitung: Holt alle UIDs mit Flags in einer einzigen Abfrage
     /// (`UID FETCH 1:* (FLAGS)`). Daraus ergibt sich:
     /// - welche Mails es auf dem Server nicht mehr gibt → werden entfernt,
-    /// - welche Flags sich geändert haben → werden übernommen,
-    /// - welche Mails auf dem Server liegen, aber im Cache fehlen →
-    ///   werden nachgeladen. Das schließt die Lücke für Mails, die im
-    ///   Webmail verschoben oder kopiert wurden und deren altes
-    ///   Eingangsdatum außerhalb des 30-Tage-Fensters liegt.
+    /// - welche Flags sich geändert haben → werden übernommen.
+    ///
+    /// Mails, die nur auf dem Server liegen, lädt der Abgleich nicht nach;
+    /// neue Mails holt der Abruf.
     ///
     /// Der Ordner muss bereits ausgewählt sein. Schlägt die Abfrage fehl,
     /// wirft die Methode – gelöscht wird dann nichts.
@@ -182,22 +182,12 @@ enum MailFetchService {
         )
         MessageStore.shared.apply(plan)
 
-        // Fehlende Mails nachladen (z. B. im Webmail verschoben/kopiert)
-        var backfilled = 0
-        if !plan.missingUIDs.isEmpty {
-            let missingSwiftUIDs = plan.missingUIDs.map { SwiftMail.UID($0) }
-            backfilled = try await cacheMessages(
-                uids: missingSwiftUIDs, server: server, account: account, folder: folder
-            )
-        }
-
         let fetchMillis = Int(fetchDone.timeIntervalSince(started) * 1000)
         let totalMillis = Int(Date().timeIntervalSince(started) * 1000)
         print("""
             🔁 [\(account.displayName)/\(folder)] Abgleich: \(state.all.count) Mails im Ordner, \
             \(state.forwarded?.count ?? 0) mit \(forwardedKeyword), \
-            \(plan.removedIDs.count) entfernt, \(plan.flagUpdates.count) Flags geändert, \
-            \(backfilled) nachgeladen \
+            \(plan.removedIDs.count) entfernt, \(plan.flagUpdates.count) Flags geändert \
             (Abfrage \(fetchMillis) ms, gesamt \(totalMillis) ms)
             """)
     }
@@ -344,8 +334,7 @@ enum MailFetchService {
     /// Header). Neue Mails werden einzeln geladen und sofort gespeichert;
     /// schlägt eine einzelne Mail fehl, wird sie übersprungen.
     ///
-    /// Gemeinsamer Teil von `refreshAndCache`, `fetchOlder` und
-    /// `reconcile` (Nachladen fehlender Mails).
+    /// Gemeinsamer Teil von `refreshAndCache` und `fetchOlder`.
     ///
     /// - Parameters:
     ///   - uids: IMAP-UIDs der zu ladenden Mails.

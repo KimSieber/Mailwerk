@@ -2,8 +2,8 @@
 //  ServerReconciliationTests.swift
 //  MailwerkTests
 //
-//  Zweck: Tests für den Vergleich von Cache und Server-Stand. Prüft
-//  Entfernungen, Flag-Änderungen und das Erkennen fehlender Mails.
+//  Zweck: Tests für den Vergleich von Cache und Server-Stand
+//  (ServerReconciliation). Prüft Entfernungen und Flag-Änderungen.
 //
 
 import Foundation
@@ -62,6 +62,12 @@ struct ServerReconciliationTests {
             [cached(1, unread: true), cached(2, flagged: true)],
             server(all: [1, 2], unseen: [1], flagged: [2])
         )
+        #expect(result.isEmpty)
+    }
+
+    /// Nur auf dem Server vorhandene Mails sind nicht Teil des Plans – die holt der Abruf.
+    @Test func newServerMessagesAreNotPartOfThePlan() {
+        let result = plan([cached(1)], server(all: [1, 2, 3]))
         #expect(result.isEmpty)
     }
 
@@ -147,69 +153,15 @@ struct ServerReconciliationTests {
         #expect(result.isEmpty)
     }
 
-    /// Mehrere Änderungen gleichzeitig: Entfernung, Flag-Updates und fehlende UIDs.
+    /// Mehrere Änderungen gleichzeitig: Entfernung und Flag-Updates.
     @Test func severalChangesAtOnce() {
         let result = plan(
             [cached(1, unread: true), cached(2, flagged: true), cached(3)],
-            server(all: [1, 3, 5], unseen: [], flagged: [3])
+            server(all: [1, 3], unseen: [], flagged: [3])
         )
         #expect(result.removedIDs == ["msg-2"])
         #expect(result.flagUpdates.map(\.id) == ["msg-1", "msg-3"])
         #expect(result.flagUpdates.first?.isUnread == false)
         #expect(result.flagUpdates.last?.isFlagged == true)
-        #expect(result.missingUIDs == [5])
-    }
-
-    // MARK: - Fehlende Mails (a1b)
-
-    /// Server hat Mails, die nicht im Cache liegen → missingUIDs.
-    @Test func missingUIDsAreDetected() {
-        let result = plan(
-            [cached(1), cached(3)],
-            server(all: [1, 2, 3, 5])
-        )
-        #expect(result.removedIDs.isEmpty)
-        #expect(result.flagUpdates.isEmpty)
-        #expect(result.missingUIDs == [2, 5])
-    }
-
-    /// Leerer Cache bei gefülltem Ordner → alle UIDs fehlen.
-    @Test func emptyCache_allUIDs_areMissing() {
-        let result = plan([], server(all: [10, 20, 30]))
-        #expect(result.missingUIDs == [10, 20, 30])
-    }
-
-    /// Cache und Server deckungsgleich → keine fehlenden UIDs.
-    @Test func fullyCachedFolder_noMissing() {
-        let result = plan(
-            [cached(1), cached(2), cached(3)],
-            server(all: [1, 2, 3])
-        )
-        #expect(result.missingUIDs.isEmpty)
-        #expect(result.isEmpty)
-    }
-
-    /// UIDs oberhalb von keepUIDsAbove erscheinen nicht als fehlend
-    /// (sie wurden möglicherweise gerade erst vom regulären Abruf gecacht).
-    @Test func missingUIDs_aboveKeepThreshold_areExcluded() {
-        let state = server(all: [1, 2, 5])
-        // keepUIDsAbove = 5 (höchste UID im Server)
-        // UID 99 ist nicht in server.all, daher irrelevant
-        let result = ServerReconciliation.plan(
-            cached: [cached(1)],
-            server: state,
-            keepUIDsAbove: 3   // Grenze bewusst niedriger
-        )
-        // UID 2 ≤ 3 → fehlt; UID 5 > 3 → wird nicht gemeldet
-        #expect(result.missingUIDs == [2])
-    }
-
-    /// Sortierung: missingUIDs kommen aufsteigend zurück.
-    @Test func missingUIDs_areSortedAscending() {
-        let result = plan(
-            [cached(5)],
-            server(all: [1, 3, 5, 7, 9])
-        )
-        #expect(result.missingUIDs == [1, 3, 7, 9])
     }
 }
