@@ -1,141 +1,165 @@
 # Mailwerk – Entwicklungsdokumentation v0.1.9a
 
-2026-10-05 · Sicherheit, Datenkorrektheit und Inline-Dokumentation (Teil 1)
+2026-10-05 · Sicherheit und Datenkorrektheit (Code-Review Teil 1), Rücknahme von a1b
 
 ---
 
 ## Zusammenfassung
 
-v0.1.9a ist der erste Teil des Code-Reviews (v0.1.9). Er behebt fünf Befunde aus den Kategorien Sicherheit (K1–K4) und Datenkorrektheit (a1b) und legt den Dokumentationsstandard für alle folgenden Versionen fest.
+v0.1.9a ist der erste Teil des Code-Reviews (v0.1.9). Er behebt die vier kritischen Befunde K1 bis K4 und legt den Dokumentationsstandard für alle folgenden Teilversionen fest.
 
-Alle gelieferten Dateien tragen jetzt einen Datei-Header mit Zweck, Abgrenzung und Abhängigkeiten sowie Funktionsköpfe mit Zweck, Verarbeitung und Parametern (DocC-kompatibel, auf Deutsch). Testfunktionen erhalten eine Kurzform mit Zuordnung und Zweck.
+Ein zusätzlich eingebauter Laufzeitfund (a1b, Nachladen fehlender Mails im Abgleich) führte bei großen Postfächern zu einem Timeout und wurde vollständig zurückgenommen. Die zugrunde liegende Lücke ist bekannt und fest für v0.1.9b eingeplant.
+
+Stand nach v0.1.9a: a1, a2 und a3 sind enthalten; Abruf und Abgleich arbeiten im Code wieder exakt wie in v0.1.8e.
 
 ---
 
 ## Auslöser
 
-Ein externes Code-Review auf v0.1.8c (durchgeführt in Claude Cloud mit einem anderen Modell) lieferte Befunde in vier Kategorien: Kritisch (K), Hoch (H), Mittel (M) und Niedrig (N). Der Review-Bericht wurde gegen den aktuellen Stand v0.1.8e geprüft. Zwei Befunde (H3, H5) waren bereits erledigt, einige Bewertungen wurden korrigiert (insbesondere M10 und K5, weil das Review die Projekteinstellung `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` übersehen hatte).
+Ein externes Code-Review auf v0.1.8c (in Claude Cloud mit einem anderen Modell) lieferte Befunde in vier Kategorien: Kritisch (K), Hoch (H), Mittel (M) und Niedrig (N). Der Bericht wurde gegen den Stand v0.1.8e geprüft. H3 und H5 waren bereits erledigt. Einige Bewertungen wurden korrigiert, insbesondere M10 und K5, weil das Review die Projekteinstellung `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` übersehen hatte.
 
-v0.1.9 wird in fünf Teilversionen aufgeteilt: a (Sicherheit/Datenkorrektheit), b (robuster Store), c (Performance), d (Struktur/Aufräumen), e (Inline-Dokumentation Rest).
+v0.1.9 ist in fünf Teilversionen aufgeteilt: a (Sicherheit und Datenkorrektheit), b (robuster Store), c (Performance), d (Struktur und Aufräumen), e (Inline-Dokumentation für die übrigen Dateien).
 
 ---
 
-## Befunde und Maßnahmen in v0.1.9a
+## Umgesetzte Befunde
 
 ### a1 – Ordner bei Markierung und Anhang-Download (K1)
 
-**Problem:** `MailSendService.markOriginal` wählte immer `INBOX`, und `AttachmentManager.downloadAttachment` ebenfalls. Eine Antwort auf eine Mail im Spam-Ordner setzte `\Answered` auf eine fremde Mail im Posteingang (gleiche UID, falscher Ordner). Dasselbe galt für den Anhang-Download bei weitergeleiteten Mails.
+**Problem:** `MailSendService.markOriginal` und `AttachmentManager.downloadAttachment` wählten immer `INBOX`. Eine Antwort auf eine Mail im Spam- oder einem Benutzerordner setzte `\Answered` auf eine fremde Mail im Posteingang mit gleicher UID. Dasselbe galt für den Anhang-Download, auch beim Weiterleiten. Der Fehler bestand seit den Ordneransichten in v0.1.7d.
 
-**Lösung:** `OutgoingMail.Origin` enthält jetzt ein Pflichtfeld `folder`. Die Erzeugung des Bezugs wurde aus der privaten `origin()`-Methode in `ComposeViewModel` in einen failable Initializer `Origin(composeKind:original:)` auf dem Typ selbst verlagert – eine einzige Stelle, die Postfach, Ordner und UID aus der Originalnachricht übernimmt. `markOriginal` wählt `origin.folder`, `downloadAttachment` wählt `message.folder`.
+**Lösung:** `OutgoingMail.Origin` enthält das Pflichtfeld `folder`. Der Bezug auf die Originalmail entsteht an einer einzigen Stelle, dem Initializer `Origin(composeKind:original:)`; die private Funktion `origin()` im `ComposeViewModel` entfällt. `markOriginal` wählt `origin.folder`, `downloadAttachment` wählt `message.folder`.
 
-**Geänderte Dateien:**
-- `Mailwerk/Services/MailSendService.swift` – Origin mit Ordner, `markOriginal` nutzt `origin.folder`
-- `Mailwerk/Services/AttachmentManager.swift` – `downloadAttachment` nutzt `message.folder`
-- `Mailwerk/ViewModels/ComposeViewModel.swift` – `origin()` entfernt, Aufruf durch Initializer ersetzt
-- `MailwerkTests/OutgoingMailOriginTests.swift` – 5 neue Tests (Ordner aus Spam, ReplyAll, verschachtelter Ordner, neue Mail, ohne Original)
+**Hinweis:** Antworten, die vor v0.1.9a aus Spam oder Benutzerordnern verschickt wurden, können eine fremde Mail im Posteingang als beantwortet markiert haben. Das ist nachträglich nicht sicher zuzuordnen, aber harmlos (nur ein Flag).
 
-### a1b – Fehlende Mails im Abgleich nachladen (Laufzeitfund)
+### a2 – Keychain (K2)
 
-**Problem:** Eine im Webmail verschobene oder kopierte Mail mit altem Eingangsdatum (außerhalb der letzten 30 Tage) war in Mailwerk unsichtbar. Der Abgleich (`reconcile`) sah ihre UID auf dem Server, tat aber nichts damit, weil sein Auftrag nur „entfernen und Flags ändern" war.
+**Problem:** `savePassword` löschte den Eintrag und legte ihn neu an. `deletePassword` fehlte das Attribut `kSecAttrSynchronizable`; der synchronisierte Eintrag wurde beim Entfernen eines Postfachs daher nicht gefunden und blieb im iCloud-Schlüsselbund liegen.
 
-**Fund:** Beim Test von a1 im Ordner „Test Mailwerk" wurde eine Mail aus 2021 hinein kopiert. Sie erschien nicht in Mailwerk, obwohl die Konsolenausgabe „Abgleich: 2 Mails im Ordner" meldete.
+**Lösung:** `savePassword` versucht zuerst `SecItemUpdate` und legt nur bei `errSecItemNotFound` neu an. Alle Zugriffe nutzen eine gemeinsame `baseQuery(for:)` mit `kSecAttrSynchronizable = true`.
 
-**Lösung:** `ServerReconciliation.Plan` enthält jetzt `missingUIDs` – die Differenz aus Server-UIDs minus Cache-UIDs (gefiltert auf ≤ `keepUIDsAbove`, sortiert aufsteigend). `MailFetchService.reconcile` ruft für diese UIDs `cacheMessages` auf, denselben Weg wie der reguläre Abruf. Keine zusätzliche IMAP-Abfrage nötig, nur ein Mengenvergleich.
+**Zur Einordnung:** Die Passwörter sind generische Schlüsselbund-Einträge. Sie synchronisieren über iCloud, erscheinen aber nicht in der Passwörter-App auf dem iPhone, sondern nur in der Schlüsselbundverwaltung am Mac (Suche nach `de.sieber-bw.Mailwerk.mailaccount`).
 
-**Geänderte Dateien:**
-- `Mailwerk/Services/Sync/ServerReconciliation.swift` – `missingUIDs` im Plan, `isEmpty` erweitert
-- `Mailwerk/Services/MailFetchService.swift` – `reconcile` lädt fehlende UIDs nach, Log erweitert
-- `MailwerkTests/ServerReconciliationTests.swift` – 5 neue Tests, 1 veralteten entfernt, 1 erweitert
+### a3 – Dateinamen und Druck (K3, K4)
 
-### a2 – Keychain-Korrektur (K2)
+**Problem K3:** `writeTempFile` übernahm den Dateinamen aus dem MIME-Header ungeprüft. Ein Name wie `../../Library/Caches/payload` hätte außerhalb des Temp-Verzeichnisses geschrieben werden können.
 
-**Problem:** `savePassword` löschte den bestehenden Eintrag und legte ihn neu an (`SecItemDelete` + `SecItemAdd`). Das erzeugte bei jedem Speichern einen neuen iCloud-Schlüsselbund-Eintrag, der alte blieb als Leiche zurück. Außerdem fehlte in `deletePassword` das Attribut `kSecAttrSynchronizable`, sodass der synchronisierte Eintrag beim Entfernen eines Postfachs nicht gefunden und nicht gelöscht wurde.
-
-**Lösung:** `savePassword` versucht zuerst `SecItemUpdate`; nur bei `errSecItemNotFound` wird `SecItemAdd` aufgerufen. `deletePassword` enthält jetzt `kSecAttrSynchronizable = true`. Die Query-Duplikation ist über eine gemeinsame `baseQuery(for:)` beseitigt.
-
-**Geänderte Datei:**
-- `Mailwerk/Services/KeychainService.swift` – Update statt Löschen+Neuanlegen, `baseQuery`, Synchronizable in Delete
-
-### a3 – Dateinamen-Bereinigung und WebView-Sicherheit (K3, K4)
-
-**Problem K3:** `writeTempFile` übernahm den MIME-Dateinamen ungeprüft. Ein manipulierter Name wie `../../Library/Caches/payload` hätte eine Datei außerhalb des Temp-Verzeichnisses ablegen können.
-
-**Lösung:** `sanitizedFilename(_:)` nimmt den letzten Pfadbestandteil, behandelt Backslash-Pfade, entfernt führende Punkte und fällt bei leerem Ergebnis auf „Anhang" zurück.
+**Lösung K3:** `sanitizedFilename(_:)` nimmt nur den letzten Pfadbestandteil (auch bei Backslash-Pfaden), entfernt führende Punkte und fällt bei leerem Ergebnis auf „Anhang" zurück. Zusätzlich leert `cleanupTempFiles()` beim App-Start den Ordner `Mailwerk-Attachments` (Aufruf in `MailwerkApp.init`).
 
 **Problem K4:** Der Druck-WebView (`MailPrinter`) lief ohne eigene Konfiguration und konnte JavaScript aus der Mail ausführen.
 
-**Lösung:** `MailPrinter` erzeugt jetzt eine `WKWebViewConfiguration` mit `allowsContentJavaScript = false`. Bilder und Stylesheets werden weiterhin geladen, damit der Ausdruck vollständig bleibt.
-
-**Zusätzlich:** `AttachmentManager.cleanupTempFiles()` löscht beim App-Start das Temp-Verzeichnis `Mailwerk-Attachments`. Der Aufruf erfolgt in `MailwerkApp.init`.
-
-**Geänderte Dateien:**
-- `Mailwerk/Services/AttachmentManager.swift` – `sanitizedFilename`, `cleanupTempFiles`, Konstante `tempSubdirectory`
-- `Mailwerk/Views/MailPrinter.swift` – `WKWebViewConfiguration` mit JS-Sperre
-- `Mailwerk/MailwerkApp.swift` – Aufruf `cleanupTempFiles` im `init`
-- `MailwerkTests/AttachmentSanitizeTests.swift` – 9 neue Tests (Traversal, absolut, Backslash, Punkte, leer, Unicode)
+**Lösung K4:** `MailPrinter` nutzt eine `WKWebViewConfiguration` mit `allowsContentJavaScript = false`. Bilder und Stylesheets werden weiterhin geladen, damit der Ausdruck vollständig ist. Eine erste Fassung, die auch Remote-Bilder blockierte, wurde verworfen, weil der HTML-Druck damit seinen Zweck verliert.
 
 ---
 
-## Geänderte Dateien (Übersicht)
+## Zurückgenommen: a1b – Nachladen fehlender Mails im Abgleich
+
+### Ausgangslage
+
+Beim Test von a1 fiel auf: Eine im Webmail in einen Ordner kopierte Mail mit altem Eingangsdatum erscheint in Mailwerk nicht. Der Abruf sucht nur in den letzten 30 Tagen (`SEARCH SINCE`, bezogen auf das Eingangsdatum), „Ältere laden" nur vor dem gespeicherten Fensterbeginn, und der Abgleich entfernt nur und gleicht Flags ab. Die Lücke besteht seit v0.1.8b (dauerhaft gespeichertes Zeitfenster).
+
+### Was eingebaut war
+
+Der Abgleich bildete die Differenz „UIDs auf dem Server minus UIDs im Cache" und lud diese Mails nach. Getestet wurde nur im kleinen Testordner; dort funktionierte es.
+
+### Fehler
+
+Bei großen Postfächern umfasst diese Differenz die gesamte nicht gecachte Historie, im größten Postfach rund 8.600 Mails. `fetchMessageInfosBulk` lief nach 10 Sekunden in einen Timeout. Mailwerk meldet einen Timeout als „keine Verbindung" nur still im Titel, deshalb fiel der Fehler erst beim Test von b1+b2 auf.
+
+Zwei schnelle Nachbesserungen (Untergrenze über die niedrigste gecachte UID) scheiterten: Der Cache enthält auch ältere gekennzeichnete und per „Ältere laden" geholte Mails mit sehr niedrigen UIDs.
+
+### Nachweis der Ursache
+
+- Im Log erschien `Davon bereits im Cache` zweimal: Der zweite Aufruf kam aus dem Nachladen im Abgleich.
+- `missingUIDs` war im Code von v0.1.9a vorhanden.
+- Gegenprobe: v0.1.8e lief mit derselben Datenbank ohne Timeout.
+
+### Rücknahme
+
+`ServerReconciliation.swift`, `MailFetchService.swift` und `ServerReconciliationTests.swift` sind im Code (ohne Kommentare) identisch mit v0.1.8e. Erhalten blieb die neue Inline-Doku; die Lücke ist in den Datei-Headern als bekannte Einschränkung vermerkt. Die Rücknahme ist ein eigener Commit nach vorne, es wurde kein Stand zurückgesetzt.
+
+### Geplante Lösung (v0.1.9b, direkt nach b1+b2)
+
+Konzept „Sync-Zustand je Ordner" nach dem Muster aus RFC 4549: je Ordner UIDVALIDITY und die höchste gesehene UID speichern. Neu im Ordner ist, was oberhalb dieser UID liegt, unabhängig vom Datum, denn eine hineinkopierte Mail bekommt immer eine neue, höhere UID. Das Konzept wird vor der Umsetzung schriftlich vorgelegt und geprüft, zusammen mit UIDVALIDITY (H2).
+
+### Konsequenzen für das Vorgehen
+
+- Funde während des Reviews werden notiert und bewusst eingeplant, nicht nebenbei gepatcht.
+- Änderungen an Abruf und Abgleich werden immer auch mit dem größten Postfach getestet, zusätzlich mit einer frischen Installation im Simulator.
+- Bei mehreren Fehlversuchen: anhalten und die Ursache belegen, statt weiter nachzubessern.
+
+---
+
+## Geänderte Dateien (Stand nach v0.1.9a)
 
 ```
 Mailwerk/
-├── MailwerkApp.swift                          # cleanupTempFiles beim Start
+├── MailwerkApp.swift                     # cleanupTempFiles beim Start (K3)
 ├── Services/
-│   ├── AttachmentManager.swift                # sanitizedFilename, cleanupTempFiles, Ordner-Fix
-│   ├── KeychainService.swift                  # Update statt Delete+Add, Synchronizable
-│   ├── MailFetchService.swift                 # reconcile lädt fehlende UIDs nach
-│   ├── MailSendService.swift                  # Origin mit Ordner, markOriginal im richtigen Ordner
+│   ├── AttachmentManager.swift           # Ordner beim Download (K1), sanitizedFilename, cleanupTempFiles (K3)
+│   ├── KeychainService.swift             # Update statt Löschen+Neuanlegen, baseQuery (K2)
+│   ├── MailFetchService.swift            # nur Inline-Doku; Code wie v0.1.8e
+│   ├── MailSendService.swift             # Origin mit Ordner, Markierung im richtigen Ordner (K1)
 │   └── Sync/
-│       └── ServerReconciliation.swift         # missingUIDs im Plan
+│       └── ServerReconciliation.swift    # nur Inline-Doku; Code wie v0.1.8e
 ├── ViewModels/
-│   └── ComposeViewModel.swift                 # origin() → Origin(composeKind:original:)
+│   └── ComposeViewModel.swift            # Origin(composeKind:original:) statt origin() (K1)
 └── Views/
-    └── MailPrinter.swift                      # JS-Sperre im Druck-WebView
+    └── MailPrinter.swift                 # JavaScript aus der Mail gesperrt (K4)
 MailwerkTests/
-├── AttachmentSanitizeTests.swift              # 9 neue Tests (K3)
-├── OutgoingMailOriginTests.swift              # 5 neue Tests (K1)
-└── ServerReconciliationTests.swift            # 5 neue, 1 entfernt, 1 erweitert (a1b)
+├── AttachmentSanitizeTests.swift         # neu, 9 Tests (K3)
+├── OutgoingMailOriginTests.swift         # neu, 5 Tests (K1)
+└── ServerReconciliationTests.swift       # nur Kurzdoku; Tests wie v0.1.8e
 ```
 
-11 Dateien geändert, davon 2 neue Testdateien.
+Datenbank: keine Änderung. Commits: `7be6eaa` (a1, a1b), `f77b912` (a2, a3), Rücknahme a1b.
 
 ---
 
 ## Inline-Dokumentation
 
-Ab v0.1.9a gilt folgender Standard für alle gelieferten Dateien:
+Standard ab v0.1.9a:
 
-- **Datei-Header:** Zweck, Verarbeitung/Abgrenzung, Abhängigkeiten (nach dem Xcode-Kopf).
-- **Funktionen:** DocC-kompatibler Kopfkommentar mit Kurzbeschreibung, Verarbeitung (das Warum), `- Parameters:`, `- Returns:`, `- Throws:`.
-- **Testfunktionen:** Kurzform – eine Zeile `///` mit Zuordnung und Zweck.
+- **Datei-Header:** Zweck, Abgrenzung, Abhängigkeiten.
+- **Funktionen:** DocC-kompatibler Kopf mit Kurzbeschreibung, Verarbeitung (das Warum), `- Parameters:`, `- Returns:`, `- Throws:`.
+- **Testfunktionen:** eine Zeile `///` mit Zuordnung und Zweck.
 - **Sprache:** Deutsch, keine Versionsverweise im Code.
 
-Die 11 Dateien in v0.1.9a sind nach diesem Standard dokumentiert. Die übrigen Dateien folgen in v0.1.9e.
+Alle elf oben genannten Dateien folgen diesem Standard. Die übrigen Dateien folgen in v0.1.9e.
 
 ---
 
 ## Testverfahren
 
-**Automatisch:** 139 Tests (130 bestehende + 5 Origin + 5 Reconciliation-Missing + 9 Sanitize – 1 entfernter – 9 bereits in der Summe enthaltene Bestandstests = 139 netto). Alle ohne Warnungen.
+**Automatisch:** alle Tests grün, ohne Warnungen. Gegenüber v0.1.8e (121 Tests) kommen 14 neue hinzu (5 Origin, 9 Dateinamen), also 135.
 
-**Manuell:**
-- a1: Antwort aus „Test Mailwerk" → Markierung im richtigen Ordner (Webmail gegengeprüft).
-- a1b: Alte Mail in „Test Mailwerk" kopiert → erscheint nach Aktualisierung, Konsolenausgabe „1 nachgeladen".
-- a2: Passwort geändert → Schlüsselbund zeigt einen Eintrag mit aktuellem Änderungsdatum, kein zweiter.
-- a3/K4: HTML-Mail mit Bildern gedruckt → Bilder im Ausdruck, kein JavaScript-Fehler.
+**Manuell (Simulator und Mac), nach der Rücknahme von a1b:**
+
+| Test | Inhalt | Ergebnis |
+|---|---|---|
+| T1 | Build und Tests | in Ordnung |
+| T2 | Abruf aller drei Postfächer inkl. des größten; Abgleich ohne Nachladen | in Ordnung, kein Timeout |
+| T3 | Frische Installation im Simulator, alle Postfächer abrufen | in Ordnung, kein Timeout |
+| T4 | Antworten/Weiterleiten aus „Test Mailwerk", Anhang über 5 MB | Markierung in Mailwerk und Webmail korrekt |
+| T5 | Passwort ändern | erfolgreich, ein Eintrag je Postfach |
+| T6 | Druck einer HTML-Mail mit Bildern, Anhang öffnen und teilen | funktioniert |
 
 ---
 
 ## Abhängigkeiten / Xcode-Konfiguration
 
-Unverändert gegenüber v0.1.8e.
+- **SwiftMail:** Mindestversion von 1.11.0 auf **1.13.0** angehoben (Paket neu eingebunden, im Commit `7be6eaa`). Paket-Updates sollen künftig in einem eigenen Commit erfolgen, damit sich Verhaltensänderungen klar zuordnen lassen.
+- `MARKETING_VERSION` = 0.1.9a.
 
 ---
 
 ## Nächste Schritte
 
-- **v0.1.9b:** Robuster Store – Transaktions-Wrapper, atomares Speichern, UIDVALIDITY, graceful Recovery statt `fatalError`, Backup-Ausschluss.
-- **v0.1.9c:** Performance – Listenmodell ohne Bodies, Preview-Spalte, Index, Zähler, HTML-Reload-Optimierung, Laufzeitmessung.
-- **v0.1.9d:** Struktur und Aufräumen – gemeinsame Credentials/Verbindung, `refresh()` zerlegen, Aktionen ins ViewModel, `os.Logger`, toter Code.
-- **v0.1.9e:** Inline-Dokumentation für alle übrigen Dateien.
+- **v0.1.9b:**
+  1. b1+b2 neu liefern (Transaktions-Wrapper mit Rollback, Prüfung der SQLite-Ergebnisse, `user_version`, WAL, Mail und Anhänge atomar speichern), Test inkl. größtem Postfach.
+  2. Konzept „Sync-Zustand je Ordner" (UIDVALIDITY und höchste gesehene UID) vorlegen und prüfen.
+  3. Umsetzung des Konzepts: schließt die Lücke aus a1b und setzt H2 um.
+  4. b4: Wiederherstellung statt `fatalError` bei beschädigter Datenbank, Backup-Ausschluss der Cache-Datei.
+- **v0.1.9c:** Performance.
+- **v0.1.9d:** Struktur und Aufräumen.
+- **v0.1.9e:** Inline-Dokumentation der übrigen Dateien.
