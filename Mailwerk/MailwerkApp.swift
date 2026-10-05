@@ -2,7 +2,11 @@
 //  MailwerkApp.swift
 //  Mailwerk
 //
-//  Created by Kim Sieber on 18.09.26.
+//  Zweck: Einstiegspunkt der App. Richtet den Filterlisten-Speicher ein
+//  (bevorzugt mit iCloud-Abgleich, sonst lokal, notfalls im Speicher)
+//  und räumt beim Start temporäre Dateien auf.
+//
+//  Abhängigkeiten: SwiftUI, SwiftData, AttachmentManager (Aufräumen).
 //
 
 import SwiftUI
@@ -18,8 +22,11 @@ struct MailwerkApp: App {
 
     init() {
         modelContainer = Self.makeContainer()
-        // v0.1.8b: Nachgeladene ältere Mails bleiben dauerhaft im Cache –
-        // das Zurücksetzen der Zeitfenster beim Start (v0.1.7e) entfällt.
+
+        // Temporäre Anhang-Dateien aus der letzten Sitzung entfernen.
+        // Das System leert das tmp-Verzeichnis zwar selbst, aber nicht
+        // zuverlässig bei jeder Sitzung.
+        AttachmentManager.cleanupTempFiles()
     }
 
     var body: some Scene {
@@ -35,6 +42,14 @@ struct MailwerkApp: App {
 
     private static let cloudContainerID = "iCloud.de.sieber-bw.Mailwerk"
 
+    /// Erzeugt den Filterlisten-Speicher in absteigender Präferenz.
+    ///
+    /// Verarbeitung: Versucht zuerst iCloud (CloudKit), dann eine lokale
+    /// Datei, zuletzt einen flüchtigen Speicher im RAM. Der erste
+    /// erfolgreiche Versuch gewinnt; scheitern alle drei, bricht die App
+    /// ab, weil etwas Grundlegendes nicht stimmt.
+    ///
+    /// - Returns: Funktionierender `ModelContainer`.
     private static func makeContainer() -> ModelContainer {
         let schema = Schema([FilterEntry.self])
 

@@ -6,6 +6,9 @@
 //
 //  - Schreibt gecachte Anhang-Daten in temporäre Dateien, weil QuickLook
 //    und das Teilen-Menü mit Datei-URLs arbeiten.
+//  - Bereinigt Dateinamen, damit Pfadtrennzeichen im MIME-Dateinamen
+//    (z. B. „../../Library/Caches/payload") nicht aus dem Temp-Verzeichnis
+//    ausbrechen können (K3).
 //  - Lädt Anhänge nach, die beim Abruf nur als Metadaten gespeichert wurden
 //    (Mails über der Schwelle für den automatischen Download). Der Abruf
 //    erfolgt im Ordner der Mail, weil UIDs nur innerhalb eines Ordners
@@ -46,15 +49,35 @@ enum AttachmentManager {
         }
     }
 
+    /// Name des Unterordners im tmp-Verzeichnis für Anhang-Dateien.
+    private static let tempSubdirectory = "Mailwerk-Attachments"
+
+    // MARK: - Temp-Verzeichnis
+
+    /// Löscht das Temp-Verzeichnis für Anhänge, falls es existiert.
+    ///
+    /// Verarbeitung: Entfernt den gesamten Ordner `Mailwerk-Attachments`
+    /// im tmp-Verzeichnis der App. Das Verzeichnis wird bei Bedarf von
+    /// `writeTempFile` neu angelegt. Fehler werden still ignoriert, weil
+    /// das System das tmp-Verzeichnis ohnehin regelmäßig leert.
+    ///
+    /// Aufruf: Einmal beim App-Start (`MailwerkApp.init`).
+    static func cleanupTempFiles() {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(tempSubdirectory, isDirectory: true)
+        try? FileManager.default.removeItem(at: tempDir)
+    }
+
     // MARK: - Temporäre Datei für Vorschau / Teilen
 
     /// Schreibt die Daten eines Anhangs in eine temporäre Datei.
     ///
     /// Verarbeitung: Legt im tmp-Verzeichnis der App den Ordner
-    /// `Mailwerk-Attachments` an und schreibt die Daten unter dem Dateinamen
-    /// des Anhangs dorthin; eine vorhandene Datei gleichen Namens wird
-    /// ersetzt. Die Datei bleibt liegen, bis das System das tmp-Verzeichnis
-    /// leert.
+    /// `Mailwerk-Attachments` an und schreibt die Daten unter dem
+    /// bereinigten Dateinamen dorthin; eine vorhandene Datei gleichen
+    /// Namens wird ersetzt. Die Bereinigung entfernt Pfadtrennzeichen
+    /// und Punkte am Anfang, damit der Name nicht aus dem Temp-Verzeichnis
+    /// ausbrechen kann.
     ///
     /// - Parameter attachment: Anhang mit geladenen Daten.
     /// - Returns: URL der geschriebenen Datei.
@@ -65,10 +88,11 @@ enum AttachmentManager {
             throw AttachmentError.noData
         }
         let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Mailwerk-Attachments", isDirectory: true)
+            .appendingPathComponent(tempSubdirectory, isDirectory: true)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
-        let fileURL = tempDir.appendingPathComponent(attachment.filename)
+        let safe = Self.sanitizedFilename(attachment.filename)
+        let fileURL = tempDir.appendingPathComponent(safe)
 
         // Bestehende Datei überschreiben
         if FileManager.default.fileExists(atPath: fileURL.path) {
@@ -76,6 +100,35 @@ enum AttachmentManager {
         }
         try data.write(to: fileURL)
         return fileURL
+    }
+
+    // MARK: - Dateinamen bereinigen
+
+    /// Entfernt Pfadtrennzeichen und unsichere Zeichen aus einem Dateinamen.
+    ///
+    /// Verarbeitung: Nimmt nur den letzten Pfadbestandteil (alles nach
+    /// dem letzten `/` oder `\`), entfernt führende Punkte (verhindert
+    /// versteckte Dateien und `..`-Traversal) und ersetzt einen leeren
+    /// Rest durch „Anhang". Die Dateiendung bleibt erhalten.
+    ///
+    /// - Parameter filename: Rohname aus dem MIME-Header.
+    /// - Returns: Bereinigter Name, der sicher im Temp-Verzeichnis liegt.
+    static func sanitizedFilename(_ filename: String) -> String {
+        // Nur den letzten Bestandteil nehmen (entfernt „../../" usw.)
+        var name = (filename as NSString).lastPathComponent
+        // Backslash-Pfade (Windows) ebenfalls behandeln
+        if let lastBackslash = name.lastIndex(of: "\\") {
+            name = String(name[name.index(after: lastBackslash)...])
+        }
+        // Führende Punkte entfernen
+        while name.hasPrefix(".") {
+            name = String(name.dropFirst())
+        }
+        // Leerer Name → Fallback
+        if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            name = "Anhang"
+        }
+        return name
     }
 
     // MARK: - On-demand-Download
