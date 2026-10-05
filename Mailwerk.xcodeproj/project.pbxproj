@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		3B74D9E8305DF0AC0072DF5D /* SwiftMail in Frameworks */ = {isa = PBXBuildFile; productRef = 3B74D9E7305DF0AC0072DF5D /* SwiftMail */; };
+		3BF782073071ED7000A4DC3D /* SwiftMail in Frameworks */ = {isa = PBXBuildFile; productRef = 3BF782063071ED7000A4DC3D /* SwiftMail */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -33,7 +33,7 @@
 		3B8C3B1F305DE0980028B269 /* Mailwerk.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Mailwerk.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B8C3B2C305DE09B0028B269 /* MailwerkTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MailwerkTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B8C3B36305DE09B0028B269 /* MailwerkUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MailwerkUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		3B96C5A13069C2AA00225FE5 /* Mailwerk.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = file; path = Mailwerk.xctestplan; sourceTree = "<group>"; };
+		3B96C5A13069C2AA00225FE5 /* Mailwerk.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = Mailwerk.xctestplan; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -72,7 +72,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3B74D9E8305DF0AC0072DF5D /* SwiftMail in Frameworks */,
+				3BF782073071ED7000A4DC3D /* SwiftMail in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -136,7 +136,7 @@
 			);
 			name = Mailwerk;
 			packageProductDependencies = (
-				3B74D9E7305DF0AC0072DF5D /* SwiftMail */,
+				3BF782063071ED7000A4DC3D /* SwiftMail */,
 			);
 			productName = Mailwerk;
 			productReference = 3B8C3B1F305DE0980028B269 /* Mailwerk.app */;
@@ -222,7 +222,7 @@
 			mainGroup = 3B8C3B16305DE0980028B269;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				3B74D9E6305DF0AC0072DF5D /* XCRemoteSwiftPackageReference "SwiftMail" */,
+				3BF782053071ED7000A4DC3D /* XCRemoteSwiftPackageReference "SwiftMail" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 3B8C3B20305DE0980028B269 /* Products */;
@@ -461,7 +461,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				MARKETING_VERSION = 0.1.8e;
+				MARKETING_VERSION = 0.1.9a;
 				PRODUCT_BUNDLE_IDENTIFIER = "de.sieber-bw.Mailwerk";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -520,7 +520,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				MARKETING_VERSION = 0.1.8e;
+				MARKETING_VERSION = 0.1.9a;
 				PRODUCT_BUNDLE_IDENTIFIER = "de.sieber-bw.Mailwerk";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -686,20 +686,20 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		3B74D9E6305DF0AC0072DF5D /* XCRemoteSwiftPackageReference "SwiftMail" */ = {
+		3BF782053071ED7000A4DC3D /* XCRemoteSwiftPackageReference "SwiftMail" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/Cocoanetics/SwiftMail.git";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 1.11.0;
+				minimumVersion = 1.13.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		3B74D9E7305DF0AC0072DF5D /* SwiftMail */ = {
+		3BF782063071ED7000A4DC3D /* SwiftMail */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 3B74D9E6305DF0AC0072DF5D /* XCRemoteSwiftPackageReference "SwiftMail" */;
+			package = 3BF782053071ED7000A4DC3D /* XCRemoteSwiftPackageReference "SwiftMail" */;
 			productName = SwiftMail;
 		};
 /* End XCSwiftPackageProductDependency section */

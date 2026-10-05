@@ -2,9 +2,20 @@
 //  ComposeViewModel.swift
 //  Mailwerk
 //
-//  Zustand und Ablauf des Verfassen-Fensters: Vorbelegung über den
-//  ReplyBuilder, Anhänge, Zusammenbau von HTML- und Textteil, Versand
-//  über den MailSendService.
+//  Zweck: Zustand und Ablauf des Verfassen-Fensters für neue Mails,
+//  Antworten, Allen antworten und Weiterleiten.
+//
+//  - Vorbelegung über den ReplyBuilder bzw. aus einem mailto:-Link
+//  - Verwaltung eigener und übernommener Anhänge
+//  - Zusammenbau von HTML- und Textteil (eigener Text plus Zitat)
+//  - Versand über den MailSendService, inkl. Bezug auf die Originalmail
+//  - Erkennen ungespeicherter Eingaben beim Abbrechen
+//
+//  Abgrenzung: Die Darstellung liegt in ComposeView, der eigentliche
+//  Versand und die Nacharbeiten im MailSendService.
+//
+//  Abhängigkeiten: AccountStore, ReplyBuilder, RichTextHTML,
+//  MailSendService, AttachmentManager, MessageStore.
 //
 
 import Foundation
@@ -15,35 +26,68 @@ final class ComposeViewModel {
 
     // MARK: Eingaben
 
+    /// Gewähltes Absende-Postfach; `nil` = noch nicht gewählt.
     var accountID: UUID?
+    /// Empfänger (To).
     var to: [MailAddress] = []
+    /// Kopie-Empfänger (Cc).
     var cc: [MailAddress] = []
+    /// Blindkopie-Empfänger (Bcc).
     var bcc: [MailAddress] = []
+    /// true, wenn das Bcc-Feld eingeblendet ist.
     var showBcc = false
+    /// Betreff.
     var subject = ""
+    /// Eigener, formatierter Text (ohne Zitat).
     var body = NSAttributedString(string: "", attributes: RichTextController.defaultAttributes)
+    /// Mitzusendende Anhänge (eigene und übernommene).
     var attachments: [OutgoingAttachment] = []
 
     // MARK: Zustand
 
+    /// true, solange der Versand läuft.
     var isSending = false
+    /// Fortschrittstext während des Versands.
     var statusText: String?
+    /// Fehlermeldung für die Anzeige; `nil` = kein Fehler.
     var errorMessage: String?
-    /// Hinweise nach erfolgreichem Versand (z. B. Kopie nicht abgelegt)
+    /// Hinweise nach erfolgreichem Versand (z. B. Kopie nicht abgelegt).
     var warnings: [String] = []
 
     // MARK: Bezug zur Originalmail
 
+    /// Art des Verfassens (neu, antworten, allen antworten, weiterleiten).
     let kind: ComposeKind
+    /// Originalnachricht bei Antwort oder Weiterleitung.
     private let original: CachedMessage?
+    /// Quelle für Postfächer und Passwörter.
     private let accountStore: AccountStore
+    /// Zitat bzw. weitergeleiteter Inhalt als HTML.
     private(set) var quotedHTML: String?
+    /// Zitat bzw. weitergeleiteter Inhalt als Text.
     private(set) var quotedText: String?
+    /// Message-ID der Originalnachricht für den Header In-Reply-To.
     private var inReplyTo: String?
+    /// References-Kette für das Threading.
     private var references: String?
 
+    /// Steuerung des Formatierungs-Editors (Fett, Listen, Schriftgröße …).
     let controller = RichTextController()
 
+    /// Legt das Verfassen-Fenster an und belegt es vor.
+    ///
+    /// Verarbeitung: Ermittelt die Vorbelegung über den ReplyBuilder (die
+    /// eigene Adresse entfällt bei „Allen antworten“). Beim Weiterleiten
+    /// werden die Anhänge der Originalmail übernommen; noch nicht geladene
+    /// werden erst beim Senden nachgeladen. Ein mailto:-Link überschreibt
+    /// Empfänger, Betreff und Text. Zuletzt wird der Ausgangszustand für
+    /// die Änderungserkennung festgehalten.
+    ///
+    /// - Parameters:
+    ///   - accountStore: Quelle für Postfächer und Standard-Postfach.
+    ///   - kind: Art des Verfassens.
+    ///   - original: Originalnachricht bei Antwort oder Weiterleitung.
+    ///   - mailto: Getippter mailto:-Link zur Vorbelegung.
     init(
         accountStore: AccountStore,
         kind: ComposeKind,
@@ -136,11 +180,13 @@ final class ComposeViewModel {
         let attachmentCount: Int
     }
 
+    /// Zustand direkt nach der Vorbelegung; Grundlage von `hasContent`.
     private var initialState: State
     /// Vorbelegter Text (nur aus mailto:-Links); unverändert zählt er
     /// beim Abbrechen nicht als Eingabe.
     private var initialBody = NSAttributedString()
 
+    /// Aktueller Zustand der Eingaben, vergleichbar mit `initialState`.
     private var currentState: State {
         State(to: to, cc: cc, bcc: bcc, subject: subject, attachmentCount: attachments.count)
     }
@@ -150,13 +196,17 @@ final class ComposeViewModel {
 
     // MARK: - Abgeleitete Werte
 
+    /// Alle eingerichteten Postfächer für die Absenderauswahl.
     var accounts: [MailAccount] { accountStore.accounts }
 
+    /// Das gewählte Absende-Postfach; `nil`, solange keines gewählt ist.
     var selectedAccount: MailAccount? {
         guard let accountID else { return nil }
         return accountStore.accounts.first { $0.id == accountID }
     }
 
+    /// true, wenn Absender und mindestens ein Empfänger gesetzt sind und
+    /// gerade nicht gesendet wird.
     var canSend: Bool {
         accountID != nil && !to.isEmpty && !isSending
     }
@@ -167,6 +217,7 @@ final class ComposeViewModel {
         (body.length > 0 && !body.isEqual(to: initialBody)) || currentState != initialState
     }
 
+    /// Gesamtgröße aller geladenen Anhänge in Bytes.
     var totalAttachmentBytes: Int {
         attachments.reduce(0) { $0 + $1.data.count }
     }
@@ -179,18 +230,35 @@ final class ComposeViewModel {
 
     // MARK: - Anhänge
 
+    /// Fügt einen eigenen Anhang hinzu.
+    ///
+    /// - Parameters:
+    ///   - filename: Dateiname, wie er beim Empfänger erscheint.
+    ///   - mimeType: MIME-Typ der Datei.
+    ///   - data: Inhalt der Datei.
     func addAttachment(filename: String, mimeType: String, data: Data) {
         attachments.append(
             OutgoingAttachment(filename: filename, mimeType: mimeType, data: data)
         )
     }
 
+    /// Entfernt einen Anhang aus der Nachricht.
+    ///
+    /// - Parameter attachment: Zu entfernender Anhang (Vergleich über Gleichheit).
     func removeAttachment(_ attachment: OutgoingAttachment) {
         attachments.removeAll { $0 == attachment }
     }
 
     // MARK: - Versand
 
+    /// Versendet die Nachricht.
+    ///
+    /// Verarbeitung: Lädt zuerst fehlende Anhänge der weitergeleiteten Mail
+    /// nach, baut dann die versandfertige Nachricht samt Bezug auf die
+    /// Originalmail (Postfach, Ordner, UID) und übergibt sie dem
+    /// MailSendService. Warnungen der Nacharbeiten landen in `warnings`,
+    /// Fehler in `errorMessage`.
+    ///
     /// - Returns: true, wenn versendet wurde und das Fenster geschlossen werden kann.
     @MainActor
     func send() async -> Bool {
@@ -216,7 +284,7 @@ final class ComposeViewModel {
             attachments: attachments,
             inReplyTo: inReplyTo,
             references: references,
-            origin: origin()
+            origin: OutgoingMail.Origin(composeKind: kind, original: original)
         )
 
         do {
@@ -231,41 +299,38 @@ final class ComposeViewModel {
 
     // MARK: - Inhalt zusammenbauen
 
-    /// Eigener Text, darunter das Zitat bzw. der weitergeleitete Inhalt.
+    /// Baut den HTML-Teil der Nachricht.
+    ///
+    /// Verarbeitung: Wandelt den eigenen Text in HTML und hängt das Zitat
+    /// bzw. den weitergeleiteten Inhalt darunter an.
+    ///
+    /// - Returns: Vollständiger HTML-Body.
     func composedHTML() -> String {
         let own = RichTextHTML.html(from: body)
         guard let quotedHTML else { return own }
         return own + "<br>" + quotedHTML
     }
 
+    /// Baut den Textteil der Nachricht.
+    ///
+    /// Verarbeitung: Wandelt den eigenen Text in reinen Text und hängt das
+    /// Zitat bzw. den weitergeleiteten Inhalt nach einer Leerzeile an.
+    ///
+    /// - Returns: Vollständige Nur-Text-Alternative.
     func composedText() -> String {
         let own = RichTextHTML.plainText(from: body)
         guard let quotedText else { return own }
         return own + "\n\n" + quotedText
     }
 
-    private func origin() -> OutgoingMail.Origin? {
-        guard let original else { return nil }
-        switch kind {
-        case .reply, .replyAll:
-            return .init(
-                kind: .replied,
-                cachedMessageID: original.id,
-                accountID: original.accountID,
-                uid: original.uid
-            )
-        case .forward:
-            return .init(
-                kind: .forwarded,
-                cachedMessageID: original.id,
-                accountID: original.accountID,
-                uid: original.uid
-            )
-        case .new:
-            return nil
-        }
-    }
-
+    /// Lädt fehlende Anhänge der weitergeleiteten Mail vom Server nach.
+    ///
+    /// Verarbeitung: Holt jeden noch nicht geladenen Anhang über den
+    /// AttachmentManager (im Ordner der Originalmail) und fügt ihn den
+    /// mitzusendenden Anhängen hinzu. Beim ersten Fehler wird abgebrochen
+    /// und die Meldung in `errorMessage` gesetzt.
+    ///
+    /// - Returns: true, wenn alle Anhänge vorliegen; false bei einem Fehler.
     @MainActor
     private func loadMissingAttachments() async -> Bool {
         guard let original else { return true }

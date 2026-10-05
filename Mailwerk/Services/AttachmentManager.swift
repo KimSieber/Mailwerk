@@ -2,15 +2,29 @@
 //  AttachmentManager.swift
 //  Mailwerk
 //
+//  Zweck: Stellt Anhänge für Vorschau, Teilen und Weiterleiten bereit.
+//
+//  - Schreibt gecachte Anhang-Daten in temporäre Dateien, weil QuickLook
+//    und das Teilen-Menü mit Datei-URLs arbeiten.
+//  - Lädt Anhänge nach, die beim Abruf nur als Metadaten gespeichert wurden
+//    (Mails über der Schwelle für den automatischen Download). Der Abruf
+//    erfolgt im Ordner der Mail, weil UIDs nur innerhalb eines Ordners
+//    eindeutig sind.
+//
+//  Abgrenzung: Der automatische Download beim Abruf liegt im
+//  MailFetchService; hier geht es nur um Einzelzugriffe.
+//
+//  Abhängigkeiten: SwiftMail (IMAP), MailServerFactory (TLS-Vorgaben),
+//  AccountStore (Zugangsdaten), MessageStore (Cache).
+//
 
 import Foundation
 import SwiftMail
 import NIOIMAPCore
 
-/// Verwaltet temporäre Dateien für die Vorschau/das Teilen von Anhängen
-/// und lädt fehlende Anhänge (> 5 MB) bei Bedarf vom IMAP-Server nach.
 enum AttachmentManager {
 
+    /// Fehler beim Bereitstellen oder Nachladen eines Anhangs.
     enum AttachmentError: LocalizedError {
         case noData
         case accountNotFound
@@ -18,6 +32,9 @@ enum AttachmentManager {
         case messageNotFound
         case partNotFound
 
+        /// Liefert die deutsche Meldung für den Nutzer.
+        ///
+        /// - Returns: Meldungstext für die Anzeige.
         var errorDescription: String? {
             switch self {
             case .noData: return "Keine Daten vorhanden"
@@ -31,9 +48,18 @@ enum AttachmentManager {
 
     // MARK: - Temporäre Datei für Vorschau / Teilen
 
-    /// Schreibt die Anhang-Daten in eine temporäre Datei und gibt deren URL zurück.
-    /// Die Datei wird im systemeigenen tmp-Verzeichnis abgelegt und beim
-    /// nächsten App-Neustart automatisch bereinigt.
+    /// Schreibt die Daten eines Anhangs in eine temporäre Datei.
+    ///
+    /// Verarbeitung: Legt im tmp-Verzeichnis der App den Ordner
+    /// `Mailwerk-Attachments` an und schreibt die Daten unter dem Dateinamen
+    /// des Anhangs dorthin; eine vorhandene Datei gleichen Namens wird
+    /// ersetzt. Die Datei bleibt liegen, bis das System das tmp-Verzeichnis
+    /// leert.
+    ///
+    /// - Parameter attachment: Anhang mit geladenen Daten.
+    /// - Returns: URL der geschriebenen Datei.
+    /// - Throws: `AttachmentError.noData`, wenn die Daten noch nicht geladen
+    ///   sind, sowie Dateisystemfehler.
     static func writeTempFile(for attachment: CachedAttachment) throws -> URL {
         guard let data = attachment.data else {
             throw AttachmentError.noData
@@ -54,9 +80,21 @@ enum AttachmentManager {
 
     // MARK: - On-demand-Download
 
-    /// Lädt einen einzelnen Anhang vom IMAP-Server nach (für Mails > 5 MB,
-    /// bei denen nur Metadaten gecacht wurden). Speichert die Daten im
-    /// lokalen Cache und gibt den aktualisierten Anhang zurück.
+    /// Lädt einen einzelnen Anhang vom IMAP-Server nach und speichert ihn im Cache.
+    ///
+    /// Verarbeitung: Meldet sich am Postfach der Nachricht an, wählt den
+    /// **Ordner der Nachricht** und holt deren Struktur über die UID. Der
+    /// passende Teil wird über Dateiname und Content-Type bestimmt, geladen,
+    /// dekodiert und im lokalen Cache abgelegt.
+    ///
+    /// - Parameters:
+    ///   - attachment: Anhang, dessen Daten fehlen.
+    ///   - message: Nachricht, zu der der Anhang gehört (liefert Postfach,
+    ///     Ordner und UID).
+    ///   - accountStore: Quelle für Postfach und Passwort.
+    /// - Returns: Der Anhang mit geladenen Daten.
+    /// - Throws: `AttachmentError` (Postfach, Passwort, Nachricht oder Teil
+    ///   nicht gefunden) sowie Verbindungsfehler.
     static func downloadAttachment(
         _ attachment: CachedAttachment,
         message: CachedMessage,
@@ -73,7 +111,7 @@ enum AttachmentManager {
         do {
             try await server.connect()
             try await server.login(username: account.username, password: password)
-            _ = try await server.selectMailbox("INBOX")
+            _ = try await server.selectMailbox(message.folder)
 
             // MessageInfo für diese UID holen
             let uid = SwiftMail.UID(message.uid)

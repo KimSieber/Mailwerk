@@ -2,6 +2,23 @@
 //  MailFetchService.swift
 //  Mailwerk
 //
+//  Zweck: Holt Mails von IMAP-Servern und legt sie im lokalen Cache ab.
+//
+//  Drei Zugangspunkte:
+//  - `refreshAndCache`: Abruf der letzten 30 Tage (plus gekennzeichnete
+//    im Posteingang) mit anschließendem Abgleich.
+//  - `fetchOlder`: Zeitfenster blockweise zurückschieben.
+//  - `reconcile` (privat): Vergleicht den ganzen Ordner mit dem Cache,
+//    entfernt Gelöschtes, aktualisiert Flags und holt fehlende Mails nach,
+//    die der zeitfensterbasierte SEARCH nicht findet (z. B. eine im
+//    Webmail verschobene Mail mit altem Eingangsdatum).
+//
+//  Abgrenzung: `MailActionService` setzt Flags und verschiebt Mails;
+//  `MailSendService` versendet. Die Darstellung liegt im ViewModel.
+//
+//  Abhängigkeiten: SwiftMail (IMAP), MailServerFactory (TLS-Vorgaben),
+//  MessageStore (Cache), ServerReconciliation (Abgleichslogik).
+//
 
 import Foundation
 import SwiftMail
@@ -29,15 +46,25 @@ enum MailFetchService {
     /// Teil des ENVELOPE, wird aber für korrektes Threading gebraucht.
     private static let extraHeaderFields = ["References"]
 
-    /// Holt neue Nachrichten eines Ordners (letzte 30 Tage), cacht Body
-    /// und – bei Mails ≤ 5 MB – auch die Anhänge lokal.
+    // MARK: - Abruf
+
+    /// Holt neue Nachrichten eines Ordners und gleicht den Cache ab.
     ///
-    /// v0.1.8b: Im Posteingang zusätzlich alle gekennzeichneten Mails,
-    /// unabhängig vom Alter – „Mit Kennzeichnung“ ist damit vollständig.
-    /// Nach Alter wird nichts mehr aus dem Cache gelöscht.
+    /// Verarbeitung:
+    /// 1. SEARCH SINCE der letzten 30 Tage → UIDs der aktuellen Mails.
+    ///    Im Posteingang zusätzlich alle gekennzeichneten Mails.
+    /// 2. `cacheMessages` speichert neue Mails samt Body und Anhängen
+    ///    (≤ 5 MB) und aktualisiert Flags bekannter Mails.
+    /// 3. `reconcile` vergleicht den ganzen Ordner mit dem Cache: entfernt
+    ///    Gelöschtes, aktualisiert Flags und holt Mails nach, die der
+    ///    SEARCH nicht fand (z. B. eine im Webmail verschobene Mail mit
+    ///    altem Eingangsdatum).
     ///
-    /// v0.1.8d: Anschließend wird der Cache dieses Ordners mit dem Server
-    /// abgeglichen (`reconcile`) – der Server ist führend.
+    /// - Parameters:
+    ///   - account: Postfach.
+    ///   - password: Passwort des Postfachs.
+    ///   - folder: IMAP-Ordner (Standard: INBOX).
+    /// - Throws: Verbindungsfehler oder IMAP-Fehler.
     static func refreshAndCache(
         account: MailAccount,
         password: String,
@@ -100,23 +127,27 @@ enum MailFetchService {
         }
     }
 
-    // MARK: - Server-Abgleich (v0.1.8d)
+    // MARK: - Server-Abgleich
 
-    /// Gleicht den Cache eines Ordners mit dem Server ab: Mails, die es
-    /// dort nicht mehr gibt, verschwinden; geänderte Flags werden
-    /// übernommen. Der Server ist führend – egal ob die Änderung aus dem
-    /// Webmail oder von einer anderen Mailwerk-Installation stammt.
+    /// Gleicht den Cache eines Ordners mit dem Server ab.
     ///
-    /// v0.1.8e: **Eine** Abfrage der Flags über den ganzen Ordner
-    /// (`UID FETCH 1:* (FLAGS)`) statt fünf Suchen über den geladenen
-    /// Zeitraum. Das ist schneller (eine Laufzeit zum Server statt fünf)
-    /// und deckt auch sehr alte Mails ab. Die 8-KB-Grenze je Antwortzeile
-    /// (Fund v0.1.8d) greift hier nicht: Jede Mail ist eine eigene kurze
-    /// Zeile. Die Sonderbehandlung älterer gekennzeichneter Mails
-    /// entfällt damit.
+    /// Verarbeitung: Holt alle UIDs mit Flags in einer einzigen Abfrage
+    /// (`UID FETCH 1:* (FLAGS)`). Daraus ergibt sich:
+    /// - welche Mails es auf dem Server nicht mehr gibt → werden entfernt,
+    /// - welche Flags sich geändert haben → werden übernommen,
+    /// - welche Mails auf dem Server liegen, aber im Cache fehlen →
+    ///   werden nachgeladen. Das schließt die Lücke für Mails, die im
+    ///   Webmail verschoben oder kopiert wurden und deren altes
+    ///   Eingangsdatum außerhalb des 30-Tage-Fensters liegt.
     ///
     /// Der Ordner muss bereits ausgewählt sein. Schlägt die Abfrage fehl,
     /// wirft die Methode – gelöscht wird dann nichts.
+    ///
+    /// - Parameters:
+    ///   - server: Angemeldete IMAP-Verbindung mit ausgewähltem Ordner.
+    ///   - account: Postfach.
+    ///   - folder: IMAP-Ordner.
+    /// - Throws: IMAP-Fehler.
     private static func reconcile(
         server: SwiftMail.IMAPServer,
         account: MailAccount,
@@ -151,12 +182,22 @@ enum MailFetchService {
         )
         MessageStore.shared.apply(plan)
 
+        // Fehlende Mails nachladen (z. B. im Webmail verschoben/kopiert)
+        var backfilled = 0
+        if !plan.missingUIDs.isEmpty {
+            let missingSwiftUIDs = plan.missingUIDs.map { SwiftMail.UID($0) }
+            backfilled = try await cacheMessages(
+                uids: missingSwiftUIDs, server: server, account: account, folder: folder
+            )
+        }
+
         let fetchMillis = Int(fetchDone.timeIntervalSince(started) * 1000)
         let totalMillis = Int(Date().timeIntervalSince(started) * 1000)
         print("""
             🔁 [\(account.displayName)/\(folder)] Abgleich: \(state.all.count) Mails im Ordner, \
             \(state.forwarded?.count ?? 0) mit \(forwardedKeyword), \
-            \(plan.removedIDs.count) entfernt, \(plan.flagUpdates.count) Flags geändert \
+            \(plan.removedIDs.count) entfernt, \(plan.flagUpdates.count) Flags geändert, \
+            \(backfilled) nachgeladen \
             (Abfrage \(fetchMillis) ms, gesamt \(totalMillis) ms)
             """)
     }
@@ -165,9 +206,21 @@ enum MailFetchService {
     // MARK: - Ältere Nachrichten
 
     /// Lädt den nächsten Zeitraum (30 Tage) vor dem bisherigen Fensterbeginn
-    /// eines Ordners nach und schiebt den Fensterbeginn zurück. Leere
-    /// Zeiträume werden übersprungen, bis Mails gefunden sind – sonst sähe
-    /// ein Tipp auf „Ältere laden" aus, als passiere nichts.
+    /// eines Ordners nach.
+    ///
+    /// Verarbeitung: Schiebt den Fensterbeginn blockweise zurück und sucht
+    /// per SEARCH SINCE/BEFORE. Leere Zeiträume werden übersprungen, bis
+    /// Mails gefunden sind – sonst sähe ein Tipp auf „Ältere laden" aus,
+    /// als passiere nichts. Der neue Fensterbeginn wird dauerhaft
+    /// gespeichert.
+    ///
+    /// - Parameters:
+    ///   - account: Postfach.
+    ///   - password: Passwort des Postfachs.
+    ///   - folder: IMAP-Ordner (Standard: INBOX).
+    /// - Returns: Ergebnis mit Anzahl geladener Mails und ob es noch
+    ///   Älteres gibt.
+    /// - Throws: Verbindungsfehler oder IMAP-Fehler.
     static func fetchOlder(
         account: MailAccount,
         password: String,
@@ -237,17 +290,23 @@ enum MailFetchService {
     /// Puffergrenzen des IMAP-Parsers.
     private static let probeChunkSize = 1000
 
-    /// Gibt es im ausgewählten Ordner Mails vor `date` (IMAP-Eingangsdatum,
-    /// tagesgenau)? Sucht abschnittsweise über die Sequenznummern und endet
-    /// beim ersten Treffer.
+    /// Prüft, ob es im ausgewählten Ordner Mails vor einem Datum gibt.
     ///
-    /// Warum so: Eine SEARCH über den ganzen Ordner liefert bei großen
-    /// Postfächern eine einzige riesige Antwortzeile (PayloadTooLargeError).
-    /// Und die Ablagereihenfolge sagt nichts Verlässliches über das Datum –
-    /// Nachricht Nr. 1 ist nicht zwingend die älteste (Fund v0.1.7e).
-    /// Ältere Mails liegen meist vorne, der erste Abschnitt trifft daher in
-    /// der Regel sofort; nur wenn es nichts Älteres gibt, wird der ganze
-    /// Ordner abschnittsweise geprüft.
+    /// Verarbeitung: Sucht abschnittsweise über die Sequenznummern und
+    /// endet beim ersten Treffer. Eine SEARCH über den ganzen Ordner
+    /// würde bei großen Postfächern eine einzige riesige Antwortzeile
+    /// liefern (PayloadTooLargeError). Die Ablagereihenfolge sagt nichts
+    /// Verlässliches über das Datum, deshalb wird der ganze Ordner
+    /// geprüft, bis ein Treffer vorliegt oder alle Abschnitte durch sind.
+    ///
+    /// - Parameters:
+    ///   - server: Angemeldete IMAP-Verbindung mit ausgewähltem Ordner.
+    ///   - date: Datum (IMAP-Eingangsdatum, tagesgenau; BEFORE schließt
+    ///     den Tag aus).
+    ///   - messageCount: Anzahl der Nachrichten im Ordner (aus SELECT).
+    ///   - calendar: Kalender für die IMAP-Suche.
+    /// - Returns: true, wenn mindestens eine Mail vor `date` liegt.
+    /// - Throws: IMAP-Fehler.
     private static func hasMessages(
         on server: SwiftMail.IMAPServer,
         before date: Date,
@@ -275,10 +334,27 @@ enum MailFetchService {
         return false
     }
 
+    // MARK: - Gemeinsames Caching
+
     /// Holt Header und Body der übergebenen UIDs und legt neue Nachrichten
-    /// samt Anhängen (≤ 5 MB) im Cache ab; bekannte Nachrichten erhalten
-    /// nur aktuelle Flags. Gemeinsamer Teil von Abruf und Nachladen.
+    /// samt Anhängen (≤ 5 MB) im Cache ab.
+    ///
+    /// Verarbeitung: Prüft zuerst, welche UIDs schon im Cache liegen.
+    /// Bekannte Mails erhalten nur aktuelle Flags (und ggf. nachgefüllte
+    /// Header). Neue Mails werden einzeln geladen und sofort gespeichert;
+    /// schlägt eine einzelne Mail fehl, wird sie übersprungen.
+    ///
+    /// Gemeinsamer Teil von `refreshAndCache`, `fetchOlder` und
+    /// `reconcile` (Nachladen fehlender Mails).
+    ///
+    /// - Parameters:
+    ///   - uids: IMAP-UIDs der zu ladenden Mails.
+    ///   - server: Angemeldete IMAP-Verbindung mit ausgewähltem Ordner.
+    ///   - account: Postfach.
+    ///   - folder: IMAP-Ordner.
     /// - Returns: Anzahl neu gespeicherter Nachrichten.
+    /// - Throws: IMAP-Fehler bei der Bulk-Abfrage (Fehler einzelner Mails
+    ///   werden übersprungen).
     @discardableResult
     private static func cacheMessages(
         uids: [SwiftMail.UID],
@@ -420,9 +496,14 @@ enum MailFetchService {
 
     // MARK: - Fehlerarten
 
-    /// `true` bei Fehlern, die nur „keine Verbindung" bedeuten: kein Netz,
-    /// Server nicht erreichbar, Verbindung abgebrochen, Zeitüberschreitung.
-    /// Solche Fehler meldet die App still im Titel statt per Alert.
+    /// Prüft, ob ein Fehler nur „keine Verbindung" bedeutet.
+    ///
+    /// Verarbeitung: Erkennt `IMAPError.connectionFailed` und `.timeout`
+    /// sowie die Fälle des `ConnectionErrorClassifier`. Bei reinen
+    /// Verbindungsfehlern meldet die App das still im Titel statt per Alert.
+    ///
+    /// - Parameter error: Zu prüfender Fehler.
+    /// - Returns: true bei einem reinen Verbindungsfehler.
     static func isConnectionError(_ error: Error) -> Bool {
         if let imapError = error as? SwiftMail.IMAPError {
             switch imapError {
@@ -438,7 +519,12 @@ enum MailFetchService {
     // MARK: - Helfer
 
     /// Wertet die IMAP-Flags einer Nachricht in einem Durchlauf aus.
-    /// `SwiftMail.Flag` voll qualifiziert, da NIOIMAPCore ebenfalls `Flag` definiert.
+    ///
+    /// Verarbeitung: Iteriert einmal über die Flags und setzt die
+    /// vier booleschen Werte. `SwiftMail.Flag` voll qualifiziert, da
+    /// NIOIMAPCore ebenfalls `Flag` definiert.
+    ///
+    /// - Parameter flags: IMAP-Flags der Nachricht.
     private struct FlagState {
         let isUnread: Bool
         let isFlagged: Bool
@@ -465,7 +551,11 @@ enum MailFetchService {
         }
     }
 
-    /// Überführt Adress- und Threading-Header aus dem MessageInfo ins Cache-Modell.
+    /// Überführt Adress- und Threading-Header aus dem MessageInfo ins
+    /// Cache-Modell.
+    ///
+    /// - Parameter info: IMAP-Antwort mit Envelope-Daten.
+    /// - Returns: Aufbereitete Header für den Cache.
     private static func headers(from info: MessageInfo) -> CachedMessageHeaders {
         let references = info.references?
             .map(\.description)
