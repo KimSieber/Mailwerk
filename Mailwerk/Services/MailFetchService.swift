@@ -11,16 +11,18 @@
 //  - `reconcile` (privat): Vergleicht den ganzen Ordner mit dem Cache,
 //    entfernt Gelöschtes und aktualisiert Flags.
 //
-//  Bekannte Einschränkung: Eine im Webmail in einen Ordner verschobene
-//  oder kopierte Mail mit altem Eingangsdatum findet der zeitfenster-
-//  basierte Abruf nicht. Die Lösung folgt mit dem Sync-Zustand je
-//  Ordner (UIDVALIDITY und höchste gesehene UID).
+//  Sync-Zustand je Ordner (UIDVALIDITY und UIDNEXT, siehe
+//  SyncStatePlanner): Mails, die seit dem letzten Abruf in einen Ordner
+//  gekommen sind, werden unabhängig von ihrem Datum geladen – auch eine
+//  im Webmail hineinkopierte, alt datierte Mail. Ändert sich die
+//  UIDVALIDITY, wird der Cache des Ordners verworfen und neu aufgebaut.
 //
 //  Abgrenzung: `MailActionService` setzt Flags und verschiebt Mails;
 //  `MailSendService` versendet. Die Darstellung liegt im ViewModel.
 //
 //  Abhängigkeiten: SwiftMail (IMAP), MailServerFactory (TLS-Vorgaben),
-//  MessageStore (Cache), ServerReconciliation (Abgleichslogik).
+//  MessageStore (Cache), ServerReconciliation (Abgleichslogik),
+//  SyncStatePlanner (Sync-Zustand).
 //
 
 import Foundation
@@ -49,17 +51,32 @@ enum MailFetchService {
     /// Teil des ENVELOPE, wird aber für korrektes Threading gebraucht.
     private static let extraHeaderFields = ["References"]
 
+    /// Höchstzahl der Mails je Kopfdaten-Abfrage. Größere Mengen werden in
+    /// mehreren Anfragen geholt, damit keine einzelne Antwort in einen
+    /// Timeout läuft.
+    private static let headerBatchSize = 100
+
     // MARK: - Abruf
 
     /// Holt neue Nachrichten eines Ordners und gleicht den Cache ab.
     ///
     /// Verarbeitung:
-    /// 1. SEARCH SINCE der letzten 30 Tage → UIDs der aktuellen Mails.
+    /// 1. SELECT liefert UIDVALIDITY und UIDNEXT. Zusammen mit dem
+    ///    gespeicherten Zustand entscheidet der SyncStatePlanner über das
+    ///    Vorgehen. Bei geänderter UIDVALIDITY wird der Cache des Ordners
+    ///    zuerst verworfen.
+    /// 2. SEARCH SINCE der letzten 30 Tage → UIDs der aktuellen Mails.
     ///    Im Posteingang zusätzlich alle gekennzeichneten Mails.
-    /// 2. `cacheMessages` speichert neue Mails samt Body und Anhängen
+    /// 3. `cacheMessages` speichert neue Mails samt Body und Anhängen
     ///    (≤ 5 MB) und aktualisiert Flags bekannter Mails.
-    /// 3. `reconcile` vergleicht den ganzen Ordner mit dem Cache: entfernt
+    /// 4. `reconcile` vergleicht den ganzen Ordner mit dem Cache: entfernt
     ///    Gelöschtes und aktualisiert Flags.
+    /// 5. Bei gültigem Zustand: Mails, die seit dem letzten Abruf in den
+    ///    Ordner gekommen sind und noch fehlen, werden nachgeladen
+    ///    (höchstens `SyncStatePlanner.arrivalLimit` je Abruf).
+    /// 6. Erst nach vollständigem Erfolg werden Zeitpunkt und Zustand
+    ///    gespeichert. Bricht der Abruf ab, wiederholt der nächste ihn ab
+    ///    dem alten Stand.
     ///
     /// - Parameters:
     ///   - account: Postfach.
@@ -75,9 +92,22 @@ enum MailFetchService {
         do {
             try await server.connect()
             try await server.login(username: account.username, password: password)
-            _ = try await server.selectMailbox(folder)
+            let selection = try await server.selectMailbox(folder)
 
-            // Serverseitig nur Mails der letzten 30 Tage suchen
+            // 1. Vorgehen anhand des Sync-Zustands
+            let serverValidity = selection.uidValidity.value
+            let serverUIDNext = selection.uidNext.value
+            let decision = SyncStatePlanner.decide(
+                stored: MessageStore.shared.syncState(accountID: account.id, folder: folder),
+                serverUIDValidity: serverValidity,
+                serverUIDNext: serverUIDNext
+            )
+            if decision == .reset {
+                print("♻️ [\(account.displayName)/\(folder)] UIDVALIDITY geändert → Ordner-Cache wird neu aufgebaut")
+                MessageStore.shared.deleteFolder(accountID: account.id, folder: folder)
+            }
+
+            // 2. Serverseitig nur Mails der letzten 30 Tage suchen
             let sinceDate = Calendar.current.date(
                 byAdding: .day, value: -syncDays, to: Date()
             )!
@@ -104,23 +134,42 @@ enum MailFetchService {
                 print("📬 [\(account.displayName)/\(folder)] Gekennzeichnet: \(flagged.count), davon älter: \(older.count)")
             }
 
-            guard !uids.isEmpty else {
-                print("📬 [\(account.displayName)] Keine UIDs → überspringe")
-                try await reconcile(server: server, account: account, folder: folder)
-                try await server.logout()
-                // Auch ein leerer Ordner ist erfolgreich abgerufen.
-                MessageStore.shared.recordSync(accountID: account.id, folder: folder)
-                return
+            // 3. Gefundene Mails speichern
+            if uids.isEmpty {
+                print("📬 [\(account.displayName)/\(folder)] Keine UIDs im Zeitraum")
+            } else {
+                try await cacheMessages(uids: uids, server: server, account: account, folder: folder)
             }
 
-            try await cacheMessages(uids: uids, server: server, account: account, folder: folder)
+            // 4. Abgleich mit dem ganzen Ordner
+            let serverState = try await reconcile(server: server, account: account, folder: folder)
 
-            try await reconcile(server: server, account: account, folder: folder)
+            // 5. Neuankünfte seit dem letzten Abruf
+            var nextUIDNext = serverUIDNext
+            if case .incremental(let fromUID) = decision {
+                let arrivals = SyncStatePlanner.arrivals(
+                    serverUIDs: serverState.all,
+                    fromUID: fromUID,
+                    serverUIDNext: serverUIDNext,
+                    known: MessageStore.shared.cachedUIDs(accountID: account.id, folder: folder)
+                )
+                if !arrivals.toLoad.isEmpty {
+                    let loaded = try await cacheMessages(
+                        uids: arrivals.toLoad.map { SwiftMail.UID($0) },
+                        server: server, account: account, folder: folder
+                    )
+                    print("🆕 [\(account.displayName)/\(folder)] Neuankünfte: \(loaded) geladen, \(arrivals.deferredCount) zurückgestellt")
+                }
+                nextUIDNext = arrivals.nextUIDNext
+            }
 
             try await server.logout()
 
-            // Stand vermerken – erst hier, nach vollständigem Abruf.
-            MessageStore.shared.recordSync(accountID: account.id, folder: folder)
+            // 6. Stand und Zustand vermerken – erst hier, nach vollständigem Abruf.
+            let state: FolderSyncState? = decision == .unsupported
+                ? nil
+                : FolderSyncState(uidValidity: serverValidity, uidNext: nextUIDNext)
+            MessageStore.shared.recordSync(accountID: account.id, folder: folder, state: state)
 
         } catch {
             try? await server.disconnect()
@@ -138,7 +187,7 @@ enum MailFetchService {
     /// - welche Flags sich geändert haben → werden übernommen.
     ///
     /// Mails, die nur auf dem Server liegen, lädt der Abgleich nicht nach;
-    /// neue Mails holt der Abruf.
+    /// das übernimmt der Abruf (Datumssuche und Neuankünfte).
     ///
     /// Der Ordner muss bereits ausgewählt sein. Schlägt die Abfrage fehl,
     /// wirft die Methode – gelöscht wird dann nichts.
@@ -147,12 +196,15 @@ enum MailFetchService {
     ///   - server: Angemeldete IMAP-Verbindung mit ausgewähltem Ordner.
     ///   - account: Postfach.
     ///   - folder: IMAP-Ordner.
+    /// - Returns: Der Stand des Ordners auf dem Server (alle UIDs und
+    ///   Flags); daraus ermittelt der Abruf die Neuankünfte.
     /// - Throws: IMAP-Fehler.
+    @discardableResult
     private static func reconcile(
         server: SwiftMail.IMAPServer,
         account: MailAccount,
         folder: String
-    ) async throws {
+    ) async throws -> ServerFolderState {
         let started = Date()
 
         // Alle Mails des Ordners mit ihren Flags – eine einzige Abfrage.
@@ -190,6 +242,7 @@ enum MailFetchService {
             \(plan.removedIDs.count) entfernt, \(plan.flagUpdates.count) Flags geändert \
             (Abfrage \(fetchMillis) ms, gesamt \(totalMillis) ms)
             """)
+        return state
     }
 
 
@@ -331,10 +384,16 @@ enum MailFetchService {
     ///
     /// Verarbeitung: Prüft zuerst, welche UIDs schon im Cache liegen.
     /// Bekannte Mails erhalten nur aktuelle Flags (und ggf. nachgefüllte
-    /// Header). Neue Mails werden einzeln geladen und sofort gespeichert;
-    /// schlägt eine einzelne Mail fehl, wird sie übersprungen.
+    /// Header). Neue Mails werden einzeln geladen; Nachricht und Anhänge
+    /// werden gemeinsam in einer Transaktion gespeichert. Ein nicht
+    /// ladbarer Anhang wird nur als Eintrag (ohne Daten) gespeichert und
+    /// kann später nachgeladen werden. Schlägt eine ganze Mail fehl, wird
+    /// sie übersprungen und beim nächsten Abruf erneut versucht.
     ///
-    /// Gemeinsamer Teil von `refreshAndCache` und `fetchOlder`.
+    /// Die Kopfdaten werden in Paketen zu `headerBatchSize` Mails geholt.
+    ///
+    /// Gemeinsamer Teil von `refreshAndCache` (Datumssuche und
+    /// Neuankünfte) und `fetchOlder`.
     ///
     /// - Parameters:
     ///   - uids: IMAP-UIDs der zu ladenden Mails.
@@ -360,12 +419,17 @@ enum MailFetchService {
         )
         print("📬 [\(account.displayName)] Davon bereits im Cache: \(alreadyCached.count)")
 
-        // Header für alle gefundenen UIDs holen (schlank + References)
-        let infos = try await server.fetchMessageInfosBulk(
-            using: UIDSet(uids),
-            options: .slim,
-            headerFields: extraHeaderFields
-        )
+        // Header für alle gefundenen UIDs holen (schlank + References),
+        // in Paketen, damit keine einzelne Antwort zu groß wird.
+        var infos: [MessageInfo] = []
+        for start in stride(from: 0, to: uids.count, by: headerBatchSize) {
+            let batch = Array(uids[start..<min(start + headerBatchSize, uids.count)])
+            infos += try await server.fetchMessageInfosBulk(
+                using: UIDSet(batch),
+                options: .slim,
+                headerFields: extraHeaderFields
+            )
+        }
         print("📬 [\(account.displayName)] fetchMessageInfosBulk lieferte \(infos.count) Infos")
 
         var savedCount = 0
@@ -430,46 +494,55 @@ enum MailFetchService {
                     headers: headers(from: info)
                 )
 
-                // Sofort speichern — nicht am Ende sammeln
-                MessageStore.shared.saveMessage(cached)
-                savedCount += 1
-
-                // Anhänge nur bei Mails ≤ 5 MB automatisch laden
+                // Anhänge zuerst vollständig einsammeln, dann Nachricht und
+                // Anhänge gemeinsam speichern. Lässt sich ein einzelner Anhang
+                // nicht laden, wird nur sein Eintrag (ohne Daten) gespeichert;
+                // er kann dann per Antippen nachgeladen werden. So bleibt die
+                // Mail sichtbar und vollständig beschrieben.
                 let attCount = message.attachments.count
                 if attCount > 0 {
                     print("📎 [\(account.displayName)] Mail \(uid.value) hat \(attCount) Anhänge, Größe \(totalSize) B")
                 }
 
+                var cachedAttachments: [CachedAttachment] = []
                 if totalSize <= autoDownloadThreshold {
+                    // Anhänge bis 5 MB gleich mitladen
                     for attachment in message.attachments {
-                        let attID = "\(msgID)-\(attachment.section)"
-                        let data = try await server.fetchAndDecodeMessagePartData(
-                            messageInfo: info, part: attachment
-                        )
-                        let cachedAtt = CachedAttachment(
-                            id: attID,
+                        var data: Data?
+                        do {
+                            data = try await server.fetchAndDecodeMessagePartData(
+                                messageInfo: info, part: attachment
+                            )
+                        } catch {
+                            print("⚠️ Anhang \(attachment.section) von Mail \(msgID) nicht geladen, nur Eintrag gespeichert: \(error.localizedDescription)")
+                        }
+                        cachedAttachments.append(CachedAttachment(
+                            id: "\(msgID)-\(attachment.section)",
                             messageID: msgID,
                             filename: attachment.filename ?? "Anhang",
                             contentType: attachment.contentType,
-                            sizeBytes: data.count,
+                            sizeBytes: data?.count ?? attachment.size ?? 0,
                             data: data
-                        )
-                        MessageStore.shared.saveAttachment(cachedAtt)
+                        ))
                     }
                 } else {
-                    // Nur Metadaten speichern, data = nil
+                    // Größere Mails: nur Metadaten, Daten erst bei Bedarf
                     for attachment in message.attachments {
-                        let attID = "\(msgID)-\(attachment.section)"
-                        let cachedAtt = CachedAttachment(
-                            id: attID,
+                        cachedAttachments.append(CachedAttachment(
+                            id: "\(msgID)-\(attachment.section)",
                             messageID: msgID,
                             filename: attachment.filename ?? "Anhang",
                             contentType: attachment.contentType,
                             sizeBytes: attachment.size ?? 0,
                             data: nil
-                        )
-                        MessageStore.shared.saveAttachment(cachedAtt)
+                        ))
                     }
+                }
+
+                if MessageStore.shared.saveMessageWithAttachments(cached, attachments: cachedAttachments) {
+                    savedCount += 1
+                } else {
+                    print("⚠️ Mail \(msgID) nicht gespeichert (Ablage zurückgerollt)")
                 }
             } catch {
                 // Einzelne kaputte Mail überspringen, Rest weiterholen

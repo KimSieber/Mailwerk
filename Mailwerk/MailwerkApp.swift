@@ -3,10 +3,13 @@
 //  Mailwerk
 //
 //  Zweck: Einstiegspunkt der App. Richtet den Filterlisten-Speicher ein
-//  (bevorzugt mit iCloud-Abgleich, sonst lokal, notfalls im Speicher)
-//  und räumt beim Start temporäre Dateien auf.
+//  (bevorzugt mit iCloud-Abgleich, sonst lokal, notfalls im Speicher),
+//  räumt beim Start temporäre Dateien auf und zeigt einmalig einen
+//  Hinweis, falls der lokale Mail-Speicher beim Start neu angelegt
+//  werden musste oder nicht verfügbar ist.
 //
-//  Abhängigkeiten: SwiftUI, SwiftData, AttachmentManager (Aufräumen).
+//  Abhängigkeiten: SwiftUI, SwiftData, AttachmentManager (Aufräumen),
+//  MessageStore (Starthinweis).
 //
 
 import SwiftUI
@@ -19,6 +22,9 @@ struct MailwerkApp: App {
     /// nicht verfügbar (kein iCloud-Konto, Gerät offline eingerichtet),
     /// arbeitet die App lokal weiter, statt den Start zu verweigern.
     private let modelContainer: ModelContainer
+
+    /// Hinweis des Mail-Speichers vom Start; `nil` = keiner anzuzeigen.
+    @State private var storeNotice: StoreStartupNotice?
 
     init() {
         modelContainer = Self.makeContainer()
@@ -34,6 +40,22 @@ struct MailwerkApp: App {
             ContentView(
                 filterLists: SwiftDataFilterListRepository(context: modelContainer.mainContext)
             )
+            .task {
+                // Einmalig abholen; der Speicher liefert ihn nur einmal.
+                storeNotice = MessageStore.shared.consumeStartupNotice()
+            }
+            .alert(
+                storeNotice?.title ?? "",
+                isPresented: Binding(
+                    get: { storeNotice != nil },
+                    set: { if !$0 { storeNotice = nil } }
+                ),
+                presenting: storeNotice
+            ) { _ in
+                Button("OK") { storeNotice = nil }
+            } message: { notice in
+                Text(notice.message)
+            }
         }
         .modelContainer(modelContainer)
     }

@@ -15,6 +15,10 @@
 //
 //  Die Instanz hält sich selbst über `retainSelf`, bis der Druck
 //  abgeschlossen ist, damit der WebView nicht zu früh freigegeben wird.
+//  Auf dem Mac heißt das: bis der Druckdialog geschlossen ist.
+//
+//  Voraussetzung auf dem Mac: In der App-Sandbox muss „Printing“
+//  freigegeben sein (Signing & Capabilities → App Sandbox → Hardware).
 //
 //  Abgrenzung: Anzeige einer Mail → HTMLMailView; Teilen → MailShareSheet.
 //
@@ -50,6 +54,13 @@ final class MailPrinter: NSObject, WKNavigationDelegate {
     }
 
     /// Navigation abgeschlossen → Druckdialog öffnen.
+    ///
+    /// Verarbeitung: Übergibt den Print-Formatter des WebViews an den
+    /// System-Druckdialog und räumt nach dessen Schließen auf.
+    ///
+    /// - Parameters:
+    ///   - webView: WebView mit dem geladenen Inhalt.
+    ///   - navigation: Abgeschlossene Navigation (nicht verwendet).
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         let formatter = webView.viewPrintFormatter()
         let controller = UIPrintInteractionController.shared
@@ -62,11 +73,17 @@ final class MailPrinter: NSObject, WKNavigationDelegate {
         }
     }
 
-    /// Navigation fehlgeschlagen → aufräumen.
+    /// Navigation fehlgeschlagen → aufräumen, ohne zu drucken.
+    ///
+    /// - Parameters:
+    ///   - webView: Betroffener WebView.
+    ///   - navigation: Fehlgeschlagene Navigation.
+    ///   - error: Fehler beim Laden.
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         cleanup()
     }
 
+    /// Gibt WebView und Selbstreferenz frei, damit die Instanz entfernt wird.
     private func cleanup() {
         webView = nil
         retainSelf = nil
@@ -97,19 +114,72 @@ final class MailPrinter: NSObject, WKNavigationDelegate {
     }
 
     /// Navigation abgeschlossen → Druckdialog öffnen.
+    ///
+    /// Verarbeitung: Richtet die Seite ein (Breite an die Seite anpassen,
+    /// Ränder), setzt die Größe der Druckansicht – ohne sie bricht macOS
+    /// beim Seitenumbruch ab – und öffnet den Druckdialog als Sheet am
+    /// aktiven Fenster. Aufgeräumt wird erst, wenn der Dialog geschlossen
+    /// ist. Gibt es kein aktives Fenster, öffnet sich der Dialog als
+    /// eigenes Fenster.
+    ///
+    /// - Parameters:
+    ///   - webView: WebView mit dem geladenen Inhalt.
+    ///   - navigation: Abgeschlossene Navigation (nicht verwendet).
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        let printOp = webView.printOperation(with: .shared)
+        let printInfo = (NSPrintInfo.shared.copy() as? NSPrintInfo) ?? NSPrintInfo()
+        printInfo.horizontalPagination = .fit
+        printInfo.verticalPagination = .automatic
+        printInfo.isHorizontallyCentered = false
+        printInfo.isVerticallyCentered = false
+        printInfo.topMargin = 36
+        printInfo.bottomMargin = 36
+        printInfo.leftMargin = 36
+        printInfo.rightMargin = 36
+
+        let operation = webView.printOperation(with: printInfo)
+        operation.showsPrintPanel = true
+        operation.showsProgressPanel = true
+        // Größe der Druckansicht setzen, sonst Abbruch in knowsPageRange.
+        operation.view?.frame = webView.bounds
+
         if let window = NSApp.keyWindow {
-            printOp.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+            operation.runModal(
+                for: window,
+                delegate: self,
+                didRun: #selector(printOperationDidRun(_:success:contextInfo:)),
+                contextInfo: nil
+            )
+        } else {
+            operation.run()
+            cleanup()
         }
+    }
+
+    /// Druckdialog geschlossen (gedruckt oder abgebrochen) → aufräumen.
+    ///
+    /// - Parameters:
+    ///   - operation: Beendete Druckoperation.
+    ///   - success: `true`, wenn gedruckt wurde.
+    ///   - contextInfo: Nicht verwendet.
+    @objc private func printOperationDidRun(
+        _ operation: NSPrintOperation,
+        success: Bool,
+        contextInfo: UnsafeMutableRawPointer?
+    ) {
         cleanup()
     }
 
-    /// Navigation fehlgeschlagen → aufräumen.
+    /// Navigation fehlgeschlagen → aufräumen, ohne zu drucken.
+    ///
+    /// - Parameters:
+    ///   - webView: Betroffener WebView.
+    ///   - navigation: Fehlgeschlagene Navigation.
+    ///   - error: Fehler beim Laden.
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         cleanup()
     }
 
+    /// Gibt WebView und Selbstreferenz frei, damit die Instanz entfernt wird.
     private func cleanup() {
         webView = nil
         retainSelf = nil

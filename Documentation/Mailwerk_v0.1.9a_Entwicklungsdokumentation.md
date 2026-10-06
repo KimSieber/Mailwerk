@@ -131,7 +131,7 @@ Alle elf oben genannten Dateien folgen diesem Standard. Die übrigen Dateien fol
 
 ## Testverfahren
 
-**Automatisch:** alle Tests grün, ohne Warnungen. Gegenüber v0.1.8e (121 Tests) kommen 14 neue hinzu (5 Origin, 9 Dateinamen), also 135.
+**Automatisch:** alle Tests grün, ohne Warnungen; **302 Tests** laut Xcode. Neu sind 14 (5 Origin, 9 Dateinamen). *(Korrigiert in v0.1.9b: Die erste Fassung nannte 135; die Ausgangszahl 121 aus v0.1.8e war anders gezählt.)*
 
 **Manuell (Simulator und Mac), nach der Rücknahme von a1b:**
 
