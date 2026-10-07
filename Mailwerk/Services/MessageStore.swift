@@ -21,6 +21,11 @@
 //  einer Ablage im Arbeitsspeicher. In beiden Fällen liegt für die
 //  Oberfläche ein Hinweis bereit (`consumeStartupNotice()`).
 //
+//  Listen: Die Abfragen für die Nachrichtenliste liefern
+//  `MessageListItem` ohne Text- und HTML-Inhalt, dafür mit einer kurzen
+//  Vorschau (Spalte `preview`, beim Speichern aus dem Textteil gebildet).
+//  Die vollständige Nachricht liefert `message(id:)`.
+//
 //  Schema: `createTablesIfNeeded()` legt nur das Basisschema an, alle
 //  späteren Spalten und Tabellen kommen über `migrateIfNeeded()`.
 //  `PRAGMA user_version` hält die erreichte Schema-Version; jede
@@ -38,7 +43,7 @@
 //
 //  Abhängigkeiten: SQLite3 (System-Framework), CachedMessage,
 //  CachedAttachment, FolderListing, ServerReconciliation (Plan-Typ),
-//  FolderSyncState.
+//  FolderSyncState, MessageListItem.
 //
 
 import Foundation
@@ -110,7 +115,7 @@ final class MessageStore: @unchecked Sendable {
 
     /// Schema-Version, die diese App-Version erwartet. Wird nach den
     /// Migrationen in `PRAGMA user_version` geschrieben.
-    private static let schemaVersion: Int32 = 2
+    private static let schemaVersion: Int32 = 3
 
     /// Explizite Spaltenliste – Reihenfolge entspricht den Indizes in readMessage().
     private static let messageColumns = """
@@ -120,6 +125,16 @@ final class MessageStore: @unchecked Sendable {
         toJSON, ccJSON, replyToJSON, rfcMessageID, rfcInReplyTo, rfcReferences, \
         folder
         """
+
+    /// Spaltenliste der Listeneinträge – ohne Text und HTML.
+    /// Reihenfolge entspricht readListItem().
+    private static let listColumns = """
+        id, accountID, folder, uid, subject, "from", date, \
+        isUnread, isFlagged, isAnswered, isForwarded, hasAttachments, preview
+        """
+
+    /// Höchstlänge der Vorschau in Zeichen.
+    static let previewLength = 200
 
     /// Spaltenliste der Anhänge – Reihenfolge entspricht readAttachment().
     private static let attachmentColumns =
@@ -403,6 +418,9 @@ final class MessageStore: @unchecked Sendable {
         if current < 2 {
             migrateToVersion2()
         }
+        if current < 3 {
+            migrateToVersion3()
+        }
 
         setUserVersion(Self.schemaVersion)
     }
@@ -486,6 +504,27 @@ final class MessageStore: @unchecked Sendable {
     private func migrateToVersion2() {
         addColumnIfMissing("uidValidity", "INTEGER", in: "folder_sync")
         addColumnIfMissing("uidNext", "INTEGER", in: "folder_sync")
+    }
+
+    /// Stufe 3: Vorschau-Spalte und Index für die Nachrichtenliste.
+    ///
+    /// Verarbeitung: Ergänzt die Spalte `preview` und füllt sie für alle
+    /// vorhandenen Nachrichten aus dem Textteil (einmalig, beim ersten
+    /// Start nach dem Update). Legt den Index auf Postfach, Ordner und
+    /// Datum an, damit die Liste ohne Umweg nach Datum sortiert; der
+    /// bisherige Index auf Postfach und Ordner ist darin enthalten und
+    /// entfällt.
+    private func migrateToVersion3() {
+        addColumnIfMissing("preview", "TEXT")
+        exec("""
+            UPDATE message SET preview = substr(textBody, 1, \(Self.previewLength))
+            WHERE textBody IS NOT NULL
+            """)
+        exec("""
+            CREATE INDEX IF NOT EXISTS idx_message_account_folder_date
+            ON message(accountID, folder, date DESC)
+            """)
+        exec("DROP INDEX IF EXISTS idx_message_account_folder")
     }
 
     /// Schreibt die Kennungen von "<account>-<uid>" auf "<account>-INBOX-<uid>" um.
@@ -600,15 +639,18 @@ final class MessageStore: @unchecked Sendable {
     ///
     /// Verarbeitung: `ON CONFLICT … DO UPDATE` statt `INSERT OR REPLACE`,
     /// weil letzteres intern DELETE + INSERT ist und damit über
-    /// ON DELETE CASCADE die Anhänge löschen würde.
+    /// ON DELETE CASCADE die Anhänge löschen würde. Die Vorschau bildet
+    /// SQLite aus dem Textteil (`substr(?15, …)` verweist auf denselben
+    /// Wert wie Platzhalter 15, `textBody`) – dieselbe Regel wie in der Migration.
     ///
     /// - Parameter m: Zu speichernde Nachricht.
     /// - Throws: `StoreError`, wenn das Schreiben fehlschlägt.
     private func insertMessage(_ m: CachedMessage) throws {
         let sql = """
             INSERT INTO message
-            (\(Self.messageColumns), headersVersion)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            (\(Self.messageColumns), headersVersion, preview)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
+                    substr(?15, 1, \(Self.previewLength)))
             ON CONFLICT(id) DO UPDATE SET
                 isUnread = excluded.isUnread,
                 isFlagged = excluded.isFlagged,
@@ -625,7 +667,8 @@ final class MessageStore: @unchecked Sendable {
                 rfcMessageID = excluded.rfcMessageID,
                 rfcInReplyTo = excluded.rfcInReplyTo,
                 rfcReferences = excluded.rfcReferences,
-                headersVersion = excluded.headersVersion
+                headersVersion = excluded.headersVersion,
+                preview = excluded.preview
             """
         try execute(sql, context: "insertMessage \(m.id)") { stmt in
             bind(stmt, 1, m.id)
@@ -944,17 +987,17 @@ final class MessageStore: @unchecked Sendable {
         return readMessage(stmt)
     }
 
-    /// Nachrichten mehrerer Postfächer in einem Ordner.
+    /// Listeneinträge mehrerer Postfächer in einem Ordner.
     ///
     /// - Parameters:
     ///   - accountIDs: Postfächer.
     ///   - folder: IMAP-Ordner.
-    /// - Returns: Nachrichten, absteigend nach Datum.
-    func allMessages(accountIDs: [UUID], folder: String) -> [CachedMessage] {
+    /// - Returns: Listeneinträge ohne Mailinhalt, absteigend nach Datum.
+    func allMessages(accountIDs: [UUID], folder: String) -> [MessageListItem] {
         guard !accountIDs.isEmpty else { return [] }
         let ph = accountIDs.map { _ in "?" }.joined(separator: ",")
         let sql = """
-            SELECT \(Self.messageColumns) FROM message
+            SELECT \(Self.listColumns) FROM message
             WHERE accountID IN (\(ph)) AND folder = ? ORDER BY date DESC
             """
         guard let stmt = prepare(sql) else { return [] }
@@ -963,31 +1006,31 @@ final class MessageStore: @unchecked Sendable {
             bind(stmt, Int32(i + 1), id.uuidString)
         }
         bind(stmt, Int32(accountIDs.count + 1), folder)
-        var result: [CachedMessage] = []
+        var result: [MessageListItem] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
-            result.append(readMessage(stmt))
+            result.append(readListItem(stmt))
         }
         return result
     }
 
-    /// Nachrichten eines einzelnen Ordners eines Postfachs.
+    /// Listeneinträge eines einzelnen Ordners eines Postfachs.
     ///
     /// - Parameters:
     ///   - accountID: Postfach.
     ///   - folder: IMAP-Ordner.
-    /// - Returns: Nachrichten, absteigend nach Datum.
-    func folderMessages(accountID: UUID, folder: String) -> [CachedMessage] {
+    /// - Returns: Listeneinträge ohne Mailinhalt, absteigend nach Datum.
+    func folderMessages(accountID: UUID, folder: String) -> [MessageListItem] {
         let sql = """
-            SELECT \(Self.messageColumns) FROM message
+            SELECT \(Self.listColumns) FROM message
             WHERE accountID = ? AND folder = ? ORDER BY date DESC
             """
         guard let stmt = prepare(sql) else { return [] }
         defer { sqlite3_finalize(stmt) }
         bind(stmt, 1, accountID.uuidString)
         bind(stmt, 2, folder)
-        var result: [CachedMessage] = []
+        var result: [MessageListItem] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
-            result.append(readMessage(stmt))
+            result.append(readListItem(stmt))
         }
         return result
     }
@@ -1105,15 +1148,15 @@ final class MessageStore: @unchecked Sendable {
         }
     }
 
-    /// Gekennzeichnete Nachrichten aus den Posteingängen mehrerer Postfächer.
+    /// Gekennzeichnete Listeneinträge aus den Posteingängen mehrerer Postfächer.
     ///
     /// - Parameter accountIDs: Postfächer.
-    /// - Returns: Nachrichten, absteigend nach Datum.
-    func flaggedInboxMessages(accountIDs: [UUID]) -> [CachedMessage] {
+    /// - Returns: Listeneinträge ohne Mailinhalt, absteigend nach Datum.
+    func flaggedInboxMessages(accountIDs: [UUID]) -> [MessageListItem] {
         guard !accountIDs.isEmpty else { return [] }
         let ph = accountIDs.map { _ in "?" }.joined(separator: ",")
         let sql = """
-            SELECT \(Self.messageColumns) FROM message
+            SELECT \(Self.listColumns) FROM message
             WHERE accountID IN (\(ph)) AND folder = ? AND isFlagged = 1
             ORDER BY date DESC
             """
@@ -1123,9 +1166,9 @@ final class MessageStore: @unchecked Sendable {
             bind(stmt, Int32(i + 1), id.uuidString)
         }
         bind(stmt, Int32(accountIDs.count + 1), MailFetchService.inboxFolder)
-        var result: [CachedMessage] = []
+        var result: [MessageListItem] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
-            result.append(readMessage(stmt))
+            result.append(readListItem(stmt))
         }
         return result
     }
@@ -1512,6 +1555,30 @@ final class MessageStore: @unchecked Sendable {
             htmlBody: optStr(s, 15),
             fetchedAt: Date(timeIntervalSince1970: sqlite3_column_double(s, 16)),
             headers: headers
+        )
+    }
+
+    /// Liest eine Zeile gemäß `listColumns` (Indizes 0–12).
+    ///
+    /// - Parameter s: Statement, das auf einer Ergebniszeile steht.
+    /// - Returns: Der gelesene Listeneintrag.
+    private func readListItem(_ s: OpaquePointer?) -> MessageListItem {
+        let dateVal = sqlite3_column_type(s, 6) != SQLITE_NULL
+            ? sqlite3_column_double(s, 6) : nil
+        return MessageListItem(
+            id: str(s, 0),
+            accountID: UUID(uuidString: str(s, 1)) ?? UUID(),
+            folder: str(s, 2),
+            uid: UInt32(truncatingIfNeeded: sqlite3_column_int64(s, 3)),
+            subject: str(s, 4),
+            from: str(s, 5),
+            date: dateVal.map { Date(timeIntervalSince1970: $0) },
+            isUnread: sqlite3_column_int(s, 7) != 0,
+            isFlagged: sqlite3_column_int(s, 8) != 0,
+            isAnswered: sqlite3_column_int(s, 9) != 0,
+            isForwarded: sqlite3_column_int(s, 10) != 0,
+            hasAttachments: sqlite3_column_int(s, 11) != 0,
+            preview: optStr(s, 12)
         )
     }
 

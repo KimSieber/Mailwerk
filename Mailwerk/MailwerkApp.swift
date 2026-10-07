@@ -8,8 +8,15 @@
 //  Hinweis, falls der lokale Mail-Speicher beim Start neu angelegt
 //  werden musste oder nicht verfügbar ist.
 //
+//  Alle langlebigen Objekte (Postfächer, Einstellungen, ViewModel der
+//  Liste, Ordnerkatalog) entstehen hier genau einmal (`AppObjects`). Der
+//  `body` der App wird von SwiftUI mehrfach ausgewertet; was dort erzeugt
+//  würde, entstünde jedes Mal neu.
+//
+//  Abgrenzung: Wurzelansicht → ContentView.
+//
 //  Abhängigkeiten: SwiftUI, SwiftData, AttachmentManager (Aufräumen),
-//  MessageStore (Starthinweis).
+//  MessageStore (Starthinweis), AppObjects.
 //
 
 import SwiftUI
@@ -23,11 +30,22 @@ struct MailwerkApp: App {
     /// arbeitet die App lokal weiter, statt den Start zu verweigern.
     private let modelContainer: ModelContainer
 
+    /// Langlebige Objekte der App, einmal angelegt.
+    private let objects: AppObjects
+
     /// Hinweis des Mail-Speichers vom Start; `nil` = keiner anzuzeigen.
     @State private var storeNotice: StoreStartupNotice?
 
+    /// Richtet Speicher und Objekte einmalig beim Start ein.
+    ///
+    /// Verarbeitung: Erzeugt den Filterlisten-Speicher, darauf aufbauend
+    /// alle langlebigen Objekte, und räumt temporäre Anhang-Dateien auf.
     init() {
-        modelContainer = Self.makeContainer()
+        let container = Self.makeContainer()
+        modelContainer = container
+        objects = AppObjects(
+            filterLists: SwiftDataFilterListRepository(context: container.mainContext)
+        )
 
         // Temporäre Anhang-Dateien aus der letzten Sitzung entfernen.
         // Das System leert das tmp-Verzeichnis zwar selbst, aber nicht
@@ -35,11 +53,10 @@ struct MailwerkApp: App {
         AttachmentManager.cleanupTempFiles()
     }
 
+    /// Hauptfenster mit der Wurzelansicht und dem einmaligen Starthinweis.
     var body: some Scene {
         WindowGroup {
-            ContentView(
-                filterLists: SwiftDataFilterListRepository(context: modelContainer.mainContext)
-            )
+            ContentView(objects: objects)
             .task {
                 // Einmalig abholen; der Speicher liefert ihn nur einmal.
                 storeNotice = MessageStore.shared.consumeStartupNotice()
@@ -62,6 +79,7 @@ struct MailwerkApp: App {
 
     // MARK: - Container
 
+    /// CloudKit-Container für den Abgleich der Filterlisten.
     private static let cloudContainerID = "iCloud.de.sieber-bw.Mailwerk"
 
     /// Erzeugt den Filterlisten-Speicher in absteigender Präferenz.

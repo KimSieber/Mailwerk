@@ -17,6 +17,12 @@
 //  im Webmail hineinkopierte, alt datierte Mail. Ändert sich die
 //  UIDVALIDITY, wird der Cache des Ordners verworfen und neu aufgebaut.
 //
+//  Robustheit bei Verbindungsabbrüchen: SwiftMail stellt eine abgerissene
+//  Verbindung still wieder her, wählt den Ordner aber nicht neu aus.
+//  Schlägt eine Mail fehl, wird der Ordner deshalb neu ausgewählt und die
+//  Mail einmal wiederholt. Fensterbeginn und UIDNEXT rücken nur vor, wenn
+//  alle Mails eines Schritts gespeichert wurden – so entstehen keine Lücken.
+//
 //  Abgrenzung: `MailActionService` setzt Flags und verschiebt Mails;
 //  `MailSendService` versendet. Die Darstellung liegt im ViewModel.
 //
@@ -56,6 +62,14 @@ enum MailFetchService {
     /// Timeout läuft.
     private static let headerBatchSize = 100
 
+    /// Ergebnis von `cacheMessages`.
+    private struct CacheResult {
+        /// Neu gespeicherte Mails.
+        let saved: Int
+        /// Neue Mails, die nicht geladen oder gespeichert werden konnten.
+        let failed: Int
+    }
+
     // MARK: - Abruf
 
     /// Holt neue Nachrichten eines Ordners und gleicht den Cache ab.
@@ -73,7 +87,9 @@ enum MailFetchService {
     ///    Gelöschtes und aktualisiert Flags.
     /// 5. Bei gültigem Zustand: Mails, die seit dem letzten Abruf in den
     ///    Ordner gekommen sind und noch fehlen, werden nachgeladen
-    ///    (höchstens `SyncStatePlanner.arrivalLimit` je Abruf).
+    ///    (höchstens `SyncStatePlanner.arrivalLimit` je Abruf). Fehlt
+    ///    danach eine, bleibt UIDNEXT stehen und der nächste Abruf
+    ///    versucht sie erneut.
     /// 6. Erst nach vollständigem Erfolg werden Zeitpunkt und Zustand
     ///    gespeichert. Bricht der Abruf ab, wiederholt der nächste ihn ab
     ///    dem alten Stand.
@@ -153,14 +169,19 @@ enum MailFetchService {
                     serverUIDNext: serverUIDNext,
                     known: MessageStore.shared.cachedUIDs(accountID: account.id, folder: folder)
                 )
+                var failed = 0
                 if !arrivals.toLoad.isEmpty {
-                    let loaded = try await cacheMessages(
+                    let result = try await cacheMessages(
                         uids: arrivals.toLoad.map { SwiftMail.UID($0) },
                         server: server, account: account, folder: folder
                     )
-                    print("🆕 [\(account.displayName)/\(folder)] Neuankünfte: \(loaded) geladen, \(arrivals.deferredCount) zurückgestellt")
+                    failed = result.failed
+                    print("🆕 [\(account.displayName)/\(folder)] Neuankünfte: \(result.saved) geladen, \(result.failed) fehlgeschlagen, \(arrivals.deferredCount) zurückgestellt")
                 }
-                nextUIDNext = arrivals.nextUIDNext
+                // Fehlt eine Neuankunft, bleibt UIDNEXT stehen → nächster Abruf versucht sie erneut.
+                nextUIDNext = SyncStatePlanner.uidNextAfterLoading(
+                    plan: arrivals, fromUID: fromUID, failedCount: failed
+                )
             }
 
             try await server.logout()
@@ -255,14 +276,15 @@ enum MailFetchService {
     /// per SEARCH SINCE/BEFORE. Leere Zeiträume werden übersprungen, bis
     /// Mails gefunden sind – sonst sähe ein Tipp auf „Ältere laden" aus,
     /// als passiere nichts. Der neue Fensterbeginn wird dauerhaft
-    /// gespeichert.
+    /// gespeichert – aber nur, wenn der Zeitraum vollständig geladen wurde
+    /// (siehe `SyncWindow.startAfterLoading`).
     ///
     /// - Parameters:
     ///   - account: Postfach.
     ///   - password: Passwort des Postfachs.
     ///   - folder: IMAP-Ordner (Standard: INBOX).
-    /// - Returns: Ergebnis mit Anzahl geladener Mails und ob es noch
-    ///   Älteres gibt.
+    /// - Returns: Ergebnis mit Anzahl geladener und fehlgeschlagener Mails
+    ///   und ob es noch Älteres gibt.
     /// - Throws: Verbindungsfehler oder IMAP-Fehler.
     static func fetchOlder(
         account: MailAccount,
@@ -293,6 +315,7 @@ enum MailFetchService {
             }
 
             var loaded = 0
+            var failed = 0
             for _ in 0..<SyncWindow.maxBlocksPerLoad {
                 let block = SyncWindow.nextBlock(before: start, days: syncDays)
                 let uids: [SwiftMail.UID] = try await server.search(
@@ -300,14 +323,21 @@ enum MailFetchService {
                     sortCriteria: [.descending(.date)],
                     calendar: searchCalendar
                 )
-                start = block.since
                 print("📬 [\(account.displayName)/\(folder)] Zeitraum ab \(block.since): \(uids.count) UIDs")
                 if !uids.isEmpty {
-                    loaded = try await cacheMessages(
+                    let result = try await cacheMessages(
                         uids: uids, server: server, account: account, folder: folder
+                    )
+                    loaded = result.saved
+                    failed = result.failed
+                    // Nur bei vollständigem Laden zurückrücken – sonst bliebe
+                    // eine Lücke, die kein späterer Abruf mehr schließt.
+                    start = SyncWindow.startAfterLoading(
+                        previous: block.before, loaded: block.since, failedCount: result.failed
                     )
                     break
                 }
+                start = block.since
                 // Leerer Zeitraum: nur weiter zurück, wenn es noch Älteres gibt.
                 guard try await hasMessages(
                     on: server, before: start, messageCount: messageCount, calendar: searchCalendar
@@ -321,7 +351,7 @@ enum MailFetchService {
                 on: server, before: start, messageCount: messageCount, calendar: searchCalendar
             )
             try await server.logout()
-            return .loaded(count: loaded, windowStart: start, hasMore: hasMore)
+            return .loaded(count: loaded, failed: failed, windowStart: start, hasMore: hasMore)
         } catch {
             try? await server.disconnect()
             throw error
@@ -385,10 +415,16 @@ enum MailFetchService {
     /// Verarbeitung: Prüft zuerst, welche UIDs schon im Cache liegen.
     /// Bekannte Mails erhalten nur aktuelle Flags (und ggf. nachgefüllte
     /// Header). Neue Mails werden einzeln geladen; Nachricht und Anhänge
-    /// werden gemeinsam in einer Transaktion gespeichert. Ein nicht
-    /// ladbarer Anhang wird nur als Eintrag (ohne Daten) gespeichert und
-    /// kann später nachgeladen werden. Schlägt eine ganze Mail fehl, wird
-    /// sie übersprungen und beim nächsten Abruf erneut versucht.
+    /// werden gemeinsam in einer Transaktion gespeichert (`storeNewMessage`).
+    ///
+    /// Schlägt eine Mail fehl, wird der Ordner neu ausgewählt und die Mail
+    /// genau einmal wiederholt. Hintergrund: SwiftMail baut eine
+    /// abgerissene Verbindung still neu auf und meldet sich neu an, wählt
+    /// den Ordner aber nicht wieder aus. Ohne neue Auswahl scheiterte jede
+    /// weitere Mail der Runde. Scheitert die Mail auch danach, ist sie
+    /// selbst defekt und wird übersprungen; sie zählt als fehlgeschlagen.
+    /// Scheitert schon die neue Auswahl, ist die Verbindung tot und die
+    /// Runde bricht ab.
     ///
     /// Die Kopfdaten werden in Paketen zu `headerBatchSize` Mails geholt.
     ///
@@ -400,16 +436,16 @@ enum MailFetchService {
     ///   - server: Angemeldete IMAP-Verbindung mit ausgewähltem Ordner.
     ///   - account: Postfach.
     ///   - folder: IMAP-Ordner.
-    /// - Returns: Anzahl neu gespeicherter Nachrichten.
-    /// - Throws: IMAP-Fehler bei der Bulk-Abfrage (Fehler einzelner Mails
-    ///   werden übersprungen).
+    /// - Returns: Anzahl neu gespeicherter und fehlgeschlagener Mails.
+    /// - Throws: IMAP-Fehler bei der Bulk-Abfrage oder bei der neuen
+    ///   Auswahl des Ordners (Fehler einzelner Mails werden gezählt).
     @discardableResult
     private static func cacheMessages(
         uids: [SwiftMail.UID],
         server: SwiftMail.IMAPServer,
         account: MailAccount,
         folder: String
-    ) async throws -> Int {
+    ) async throws -> CacheResult {
         // Welche UIDs haben wir schon im Cache – und wem fehlen noch Header?
         let alreadyCached = MessageStore.shared.cachedMessageIDs(
             forAccount: account.id, folder: folder
@@ -433,6 +469,7 @@ enum MailFetchService {
         print("📬 [\(account.displayName)] fetchMessageInfosBulk lieferte \(infos.count) Infos")
 
         var savedCount = 0
+        var failedCount = 0
         var skippedCount = 0
         var headersBackfilled = 0
 
@@ -464,96 +501,150 @@ enum MailFetchService {
                 continue
             }
 
-            // Neu: Body laden — Fehler bei einzelner Mail
-            // überspringen, nicht den ganzen Account abbrechen
+            // Neu: Mail laden und speichern. Schlägt das fehl, kann die
+            // Mail selbst defekt sein – oder SwiftMail hat eine abgerissene
+            // Verbindung still neu aufgebaut, ohne den Ordner wieder
+            // auszuwählen; dann scheitert jeder weitere Befehl mit
+            // „No mailbox selected“. Deshalb: Ordner neu auswählen und die
+            // Mail genau einmal wiederholen. Scheitert schon die Auswahl,
+            // ist die Verbindung tot und die Runde bricht ab (wirft).
+            let stored: Bool
             do {
-                let message = try await server.fetchMessage(from: info)
-
-                let totalSize = info.size ?? 0
-                let hasAttachments = !message.attachments.isEmpty
-
-                let cached = CachedMessage(
-                    id: msgID,
-                    accountID: account.id,
-                    accountDisplayName: account.displayName,
-                    folder: folder,
-                    uid: uid.value,
-                    subject: info.subject ?? "(kein Betreff)",
-                    from: info.from ?? "(unbekannt)",
-                    to: info.to.joined(separator: ", "),
-                    date: info.date ?? info.internalDate,
-                    isUnread: flags.isUnread,
-                    isFlagged: flags.isFlagged,
-                    isAnswered: flags.isAnswered,
-                    isForwarded: flags.isForwarded,
-                    totalSizeBytes: totalSize,
-                    hasAttachments: hasAttachments,
-                    textBody: message.textBody,
-                    htmlBody: message.htmlBody,
-                    fetchedAt: Date(),
-                    headers: headers(from: info)
+                stored = try await storeNewMessage(
+                    info: info, uid: uid, msgID: msgID, flags: flags,
+                    server: server, account: account, folder: folder
                 )
-
-                // Anhänge zuerst vollständig einsammeln, dann Nachricht und
-                // Anhänge gemeinsam speichern. Lässt sich ein einzelner Anhang
-                // nicht laden, wird nur sein Eintrag (ohne Daten) gespeichert;
-                // er kann dann per Antippen nachgeladen werden. So bleibt die
-                // Mail sichtbar und vollständig beschrieben.
-                let attCount = message.attachments.count
-                if attCount > 0 {
-                    print("📎 [\(account.displayName)] Mail \(uid.value) hat \(attCount) Anhänge, Größe \(totalSize) B")
-                }
-
-                var cachedAttachments: [CachedAttachment] = []
-                if totalSize <= autoDownloadThreshold {
-                    // Anhänge bis 5 MB gleich mitladen
-                    for attachment in message.attachments {
-                        var data: Data?
-                        do {
-                            data = try await server.fetchAndDecodeMessagePartData(
-                                messageInfo: info, part: attachment
-                            )
-                        } catch {
-                            print("⚠️ Anhang \(attachment.section) von Mail \(msgID) nicht geladen, nur Eintrag gespeichert: \(error.localizedDescription)")
-                        }
-                        cachedAttachments.append(CachedAttachment(
-                            id: "\(msgID)-\(attachment.section)",
-                            messageID: msgID,
-                            filename: attachment.filename ?? "Anhang",
-                            contentType: attachment.contentType,
-                            sizeBytes: data?.count ?? attachment.size ?? 0,
-                            data: data
-                        ))
-                    }
-                } else {
-                    // Größere Mails: nur Metadaten, Daten erst bei Bedarf
-                    for attachment in message.attachments {
-                        cachedAttachments.append(CachedAttachment(
-                            id: "\(msgID)-\(attachment.section)",
-                            messageID: msgID,
-                            filename: attachment.filename ?? "Anhang",
-                            contentType: attachment.contentType,
-                            sizeBytes: attachment.size ?? 0,
-                            data: nil
-                        ))
-                    }
-                }
-
-                if MessageStore.shared.saveMessageWithAttachments(cached, attachments: cachedAttachments) {
-                    savedCount += 1
-                } else {
-                    print("⚠️ Mail \(msgID) nicht gespeichert (Ablage zurückgerollt)")
-                }
             } catch {
-                // Einzelne kaputte Mail überspringen, Rest weiterholen
-                print("⚠️ Mail \(msgID) übersprungen: \(error.localizedDescription)")
-                continue
+                print("⚠️ Mail \(msgID) fehlgeschlagen, Ordner wird neu ausgewählt: \(error.localizedDescription)")
+                _ = try await server.selectMailbox(folder)
+                do {
+                    stored = try await storeNewMessage(
+                        info: info, uid: uid, msgID: msgID, flags: flags,
+                        server: server, account: account, folder: folder
+                    )
+                } catch {
+                    // Auch nach neuer Auswahl nicht ladbar: überspringen,
+                    // ein späterer Abruf versucht sie erneut.
+                    print("⚠️ Mail \(msgID) übersprungen: \(error.localizedDescription)")
+                    stored = false
+                }
+            }
+            if stored {
+                savedCount += 1
+            } else {
+                failedCount += 1
             }
         }
 
-        print("📬 [\(account.displayName)] Fertig: \(savedCount) neu gespeichert, \(alreadyCached.count) aus Cache, \(headersBackfilled) Header nachgefüllt, \(skippedCount) übersprungen (keine UID)")
+        print("📬 [\(account.displayName)] Fertig: \(savedCount) neu gespeichert, \(failedCount) fehlgeschlagen, \(alreadyCached.count) aus Cache, \(headersBackfilled) Header nachgefüllt, \(skippedCount) übersprungen (keine UID)")
 
-        return savedCount
+        return CacheResult(saved: savedCount, failed: failedCount)
+    }
+
+    /// Lädt eine neue Mail samt Anhängen (≤ 5 MB) und speichert sie.
+    ///
+    /// Verarbeitung: Holt Body und Struktur der Mail, sammelt die Anhänge
+    /// ein und speichert Nachricht und Anhänge gemeinsam in einer
+    /// Transaktion. Lässt sich ein einzelner Anhang nicht laden, wird nur
+    /// sein Eintrag (ohne Daten) gespeichert; er kann später per Antippen
+    /// nachgeladen werden.
+    ///
+    /// - Parameters:
+    ///   - info: Kopfdaten der Mail aus der Bulk-Abfrage.
+    ///   - uid: UID der Mail.
+    ///   - msgID: Cache-ID der Mail.
+    ///   - flags: Ausgewertete IMAP-Flags.
+    ///   - server: Angemeldete IMAP-Verbindung mit ausgewähltem Ordner.
+    ///   - account: Postfach.
+    ///   - folder: IMAP-Ordner.
+    /// - Returns: `true` = gespeichert; `false` = Speichern zurückgerollt.
+    /// - Throws: IMAP-Fehler beim Laden der Mail.
+    private static func storeNewMessage(
+        info: MessageInfo,
+        uid: SwiftMail.UID,
+        msgID: String,
+        flags: FlagState,
+        server: SwiftMail.IMAPServer,
+        account: MailAccount,
+        folder: String
+    ) async throws -> Bool {
+        let message = try await server.fetchMessage(from: info)
+
+        let totalSize = info.size ?? 0
+        let hasAttachments = !message.attachments.isEmpty
+
+        let cached = CachedMessage(
+            id: msgID,
+            accountID: account.id,
+            accountDisplayName: account.displayName,
+            folder: folder,
+            uid: uid.value,
+            subject: info.subject ?? "(kein Betreff)",
+            from: info.from ?? "(unbekannt)",
+            to: info.to.joined(separator: ", "),
+            date: info.date ?? info.internalDate,
+            isUnread: flags.isUnread,
+            isFlagged: flags.isFlagged,
+            isAnswered: flags.isAnswered,
+            isForwarded: flags.isForwarded,
+            totalSizeBytes: totalSize,
+            hasAttachments: hasAttachments,
+            textBody: message.textBody,
+            htmlBody: message.htmlBody,
+            fetchedAt: Date(),
+            headers: headers(from: info)
+        )
+
+        // Anhänge zuerst vollständig einsammeln, dann Nachricht und
+        // Anhänge gemeinsam speichern. Lässt sich ein einzelner Anhang
+        // nicht laden, wird nur sein Eintrag (ohne Daten) gespeichert;
+        // er kann dann per Antippen nachgeladen werden. So bleibt die
+        // Mail sichtbar und vollständig beschrieben.
+        let attCount = message.attachments.count
+        if attCount > 0 {
+            print("📎 [\(account.displayName)] Mail \(uid.value) hat \(attCount) Anhänge, Größe \(totalSize) B")
+        }
+
+        var cachedAttachments: [CachedAttachment] = []
+        if totalSize <= autoDownloadThreshold {
+            // Anhänge bis 5 MB gleich mitladen
+            for attachment in message.attachments {
+                var data: Data?
+                do {
+                    data = try await server.fetchAndDecodeMessagePartData(
+                        messageInfo: info, part: attachment
+                    )
+                } catch {
+                    print("⚠️ Anhang \(attachment.section) von Mail \(msgID) nicht geladen, nur Eintrag gespeichert: \(error.localizedDescription)")
+                }
+                cachedAttachments.append(CachedAttachment(
+                    id: "\(msgID)-\(attachment.section)",
+                    messageID: msgID,
+                    filename: attachment.filename ?? "Anhang",
+                    contentType: attachment.contentType,
+                    sizeBytes: data?.count ?? attachment.size ?? 0,
+                    data: data
+                ))
+            }
+        } else {
+            // Größere Mails: nur Metadaten, Daten erst bei Bedarf
+            for attachment in message.attachments {
+                cachedAttachments.append(CachedAttachment(
+                    id: "\(msgID)-\(attachment.section)",
+                    messageID: msgID,
+                    filename: attachment.filename ?? "Anhang",
+                    contentType: attachment.contentType,
+                    sizeBytes: attachment.size ?? 0,
+                    data: nil
+                ))
+            }
+        }
+
+        guard MessageStore.shared.saveMessageWithAttachments(cached, attachments: cachedAttachments) else {
+            print("⚠️ Mail \(msgID) nicht gespeichert (Ablage zurückgerollt)")
+            return false
+        }
+        return true
     }
 
     // MARK: - Fehlerarten

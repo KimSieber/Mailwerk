@@ -135,4 +135,26 @@ nonisolated enum SyncStatePlanner {
         }
         return ArrivalPlan(toLoad: toLoad, deferredCount: deferred, nextUIDNext: next)
     }
+
+    /// Bestimmt den UIDNEXT, der nach dem Laden der Neuankünfte
+    /// gespeichert wird.
+    ///
+    /// Verarbeitung: Nur wenn alle geplanten Neuankünfte gespeichert
+    /// wurden, gilt der geplante Wert. Konnte auch nur eine nicht geladen
+    /// werden, bleibt der bisherige Stand stehen, damit der nächste Abruf
+    /// sie erneut versucht. Bereits gespeicherte Mails sind dann bekannt
+    /// und werden nicht doppelt geladen.
+    ///
+    /// - Parameters:
+    ///   - plan: Planung der Neuankünfte.
+    ///   - fromUID: Bisher gespeicherter UIDNEXT.
+    ///   - failedCount: Anzahl der Neuankünfte, die nicht gespeichert wurden.
+    /// - Returns: Zu speichernder UIDNEXT.
+    static func uidNextAfterLoading(
+        plan: ArrivalPlan,
+        fromUID: UInt32,
+        failedCount: Int
+    ) -> UInt32 {
+        failedCount == 0 ? plan.nextUIDNext : fromUID
+    }
 }

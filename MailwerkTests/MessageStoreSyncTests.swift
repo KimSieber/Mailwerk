@@ -141,7 +141,7 @@ struct MessageStoreSyncTests {
 
     // MARK: - Migration auf Stufe 2
 
-    /// Eine Datenbank der Stufe 1 erhält die neuen Spalten; bestehende Stände haben noch keinen Zustand.
+    /// Eine Datenbank der Stufe 1 erhält die neuen Spalten (und durchläuft alle späteren Stufen); bestehende Stände haben noch keinen Zustand.
     @Test func migratesVersion1Database() throws {
         let path = temporaryPath()
         try createVersion1Database(at: path)
@@ -153,7 +153,7 @@ struct MessageStoreSyncTests {
         let state = FolderSyncState(uidValidity: 3, uidNext: 4)
         store.recordSync(accountID: account, folder: "INBOX", state: state)
         #expect(store.syncState(accountID: account, folder: "INBOX") == state)
-        #expect(userVersion(at: path) == 2)
+        #expect(userVersion(at: path) == 3)
     }
 
     /// Testhilfe: legt eine Datenbank im Zustand der Schema-Stufe 1 an

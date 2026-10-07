@@ -131,12 +131,12 @@ struct MessageStoreTransactionTests {
         #expect(pragma("journal_mode", at: path) == "wal")
     }
 
-    /// Nach dem Öffnen steht die Schema-Version auf 2, auch nach erneutem Öffnen.
+    /// Nach dem Öffnen steht die Schema-Version auf 3, auch nach erneutem Öffnen.
     @Test func schemaVersionIsStored() {
         let path = temporaryPath()
         _ = MessageStore(path: path)
-        #expect(pragma("user_version", at: path) == "2")
+        #expect(pragma("user_version", at: path) == "3")
         _ = MessageStore(path: path)
-        #expect(pragma("user_version", at: path) == "2")
+        #expect(pragma("user_version", at: path) == "3")
     }
 }

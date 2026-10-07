@@ -2,43 +2,100 @@
 //  InboxView.swift
 //  Mailwerk
 //
+//  Zweck: Hauptansicht mit der Nachrichtenliste. Zeigt die gewählte
+//  Ansicht (alle Posteingänge, Gekennzeichnet, ein Ordner), Titel mit
+//  Stand und Verbindungshinweis, Wischaktionen (gelesen, kennzeichnen)
+//  samt „Rückgängig“, die Zeile „Ältere Nachrichten laden“, die
+//  Ordnerleiste sowie Einstellungen und Verfassen. Aktualisiert wird auf
+//  iPhone/iPad durch Herunterziehen, auf dem Mac per Knopf bzw. ⌘R.
+//
+//  Die Liste arbeitet mit Listeneinträgen ohne Mailinhalt
+//  (`MessageListItem`). Erst beim Öffnen einer Mail lädt
+//  `MessageDetailLoader` die vollständige Nachricht aus dem Cache.
+//
+//  ViewModel und Ordnerkatalog legt die App einmal beim Start an und
+//  reicht sie herein. Würde die Ansicht sie selbst im `init` erzeugen,
+//  entstünde bei jedem Neuaufbau durch SwiftUI ein weiteres, sofort
+//  verworfenes ViewModel samt Laden der Liste aus dem Cache.
+//
+//  Abgrenzung: Zustand und Abruf im InboxViewModel, Mailansicht in
+//  MessageDetailView, Ordnerleiste in FolderSidebarView.
+//
+//  Abhängigkeiten: InboxViewModel, MessageStore, MailActionService,
+//  FolderCatalog, NetworkMonitor, MessageDetailView, ComposeView.
+//
 
 import SwiftUI
 
+/// Hauptansicht mit der Nachrichtenliste.
 struct InboxView: View {
+    /// Quelle für Postfächer und Passwörter.
     let accountStore: AccountStore
+    /// Black-/Whitelist für den Spamfilter.
     let filterLists: any FilterListRepository
+    /// Einstellungen des Spamfilters.
     let spamSettings: SpamSettings
-    @State private var viewModel: InboxViewModel
+    /// Zustand der Liste. Wird einmal beim App-Start angelegt und hier
+    /// nur verwendet – siehe `MailwerkApp`.
+    @Bindable var viewModel: InboxViewModel
+    /// Postfachverwaltung geöffnet.
     @State private var showingAccounts = false
+    /// Spamfilter-Einstellungen geöffnet.
     @State private var showingSpamSettings = false
+    /// Neue Mail wird verfasst.
     @State private var showingCompose = false
+    /// Ordnerleiste eingeblendet.
     @State private var showingFolders = false
-    /// Ordnerbäume der Postfächer; nur für diese App-Sitzung.
-    @State private var folderCatalog: FolderCatalog
+    /// Ordnerbäume der Postfächer; nur für diese App-Sitzung. Wird wie
+    /// das ViewModel einmal beim App-Start angelegt.
+    let folderCatalog: FolderCatalog
     /// In der Leiste aufgeklappte Postfächer. Bewusst nicht gespeichert:
     /// Nach einem Neustart ist wieder alles zugeklappt.
     @State private var expandedFolderAccounts: Set<UUID> = []
+    /// Erster Abruf nach dem Start ist erfolgt.
     @State private var hasLoadedOnce = false
+    /// Fehlermeldung einer Wischaktion; `nil` = keine.
     @State private var errorMessage: String?
+    /// Mails, für die gerade eine Wischaktion läuft (gesperrt).
     @State private var processingMessageIDs: Set<String> = []
+    /// Zeitgeber, der den „Rückgängig“-Hinweis nach 5 Sekunden ausblendet.
     @State private var undoTask: Task<Void, Never>?
+    /// Netzzustand (online/offline).
     private let network = NetworkMonitor.shared
 
+    /// Übernimmt die beim App-Start angelegten Objekte.
+    ///
+    /// - Parameters:
+    ///   - accountStore: Quelle für Postfächer und Passwörter.
+    ///   - filterLists: Black-/Whitelist für den Spamfilter.
+    ///   - spamSettings: Einstellungen des Spamfilters.
+    ///   - viewModel: Zustand der Liste.
+    ///   - folderCatalog: Ordnerbäume der Postfächer.
     init(
         accountStore: AccountStore,
         filterLists: any FilterListRepository,
-        spamSettings: SpamSettings
+        spamSettings: SpamSettings,
+        viewModel: InboxViewModel,
+        folderCatalog: FolderCatalog
     ) {
         self.accountStore = accountStore
         self.filterLists = filterLists
         self.spamSettings = spamSettings
-        _viewModel = State(initialValue: InboxViewModel(
-            accountStore: accountStore,
-            filterLists: filterLists,
-            spamSettings: spamSettings
-        ))
-        _folderCatalog = State(initialValue: FolderCatalog(
+        self._viewModel = Bindable(viewModel)
+        self.folderCatalog = folderCatalog
+    }
+
+    /// Legt den Ordnerkatalog für die Ordnerleiste an.
+    ///
+    /// Verarbeitung: Der Katalog lädt Ordnerbäume vom Server und greift
+    /// ohne Verbindung auf die zuletzt gespeicherte Ordnerliste zurück.
+    /// Aufgerufen genau einmal beim App-Start (`MailwerkApp`), damit der
+    /// Katalog nicht bei jedem Neuaufbau der Ansicht neu entsteht.
+    ///
+    /// - Parameter accountStore: Quelle für Postfächer und Passwörter.
+    /// - Returns: Neuer Ordnerkatalog.
+    static func makeFolderCatalog(accountStore: AccountStore) -> FolderCatalog {
+        FolderCatalog(
             loader: { account in
                 try await MailActionService.fetchFolderTree(for: account, accountStore: accountStore)
             },
@@ -47,7 +104,7 @@ struct InboxView: View {
                     FolderTreeBuilder.build(listing: $0, configuredSpamFolder: account.spamFolder)
                 }
             }
-        ))
+        )
     }
 
     /// Zeile „Ältere Nachrichten laden" am Listenende.
@@ -69,7 +126,9 @@ struct InboxView: View {
         return nil
     }
 
-    /// Ruft die gerade angezeigte Ansicht ab – einen Ordner allein, sonst
+    /// Ruft die gerade angezeigte Ansicht ab.
+    ///
+    /// Verarbeitung: Ein gewählter Ordner wird allein abgerufen, sonst
     /// alle Posteingänge samt Spam-Ordnern.
     @MainActor
     private func refreshCurrentView() async {
@@ -88,6 +147,8 @@ struct InboxView: View {
         return Color(hex: hex)
     }
 
+    /// Aufbau der Ansicht: Liste bzw. Lade- oder Leerzustand, Symbolleiste,
+    /// Dialoge, „Rückgängig“-Hinweis und Ordnerleiste.
     var body: some View {
         NavigationStack {
             // WICHTIG: Jeder Zweig dieser Group muss genau EIN View liefern.
@@ -133,60 +194,16 @@ struct InboxView: View {
                         }
                     }
                 } else {
-                    List {
-                        ForEach(viewModel.messages) { message in
-                            NavigationLink {
-                                MessageDetailView(
-                                    message: message,
-                                    accountStore: accountStore,
-                                    spamFilter: viewModel.spamFilter,
-                                    onChange: { viewModel.loadFromCache() }
-                                )
-                            } label: {
-                                InboxRow(
-                                    message: message,
-                                    colorHex: accountStore.accounts
-                                        .first(where: { $0.id == message.accountID })?.colorHex
-                                )
-                            }
-                            .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                                Button {
-                                    Task { await toggleRead(message) }
-                                } label: {
-                                    Label(
-                                        message.isUnread ? "Gelesen" : "Ungelesen",
-                                        systemImage: message.isUnread ? "envelope.open" : "envelope.badge"
-                                    )
-                                }
-                                .tint(.blue)
-                            }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button {
-                                    Task { await toggleFlag(message) }
-                                } label: {
-                                    Label(
-                                        message.isFlagged ? "Entflaggen" : "Flaggen",
-                                        systemImage: message.isFlagged ? "flag.slash" : "flag"
-                                    )
-                                }
-                                .tint(.orange)
-                            }
-                            .disabled(processingMessageIDs.contains(message.id))
-                        }
-
-                        // Letzte Zeile der Liste – gehört IN die List, damit
-                        // der Zweig ein einzelnes View bleibt.
-                        if viewModel.showsOlderRow {
-                            Section {
-                                olderRow
-                            }
-                        }
-                    }
+                    messageList
                 }
             }
+            #if os(iOS)
+            // iPhone/iPad: Aktualisieren durch Herunterziehen der Liste.
+            // Auf dem Mac gibt es dafür einen eigenen Knopf (refreshButton).
             .refreshable {
                 await refreshCurrentView()
             }
+            #endif
             // Feine Linie als Abgrenzung unter der Überschrift
             .safeAreaInset(edge: .top, spacing: 0) {
                 Divider()
@@ -216,6 +233,11 @@ struct InboxView: View {
                         ProgressView()
                     }
                 }
+                #if os(macOS)
+                ToolbarItem {
+                    refreshButton
+                }
+                #endif
                 ToolbarItem {
                     Button {
                         showingCompose = true
@@ -346,10 +368,108 @@ struct InboxView: View {
         }
     }
 
+    // MARK: - Aktualisieren (Mac)
+
+    #if os(macOS)
+    /// Knopf „Aktualisieren“ in der Symbolleiste des Mac, auch per ⌘R.
+    ///
+    /// Auf dem Mac ist Herunterziehen keine übliche Bedienung; deshalb gibt
+    /// es dort einen ausdrücklichen Knopf. Während ein Abruf läuft, ist er
+    /// gesperrt, damit nicht mehrere Abrufe gleichzeitig starten.
+    private var refreshButton: some View {
+        Button {
+            Task { await refreshCurrentView() }
+        } label: {
+            Label("Aktualisieren", systemImage: "arrow.clockwise")
+        }
+        .keyboardShortcut("r", modifiers: .command)
+        .help("Aktualisieren (⌘R)")
+        .disabled(viewModel.isLoading || accountStore.accounts.isEmpty)
+    }
+    #endif
+
+    // MARK: - Nachrichtenliste
+
+    /// Liste der Nachrichten samt Zeile „Ältere Nachrichten laden“.
+    ///
+    /// Eigene Eigenschaft statt Teil von `body`, damit der Compiler den
+    /// Ausdruck in vertretbarer Zeit prüfen kann.
+    private var messageList: some View {
+        List {
+            ForEach(viewModel.messages) { message in
+                messageRow(for: message)
+            }
+
+            // Letzte Zeile der Liste – gehört IN die List, damit
+            // der Zweig ein einzelnes View bleibt.
+            if viewModel.showsOlderRow {
+                Section {
+                    olderRow
+                }
+            }
+        }
+    }
+
+    /// Eine Zeile der Liste: Link zur Mail, Wischaktionen, Sperre während
+    /// einer laufenden Aktion.
+    ///
+    /// Verarbeitung: Der Link öffnet `MessageDetailLoader`, der die
+    /// vollständige Mail erst beim Öffnen aus dem Cache lädt.
+    ///
+    /// - Parameter message: Darzustellender Listeneintrag.
+    /// - Returns: Die fertige Zeile.
+    private func messageRow(for message: MessageListItem) -> some View {
+        NavigationLink {
+            MessageDetailLoader(
+                messageID: message.id,
+                accountStore: accountStore,
+                spamFilter: viewModel.spamFilter,
+                onChange: { viewModel.loadFromCache() }
+            )
+        } label: {
+            InboxRow(
+                message: message,
+                colorHex: accountStore.accounts
+                    .first(where: { $0.id == message.accountID })?.colorHex
+            )
+        }
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            Button {
+                Task { await toggleRead(message) }
+            } label: {
+                Label(
+                    message.isUnread ? "Gelesen" : "Ungelesen",
+                    systemImage: message.isUnread ? "envelope.open" : "envelope.badge"
+                )
+            }
+            .tint(.blue)
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button {
+                Task { await toggleFlag(message) }
+            } label: {
+                Label(
+                    message.isFlagged ? "Entflaggen" : "Flaggen",
+                    systemImage: message.isFlagged ? "flag.slash" : "flag"
+                )
+            }
+            .tint(.orange)
+        }
+        .disabled(processingMessageIDs.contains(message.id))
+    }
+
     // MARK: - Ordner löschen
 
-    /// Löscht einen leeren Ordner auf dem Server, räumt danach seinen
-    /// Cache ab und verlässt die Ansicht, falls sie gerade offen ist.
+    /// Löscht einen leeren Ordner auf dem Server.
+    ///
+    /// Verarbeitung: Räumt danach seinen Cache ab und verlässt die Ansicht,
+    /// falls sie gerade offen ist.
+    ///
+    /// - Parameters:
+    ///   - node: Zu löschender Ordner.
+    ///   - account: Postfach des Ordners.
+    /// - Returns: Ergebnis auf dem Server (gelöscht, nicht gefunden …).
+    /// - Throws: Verbindungs- oder Serverfehler.
     @MainActor
     private func deleteFolder(_ node: FolderNode, in account: MailAccount) async throws -> FolderDeletion.Outcome {
         let outcome = try await MailActionService.deleteFolder(
@@ -367,8 +487,14 @@ struct InboxView: View {
 
     // MARK: - Swipe-Aktionen
 
+    /// Schaltet gelesen/ungelesen um (Wischaktion).
+    ///
+    /// Verarbeitung: Setzt das Flag auf dem Server, übernimmt es in den
+    /// Cache und lädt die Liste neu. Während der Aktion ist die Zeile gesperrt.
+    ///
+    /// - Parameter message: Betroffener Listeneintrag.
     @MainActor
-    private func toggleRead(_ message: CachedMessage) async {
+    private func toggleRead(_ message: MessageListItem) async {
         processingMessageIDs.insert(message.id)
         defer { processingMessageIDs.remove(message.id) }
 
@@ -388,8 +514,15 @@ struct InboxView: View {
         }
     }
 
+    /// Schaltet die Kennzeichnung um (Wischaktion).
+    ///
+    /// Verarbeitung: Setzt das Flag auf dem Server und im Cache. In der
+    /// Ansicht „Gekennzeichnet“ erscheint nach dem Entfernen für 5 Sekunden
+    /// ein „Rückgängig“-Hinweis.
+    ///
+    /// - Parameter message: Betroffener Listeneintrag.
     @MainActor
-    private func toggleFlag(_ message: CachedMessage) async {
+    private func toggleFlag(_ message: MessageListItem) async {
         processingMessageIDs.insert(message.id)
         defer { processingMessageIDs.remove(message.id) }
 
@@ -426,6 +559,9 @@ struct InboxView: View {
         }
     }
 
+    /// Stellt eine eben entfernte Kennzeichnung wieder her.
+    ///
+    /// - Parameter undo: Angaben zur betroffenen Mail.
     @MainActor
     private func undoUnflag(_ undo: InboxViewModel.UndoUnflag) {
         undoTask?.cancel()
@@ -465,7 +601,9 @@ struct InboxView: View {
 /// Auf dem Mac trägt die Fensterleiste den Titel bereits
 /// (`navigationTitle`), dort bleibt der Platz leer.
 private struct InboxTitle: View {
+    /// Gewählte Ansicht (Titel und Symbol).
     let selection: MailboxSelection
+    /// Farbe des Postfachs bei einem einzelnen Ordner; sonst `nil`.
     var accountColor: Color?
     /// Stand der Ansicht; erscheint als zweite Zeile. Der untere
     /// Bildschirmrand bleibt so frei (später für die Suche vorgesehen).
@@ -473,6 +611,7 @@ private struct InboxTitle: View {
     /// „Offline" bzw. „Keine Verbindung", sonst `nil`.
     var connectionStatus: String?
 
+    /// Titelzeile mit Symbol und darunter der Stand.
     var body: some View {
         #if os(iOS)
         VStack(spacing: 1) {
@@ -505,6 +644,10 @@ private struct InboxTitle: View {
         #endif
     }
 
+    /// Text der Standzeile.
+    ///
+    /// - Parameter state: Stand der Ansicht.
+    /// - Returns: „Aktualisiert: …“ bzw. mit Verbindungshinweis.
     private func statusLine(_ state: SyncState) -> Text {
         switch (state, connectionStatus) {
         case (.at(let date), nil):
@@ -521,14 +664,20 @@ private struct InboxTitle: View {
 
 /// Bewusste Aktion am Listenende: den nächsten älteren Zeitraum laden.
 private struct OlderMessagesRow: View {
+    /// Nachladen läuft.
     let isLoading: Bool
+    /// Der Server hat nichts Älteres mehr.
     let isExhausted: Bool
+    /// Gerät ist online.
     let isOnline: Bool
     /// Letzter Versuch scheiterte an der Verbindung.
     let connectionFailed: Bool
+    /// Bis zu diesem Tag lädt ein Tipp mindestens.
     let nextDate: Date?
+    /// Startet das Nachladen.
     let action: () -> Void
 
+    /// Schaltfläche bzw. Hinweis „Keine älteren Nachrichten“.
     var body: some View {
         Group {
             if isExhausted {
@@ -572,9 +721,12 @@ private struct OlderMessagesRow: View {
 /// „Rückgängig"-Hinweis am unteren Rand. Verschwindet nach 5 Sekunden
 /// oder auf Tipp – je nachdem, was zuerst kommt.
 private struct UndoBanner: View {
+    /// Stellt die Kennzeichnung wieder her.
     let onUndo: () -> Void
+    /// Blendet den Hinweis aus.
     let onDismiss: () -> Void
 
+    /// Hinweis mit „Rückgängig“ und Schließen.
     var body: some View {
         HStack {
             Text("Kennzeichnung entfernt")
@@ -598,10 +750,16 @@ private struct UndoBanner: View {
     }
 }
 
+/// Zeile der Nachrichtenliste: Farbstreifen des Postfachs, Absender,
+/// Symbole (beantwortet, weitergeleitet, gekennzeichnet, Anhang), Datum,
+/// Betreff und Vorschau.
 private struct InboxRow: View {
-    let message: CachedMessage
+    /// Darzustellender Listeneintrag.
+    let message: MessageListItem
+    /// Farbe des Postfachs; `nil` = kein Streifen.
     let colorHex: String?
 
+    /// Aufbau der Zeile.
     var body: some View {
         HStack(spacing: 0) {
             // Farbstreifen am linken Rand (nur wenn Farbe gesetzt)
@@ -647,14 +805,82 @@ private struct InboxRow: View {
                     .font(.subheadline)
                     .lineLimit(1)
 
-                if let body = message.textBody {
-                    Text(body)
+                if let preview = message.preview {
+                    Text(preview)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
             }
             .padding(.leading, colorHex != nil ? 8 : 0)
+        }
+    }
+}
+
+/// Lädt beim Öffnen die vollständige Mail aus dem Cache und zeigt sie an.
+///
+/// Die Liste hält nur Listeneinträge ohne Mailinhalt. Diese Ansicht holt
+/// die Nachricht beim ersten Erscheinen über `MessageStore.message(id:)`
+/// und übergibt sie unverändert an `MessageDetailView`. Ist die Mail
+/// inzwischen nicht mehr im Cache (anderswo gelöscht oder verschoben),
+/// erscheint ein Hinweis.
+private struct MessageDetailLoader: View {
+    /// Cache-ID der zu öffnenden Mail.
+    let messageID: String
+    /// Quelle für Postfächer und Passwörter.
+    let accountStore: AccountStore
+    /// Spamfilter für Blockieren und Vertrauen.
+    let spamFilter: SpamFilterService
+    /// Wird nach Änderungen an der Mail aufgerufen (Liste neu laden).
+    let onChange: () -> Void
+
+    /// Geladene Mail; `nil`, solange sie lädt oder fehlt.
+    @State private var message: CachedMessage?
+    /// Die Mail liegt nicht mehr im Cache.
+    @State private var isMissing = false
+
+    /// Detailansicht, Ladeanzeige oder Hinweis.
+    var body: some View {
+        Group {
+            if let message {
+                MessageDetailView(
+                    message: message,
+                    accountStore: accountStore,
+                    spamFilter: spamFilter,
+                    onChange: onChange
+                )
+            } else if isMissing {
+                ContentUnavailableView(
+                    "Nachricht nicht mehr vorhanden",
+                    systemImage: "envelope",
+                    description: Text("Sie wurde inzwischen gelöscht oder verschoben.")
+                )
+            } else {
+                ProgressView()
+            }
+        }
+        .task { load() }
+    }
+
+    /// Lädt die Mail einmalig aus dem Cache.
+    ///
+    /// Verarbeitung: Läuft nur beim ersten Erscheinen; kehrt man aus einer
+    /// Unteransicht zurück, bleibt die geladene Mail erhalten. In Debug-
+    /// Builds wird die Ladezeit ausgegeben (`⏱ Mail geöffnet …`).
+    private func load() {
+        guard message == nil, !isMissing else { return }
+        #if DEBUG
+        let started = Date()
+        #endif
+        if let loaded = MessageStore.shared.message(id: messageID) {
+            message = loaded
+            #if DEBUG
+            let millis = Int(Date().timeIntervalSince(started) * 1000)
+            let bytes = (loaded.textBody?.utf8.count ?? 0) + (loaded.htmlBody?.utf8.count ?? 0)
+            print("⏱ Mail geöffnet: \(millis) ms, Mailtext \(bytes / 1024) KB")
+            #endif
+        } else {
+            isMissing = true
         }
     }
 }
