@@ -23,12 +23,17 @@
 //  Mail einmal wiederholt. Fensterbeginn und UIDNEXT rücken nur vor, wenn
 //  alle Mails eines Schritts gespeichert wurden – so entstehen keine Lücken.
 //
+//  Laden einer neuen Mail: Zuerst nur ihre Struktur, dann gezielt Text
+//  und HTML; Anhänge einzeln und nur bei Mails bis 5 MB. Eingebettete
+//  Bilder und weitergeleitete Mails werden nicht übertragen (siehe
+//  MessageContentPlan). So fließt jeder Teil höchstens einmal.
+//
 //  Abgrenzung: `MailActionService` setzt Flags und verschiebt Mails;
 //  `MailSendService` versendet. Die Darstellung liegt im ViewModel.
 //
 //  Abhängigkeiten: SwiftMail (IMAP), MailServerFactory (TLS-Vorgaben),
 //  MessageStore (Cache), ServerReconciliation (Abgleichslogik),
-//  SyncStatePlanner (Sync-Zustand).
+//  SyncStatePlanner (Sync-Zustand), MessageContentPlan (zu ladende Teile).
 //
 
 import Foundation
@@ -543,11 +548,13 @@ enum MailFetchService {
 
     /// Lädt eine neue Mail samt Anhängen (≤ 5 MB) und speichert sie.
     ///
-    /// Verarbeitung: Holt Body und Struktur der Mail, sammelt die Anhänge
-    /// ein und speichert Nachricht und Anhänge gemeinsam in einer
-    /// Transaktion. Lässt sich ein einzelner Anhang nicht laden, wird nur
-    /// sein Eintrag (ohne Daten) gespeichert; er kann später per Antippen
-    /// nachgeladen werden.
+    /// Verarbeitung: Holt zuerst nur die Struktur der Mail, dann gezielt
+    /// Text- und HTML-Teil (`MessageContentPlan`). Anhänge werden einzeln
+    /// geladen, wenn die Mail die Schwelle nicht überschreitet; sonst nur
+    /// ihre Einträge gespeichert. Nachricht und Anhänge werden gemeinsam in
+    /// einer Transaktion gespeichert. Lässt sich ein einzelner Anhang nicht
+    /// laden, wird nur sein Eintrag (ohne Daten) gespeichert; er kann
+    /// später per Antippen nachgeladen werden.
     ///
     /// - Parameters:
     ///   - info: Kopfdaten der Mail aus der Bulk-Abfrage.
@@ -568,10 +575,25 @@ enum MailFetchService {
         account: MailAccount,
         folder: String
     ) async throws -> Bool {
-        let message = try await server.fetchMessage(from: info)
-
         let totalSize = info.size ?? 0
-        let hasAttachments = !message.attachments.isEmpty
+        let structure = try await server.fetchStructure(uid)
+        let plan = MessageContentPlan(
+            structure: structure,
+            totalSize: totalSize,
+            threshold: autoDownloadThreshold
+        )
+
+        // Nur Text und HTML der Mail selbst laden (roh; dekodiert wird beim
+        // Zusammensetzen). Scheitert ein Teil, scheitert die Mail – der
+        // Aufrufer wählt den Ordner neu und wiederholt sie einmal.
+        var bodyData: [String: Data] = [:]
+        for part in plan.bodyParts {
+            bodyData[part.section.description] = try await server.fetchPart(
+                section: part.section, of: uid
+            )
+        }
+        let bodies = plan.bodies(withData: bodyData)
+        let hasAttachments = !plan.attachments.isEmpty
 
         let cached = CachedMessage(
             id: msgID,
@@ -589,8 +611,8 @@ enum MailFetchService {
             isForwarded: flags.isForwarded,
             totalSizeBytes: totalSize,
             hasAttachments: hasAttachments,
-            textBody: message.textBody,
-            htmlBody: message.htmlBody,
+            textBody: bodies.text,
+            htmlBody: bodies.html,
             fetchedAt: Date(),
             headers: headers(from: info)
         )
@@ -600,15 +622,10 @@ enum MailFetchService {
         // nicht laden, wird nur sein Eintrag (ohne Daten) gespeichert;
         // er kann dann per Antippen nachgeladen werden. So bleibt die
         // Mail sichtbar und vollständig beschrieben.
-        let attCount = message.attachments.count
-        if attCount > 0 {
-            print("📎 [\(account.displayName)] Mail \(uid.value) hat \(attCount) Anhänge, Größe \(totalSize) B")
-        }
-
         var cachedAttachments: [CachedAttachment] = []
-        if totalSize <= autoDownloadThreshold {
+        if plan.loadsAttachmentData {
             // Anhänge bis 5 MB gleich mitladen
-            for attachment in message.attachments {
+            for attachment in plan.attachments {
                 var data: Data?
                 do {
                     data = try await server.fetchAndDecodeMessagePartData(
@@ -628,7 +645,7 @@ enum MailFetchService {
             }
         } else {
             // Größere Mails: nur Metadaten, Daten erst bei Bedarf
-            for attachment in message.attachments {
+            for attachment in plan.attachments {
                 cachedAttachments.append(CachedAttachment(
                     id: "\(msgID)-\(attachment.section)",
                     messageID: msgID,
@@ -638,6 +655,12 @@ enum MailFetchService {
                     data: nil
                 ))
             }
+        }
+
+        if !plan.attachments.isEmpty {
+            let textKB = bodyData.values.reduce(0) { $0 + $1.count } / 1024
+            let attachmentKB = cachedAttachments.reduce(0) { $0 + ($1.data?.count ?? 0) } / 1024
+            print("📎 [\(account.displayName)] Mail \(uid.value): \(plan.attachments.count) Anhänge, Größe \(totalSize / 1024) KB, geladen: Text \(textKB) KB, Anhänge \(attachmentKB) KB")
         }
 
         guard MessageStore.shared.saveMessageWithAttachments(cached, attachments: cachedAttachments) else {

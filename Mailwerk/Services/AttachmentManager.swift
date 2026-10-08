@@ -18,7 +18,8 @@
 //  MailFetchService; hier geht es nur um Einzelzugriffe.
 //
 //  Abhängigkeiten: SwiftMail (IMAP), MailServerFactory (TLS-Vorgaben),
-//  AccountStore (Zugangsdaten), MessageStore (Cache).
+//  AccountStore (Zugangsdaten), MessageStore (Cache),
+//  MessageContentPlan (Einordnung der Teile).
 //
 
 import Foundation
@@ -136,9 +137,9 @@ enum AttachmentManager {
     /// Lädt einen einzelnen Anhang vom IMAP-Server nach und speichert ihn im Cache.
     ///
     /// Verarbeitung: Meldet sich am Postfach der Nachricht an, wählt den
-    /// **Ordner der Nachricht** und holt deren Struktur über die UID. Der
-    /// passende Teil wird über Dateiname und Content-Type bestimmt, geladen,
-    /// dekodiert und im lokalen Cache abgelegt.
+    /// **Ordner der Nachricht** und holt nur deren Struktur (ohne Inhalte)
+    /// über die UID. Der passende Teil wird über Dateiname und Content-Type
+    /// bestimmt; nur er wird geladen, dekodiert und im Cache abgelegt.
     ///
     /// - Parameters:
     ///   - attachment: Anhang, dessen Daten fehlen.
@@ -176,11 +177,17 @@ enum AttachmentManager {
                 throw AttachmentError.messageNotFound
             }
 
-            // Vollständige Nachricht laden, um Anhang-Parts zu finden
-            let fullMessage = try await server.fetchMessage(from: info)
+            // Nur die Struktur laden (ohne Inhalte), um den Anhang zu finden;
+            // geladen wird danach genau dieser eine Teil.
+            let structure = try await server.fetchStructure(uid)
+            let plan = MessageContentPlan(
+                structure: structure,
+                totalSize: 0,
+                threshold: 0
+            )
 
             // Passenden Part über Dateiname und Content-Type identifizieren
-            guard let part = fullMessage.attachments.first(where: {
+            guard let part = plan.attachments.first(where: {
                 $0.filename == attachment.filename
                     && $0.contentType == attachment.contentType
             }) else {
