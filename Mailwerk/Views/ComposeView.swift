@@ -2,18 +2,23 @@
 //  ComposeView.swift
 //  Mailwerk
 //
-//  Created by Kim Sieber on 22.09.26.
+//  Zweck: Verfassen-Fenster für neue Mails, Antworten und Weiterleitungen.
+//  Aufbau von oben nach unten: Absender, An, Cc (immer sichtbar), Bcc auf
+//  Knopfdruck, Betreff, Anhänge, Editor und darunter der zitierte
+//  Originaltext (schreibgeschützt, aufklappbar).
 //
-
-
+//  Alles oberhalb der unteren Leiste scrollt gemeinsam, wie in Apple Mail:
+//  Der Editor wächst mit seinem Text, das Zitat erscheint in voller Höhe.
+//  So ist auch ein langes Zitat bis zum Ende lesbar. Die untere Leiste
+//  (Anhänge, Formatierung) bleibt fest stehen. Ein Tipp in die freie
+//  Fläche unterhalb des Inhalts setzt die Schreibmarke ans Textende.
+//  Auf dem iPhone blendet Herunterwischen im Inhalt die Tastatur aus.
 //
-//  ComposeView.swift
-//  Mailwerk
+//  Abgrenzung: Zustand, Versand und Vorbelegung → ComposeViewModel;
+//  Editor → RichTextEditor; Formatierungsleiste → FormattingToolbar;
+//  Darstellung des Zitats → HTMLMailView; Empfängerfelder → RecipientField.
 //
-//  Verfassen-Fenster für neue Mails, Antworten und Weiterleitungen.
-//  Aufbau von oben nach unten: Absender, An, Cc (immer sichtbar),
-//  Bcc auf Knopfdruck, Betreff, Anhänge, Editor mit Formatierungsleiste
-//  und darunter der zitierte Originaltext (schreibgeschützt).
+//  Abhängigkeiten: SwiftUI, UniformTypeIdentifiers, PhotosUI (iOS).
 //
 
 import SwiftUI
@@ -22,21 +27,43 @@ import UniformTypeIdentifiers
 import PhotosUI
 #endif
 
+/// Fenster zum Verfassen einer Mail.
 struct ComposeView: View {
+    /// Zustand und Logik des Fensters.
     @State private var model: ComposeViewModel
     /// Wird nach erfolgreichem Versand aufgerufen (Inbox aktualisieren).
     private let onSent: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    /// Rückfrage „Entwurf verwerfen?" sichtbar.
     @State private var showDiscardConfirm = false
+    /// Dateiauswahl sichtbar.
     @State private var showFileImporter = false
+    /// Zitat aufgeklappt.
     @State private var showQuote = false
+    /// Gemessene Höhe des Zitats.
     @State private var quoteHeight: CGFloat = 200
+    /// Hinweise nach dem Versand sichtbar.
     @State private var showWarnings = false
+    /// Sichtbare Höhe des Scrollbereichs – für die freie Fläche unter dem Inhalt.
+    @State private var visibleHeight: CGFloat = 0
+    /// Höhe von Kopfbereich, Editor und Zitat – für die freie Fläche unter dem Inhalt.
+    @State private var contentHeight: CGFloat = 0
     #if os(iOS)
+    /// Fotoauswahl sichtbar.
+    @State private var showPhotoPicker = false
+    /// Gewähltes Foto, wird nach dem Laden zurückgesetzt.
     @State private var photoItem: PhotosPickerItem?
     #endif
 
+    /// Legt das Fenster an.
+    ///
+    /// - Parameters:
+    ///   - accountStore: Quelle für Postfächer und Passwörter.
+    ///   - kind: Neue Mail, Antwort, Antwort an alle oder Weiterleitung.
+    ///   - original: Ursprungsmail bei Antwort/Weiterleitung.
+    ///   - mailto: Vorbelegung aus einem mailto:-Link.
+    ///   - onSent: Rückruf nach erfolgreichem Versand.
     init(
         accountStore: AccountStore,
         kind: ComposeKind,
@@ -55,9 +82,7 @@ struct ComposeView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                header
-                Divider()
-                editor
+                scrollingContent
                 Divider()
                 bottomBar
             }
@@ -107,45 +132,81 @@ struct ComposeView: View {
         .macSheetFrame(.composer)
     }
 
-    // MARK: - Kopfbereich
+    // MARK: - Scrollbereich
 
-    private var header: some View {
+    /// Kopfbereich, Editor und Zitat in einem gemeinsamen Scrollbereich.
+    ///
+    /// Verarbeitung: Ist der Inhalt kürzer als der sichtbare Bereich, füllt
+    /// eine freie Fläche den Rest. Ein Tipp dorthin setzt die Schreibmarke
+    /// ans Textende – wie vorher, als der Editor den Rest ausfüllte.
+    private var scrollingContent: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
-                senderRow
-                Divider()
-                RecipientField(label: "An", addresses: $model.to)
-                Divider()
-                HStack(alignment: .top, spacing: 8) {
-                    RecipientField(label: "Cc", addresses: $model.cc)
-                    if !model.showBcc {
-                        Button("Bcc") { model.showBcc = true }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 6)
-                    }
-                }
-                if model.showBcc {
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
+                    header
                     Divider()
-                    RecipientField(label: "Bcc", addresses: $model.bcc)
+                    editor
                 }
-                Divider()
-                HStack(spacing: 8) {
-                    Text("Betreff")
-                        .foregroundStyle(.secondary)
-                    TextField("", text: $model.subject)
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                    proxy.size.height
+                } action: { height in
+                    contentHeight = height
                 }
-                if !model.attachments.isEmpty || model.missingAttachmentCount > 0 {
-                    Divider()
-                    attachmentList
-                }
+
+                Color.clear
+                    .frame(height: max(0, visibleHeight - contentHeight))
+                    .contentShape(Rectangle())
+                    .onTapGesture { model.controller.focusAtEnd() }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
         }
-        .frame(maxHeight: 260)
+        #if os(iOS)
+        .scrollDismissesKeyboard(.interactively)
+        #endif
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.height
+        } action: { height in
+            visibleHeight = height
+        }
     }
 
+    // MARK: - Kopfbereich
+
+    /// Absender, Empfänger, Betreff und Anhänge.
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            senderRow
+            Divider()
+            RecipientField(label: "An", addresses: $model.to)
+            Divider()
+            HStack(alignment: .top, spacing: 8) {
+                RecipientField(label: "Cc", addresses: $model.cc)
+                if !model.showBcc {
+                    Button("Bcc") { model.showBcc = true }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 6)
+                }
+            }
+            if model.showBcc {
+                Divider()
+                RecipientField(label: "Bcc", addresses: $model.bcc)
+            }
+            Divider()
+            HStack(spacing: 8) {
+                Text("Betreff")
+                    .foregroundStyle(.secondary)
+                TextField("", text: $model.subject)
+            }
+            if !model.attachments.isEmpty || model.missingAttachmentCount > 0 {
+                Divider()
+                attachmentList
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    /// Absenderzeile mit Postfachauswahl.
     private var senderRow: some View {
         HStack(spacing: 8) {
             Text("Von")
@@ -180,6 +241,7 @@ struct ComposeView: View {
         }
     }
 
+    /// Liste der eigenen Anhänge samt Größe und Entfernen-Knopf.
     private var attachmentList: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(model.attachments.enumerated()), id: \.offset) { _, attachment in
@@ -219,16 +281,20 @@ struct ComposeView: View {
 
     // MARK: - Editor und Zitat
 
+    /// Editor und, falls vorhanden, das aufklappbare Zitat.
+    ///
+    /// Verarbeitung: Beide erscheinen in voller Höhe; gescrollt wird im
+    /// umgebenden Scrollbereich. Das Zitat ist mindestens 120 Punkte hoch,
+    /// solange seine Höhe noch nicht gemessen ist.
     private var editor: some View {
         VStack(spacing: 0) {
             RichTextEditor(text: $model.body, controller: model.controller)
-                .frame(minHeight: 160)
 
             if let quoted = model.quotedHTML {
                 Divider()
                 DisclosureGroup(isExpanded: $showQuote) {
                     HTMLMailView(html: quoted, contentHeight: $quoteHeight)
-                        .frame(height: max(120, min(quoteHeight, 400)))
+                        .frame(height: max(120, quoteHeight))
                 } label: {
                     Label(
                         model.kind == .forward ? "Weitergeleitete Nachricht" : "Zitierter Text",
@@ -244,6 +310,7 @@ struct ComposeView: View {
 
     // MARK: - Toolbar
 
+    /// Schließen (mit Rückfrage bei Inhalt) und Senden.
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .cancellationAction) {
@@ -278,6 +345,7 @@ struct ComposeView: View {
         }
     }
 
+    /// Menü zum Anhängen von Dateien und (iOS) Fotos.
     private var attachmentMenu: some View {
         Menu {
             Button {
@@ -306,10 +374,7 @@ struct ComposeView: View {
         #endif
     }
 
-    #if os(iOS)
-    @State private var showPhotoPicker = false
-    #endif
-
+    /// Fenstertitel je nach Art der Mail.
     private var title: String {
         switch model.kind {
         case .new:       return "Neue Nachricht"
@@ -321,6 +386,11 @@ struct ComposeView: View {
 
     // MARK: - Aktionen
 
+    /// Sendet die Mail.
+    ///
+    /// Verarbeitung: Ohne Hinweise schließt das Fenster sofort; gibt es
+    /// Hinweise (z. B. Gesendet-Kopie fehlgeschlagen), werden sie zuerst
+    /// angezeigt und das Fenster schließt nach „OK".
     private func send() async {
         let sent = await model.send()
         guard sent else { return }
@@ -332,6 +402,13 @@ struct ComposeView: View {
         }
     }
 
+    /// Übernimmt gewählte Dateien als Anhänge.
+    ///
+    /// Verarbeitung: Der Zugriff auf Dateien außerhalb der App wird je
+    /// Datei geöffnet und wieder geschlossen. Nicht lesbare Dateien werden
+    /// gemeldet, die übrigen trotzdem angehängt.
+    ///
+    /// - Parameter result: Ergebnis der Dateiauswahl.
     private func handleFileImport(_ result: Result<[URL], Error>) {
         switch result {
         case .success(let urls):
@@ -356,6 +433,9 @@ struct ComposeView: View {
     }
 
     #if os(iOS)
+    /// Lädt ein gewähltes Foto und hängt es an.
+    ///
+    /// - Parameter item: Gewähltes Foto aus der Fotoauswahl.
     private func loadPhoto(_ item: PhotosPickerItem) async {
         defer { photoItem = nil }
         do {
