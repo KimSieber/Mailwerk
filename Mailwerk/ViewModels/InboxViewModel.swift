@@ -12,6 +12,11 @@
 //  die Liste schrittweise. Ohne Netz bleibt es beim Cache; der Zustand
 //  wird still im Titel angezeigt.
 //
+//  Abrufe (Posteingänge, Ordner, „Ältere laden“) laufen über den
+//  `FetchCoordinator` nacheinander und ohne Doppelungen. Gleichzeitige
+//  Abrufe würden denselben Ordner über zwei Verbindungen bearbeiten und
+//  sich den Sync-Zustand gegenseitig überschreiben.
+//
 //  Die Liste hält nur Listeneinträge (`MessageListItem`) ohne Mailinhalt;
 //  die vollständige Nachricht wird erst beim Öffnen geladen.
 //
@@ -24,7 +29,8 @@
 //  Ablage im MessageStore.
 //
 //  Abhängigkeiten: AccountStore, SpamSettings, SpamFilterService,
-//  MailFetchService, MessageStore, NetworkMonitor, SyncWindow.
+//  MailFetchService, MessageStore, NetworkMonitor, SyncWindow,
+//  FetchCoordinator.
 //
 
 import Foundation
@@ -65,6 +71,12 @@ final class InboxViewModel {
 
     /// Netzzustand (online/offline).
     private let network = NetworkMonitor.shared
+
+    /// Stimmt die Abrufe ab: nacheinander, ohne Doppelungen; bei mehreren
+    /// wartenden Ordnern zählt nur der zuletzt gewählte.
+    private let fetches = FetchCoordinator<FetchRequest>(
+        supersedes: FetchRequest.supersedes
+    )
 
     #if DEBUG
     /// Messung: Anzahl der Aufrufe von `loadFromCache` in dieser Sitzung.
@@ -269,12 +281,11 @@ final class InboxViewModel {
 
     /// Lädt für die aktuelle Ansicht den nächsten älteren Zeitraum nach.
     ///
-    /// Verarbeitung: Ruft für jeden Ordner der Ansicht, der noch Älteres
-    /// haben kann, `MailFetchService.fetchOlder` auf. Ordner ohne Älteres
-    /// werden für diese Sitzung vermerkt. Konnten Mails eines Zeitraums
-    /// nicht geladen werden, erscheint ein Hinweis; der Zeitraum wird beim
-    /// nächsten Tipp erneut versucht. Verbindungsfehler werden still in
-    /// der Zeile angezeigt, andere Fehler gesammelt gemeldet.
+    /// Verarbeitung: Die Ordner der Ansicht werden beim Tippen festgehalten,
+    /// damit ein späterer Ansichtswechsel nicht den falschen Ordner
+    /// nachladen lässt. Die Zeile zeigt sofort „wird geladen“, auch wenn
+    /// der Abruf noch auf einen laufenden wartet. Ausgeführt wird über den
+    /// `FetchCoordinator`, also nie gleichzeitig mit einem anderen Abruf.
     @MainActor
     func loadOlder() async {
         guard !isLoadingOlder else { return }
@@ -287,8 +298,28 @@ final class InboxViewModel {
         defer { isLoadingOlder = false }
         olderConnectionFailed = false
 
+        let targets = openOlderTargets
+        let request = FetchRequest.older(
+            targets: targets.map { exhaustedKey($0.account.id, $0.folder) }
+        )
+        await coordinated(request, label: "Ältere laden") {
+            await self.performLoadOlder(targets)
+        }
+    }
+
+    /// Lädt für die festgehaltenen Ordner den nächsten älteren Zeitraum.
+    ///
+    /// Verarbeitung: Ruft je Ordner `MailFetchService.fetchOlder` auf.
+    /// Ordner ohne Älteres werden für diese Sitzung vermerkt. Konnten Mails
+    /// eines Zeitraums nicht geladen werden, erscheint ein Hinweis; der
+    /// Zeitraum wird beim nächsten Tipp erneut versucht. Verbindungsfehler
+    /// werden still in der Zeile angezeigt, andere Fehler gesammelt gemeldet.
+    ///
+    /// - Parameter targets: Ordner der Ansicht zum Zeitpunkt des Tippens.
+    @MainActor
+    private func performLoadOlder(_ targets: [(account: MailAccount, folder: String)]) async {
         var errors: [String] = []
-        for target in openOlderTargets {
+        for target in targets {
             let key = exhaustedKey(target.account.id, target.folder)
             do {
                 let password = try readPassword(for: target.account)
@@ -406,6 +437,22 @@ final class InboxViewModel {
 
     /// Ruft einen einzelnen Ordner ab (beim Antippen in der Leiste).
     ///
+    /// Verarbeitung: Ausgeführt über den `FetchCoordinator`. Werden mehrere
+    /// Ordner angetippt, während noch ein Abruf läuft, wird nur der zuletzt
+    /// gewählte abgerufen.
+    ///
+    /// - Parameters:
+    ///   - accountID: Postfach.
+    ///   - path: IMAP-Ordner.
+    @MainActor
+    func refreshFolder(accountID: UUID, path: String) async {
+        await coordinated(.folder(accountID: accountID, path: path), label: "Ordner \(path)") {
+            await self.performRefreshFolder(accountID: accountID, path: path)
+        }
+    }
+
+    /// Ruft einen einzelnen Ordner vom Server ab.
+    ///
     /// Verarbeitung: Ohne Netz bleibt es beim Cache; sonst wird der Ordner
     /// vom Server geholt und die Liste danach aus dem Cache neu geladen.
     ///
@@ -413,7 +460,7 @@ final class InboxViewModel {
     ///   - accountID: Postfach.
     ///   - path: IMAP-Ordner.
     @MainActor
-    func refreshFolder(accountID: UUID, path: String) async {
+    private func performRefreshFolder(accountID: UUID, path: String) async {
         guard let account = accountStore.accounts.first(where: { $0.id == accountID }) else { return }
         let password: String
         do {
@@ -448,12 +495,48 @@ final class InboxViewModel {
 
     /// Ruft alle Posteingänge ab (Start, Pull-to-Refresh).
     ///
-    /// Verarbeitung: Je Postfach zuerst der Spamfilter, dann Posteingang
-    /// und Spam-Ordner; die Liste wird nach jedem Postfach aktualisiert.
-    /// Ist ein einzelner Ordner gewählt, wird er zusätzlich abgerufen.
-    /// Verbindungsfehler werden still angezeigt, andere gesammelt gemeldet.
+    /// Verarbeitung: Ausgeführt über den `FetchCoordinator`. Läuft der
+    /// Abruf schon, wird auf ihn gewartet statt ein zweites Mal abzurufen.
     @MainActor
     func refresh() async {
+        await coordinated(.inboxes, label: "Posteingänge") {
+            await self.performRefresh()
+        }
+    }
+
+    /// Führt einen Abruf über den `FetchCoordinator` aus und protokolliert,
+    /// was mit ihm geschah (Konsole, zur Kontrolle doppelter Abrufe).
+    ///
+    /// - Parameters:
+    ///   - request: Art des Abrufs.
+    ///   - label: Bezeichnung für die Konsole.
+    ///   - operation: Eigentlicher Abruf.
+    @MainActor
+    private func coordinated(
+        _ request: FetchRequest,
+        label: String,
+        operation: @escaping @MainActor () async -> Void
+    ) async {
+        if fetches.isScheduled(request) {
+            print("🔁 Abruf \(label) läuft bereits – angeschlossen")
+        } else if fetches.isBusy {
+            print("⏳ Abruf \(label) wartet auf laufenden Abruf")
+        }
+        let outcome = await fetches.run(request, operation: operation)
+        if outcome == .superseded {
+            print("⏭ Abruf \(label) übersprungen – neuerer Ordner gewählt")
+        }
+    }
+
+    /// Ruft alle Posteingänge vom Server ab.
+    ///
+    /// Verarbeitung: Je Postfach zuerst der Spamfilter, dann Posteingang
+    /// und Spam-Ordner; die Liste wird nach jedem Postfach aktualisiert.
+    /// Ein gewählter Ordner wird hier nicht abgerufen – das übernimmt
+    /// `refreshFolder` beim Wechsel bzw. Herunterziehen in dieser Ansicht.
+    /// Verbindungsfehler werden still angezeigt, andere gesammelt gemeldet.
+    @MainActor
+    private func performRefresh() async {
         // Ohne Netz gar nicht erst versuchen: Cache zeigen, still vermerken.
         guard network.isOnline else {
             connectionFailed = true
@@ -536,23 +619,7 @@ final class InboxViewModel {
             }
         }
 
-        // Wird ein einzelner Ordner angezeigt, diesen ebenfalls abrufen
-        if case .folder(let accountID, let path, _) = selection {
-            if let account = accountStore.accounts.first(where: { $0.id == accountID }) {
-                do {
-                    let password = try readPassword(for: account)
-                    try await MailFetchService.refreshAndCache(
-                        account: account, password: password, folder: path
-                    )
-                } catch {
-                    if let message = classify(error, context: "\(account.displayName)/\(path)") {
-                        errors.append(message)
-                    }
-                }
-            }
-        }
-
-        loadFromCache()
+        // Die Liste ist nach jedem Postfach schon neu geladen worden.
         errorMessage = errors.isEmpty ? nil : errors.joined(separator: "\n")
         print("🔄 Refresh fertig. Fehler: \(errors.count), Nachrichten gesamt: \(messages.count)")
     }
