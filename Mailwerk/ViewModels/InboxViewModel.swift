@@ -532,8 +532,10 @@ final class InboxViewModel {
     ///
     /// Verarbeitung: Je Postfach zuerst der Spamfilter, dann Posteingang
     /// und Spam-Ordner; die Liste wird nach jedem Postfach aktualisiert.
-    /// Ein gewählter Ordner wird hier nicht abgerufen – das übernimmt
-    /// `refreshFolder` beim Wechsel bzw. Herunterziehen in dieser Ansicht.
+    /// Kommen während des Abrufs Postfächer hinzu, werden sie in derselben
+    /// Runde mit abgerufen. Ein gewählter Ordner wird hier nicht abgerufen –
+    /// das übernimmt `refreshFolder` beim Wechsel bzw. Herunterziehen in
+    /// dieser Ansicht.
     /// Verbindungsfehler werden still angezeigt, andere gesammelt gemeldet.
     @MainActor
     private func performRefresh() async {
@@ -554,7 +556,12 @@ final class InboxViewModel {
         var errors: [String] = []
         pendingSpamFolders = []
 
-        for account in accountStore.accounts {
+        // Postfächer, die während des Abrufs hinzukommen (z. B. beim ersten
+        // Start aus iCloud), werden in derselben Runde mit abgerufen. So
+        // geht keines verloren, wenn sich ein neuer Abruf diesem anschließt.
+        var processed: Set<UUID> = []
+        while let account = accountStore.accounts.first(where: { !processed.contains($0.id) }) {
+            processed.insert(account.id)
             print("🔄 Starte Abruf: \(account.displayName) (ID: \(account.id.uuidString))")
             do {
                 guard let password = try accountStore.password(for: account) else {

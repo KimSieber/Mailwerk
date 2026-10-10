@@ -8,6 +8,8 @@
 //  samt „Rückgängig“, die Zeile „Ältere Nachrichten laden“, die
 //  Ordnerleiste sowie Einstellungen und Verfassen. Aktualisiert wird auf
 //  iPhone/iPad durch Herunterziehen, auf dem Mac per Knopf bzw. ⌘R.
+//  Kommen Postfächer hinzu (beim ersten Start aus iCloud oder neu
+//  eingerichtet), wird automatisch abgerufen.
 //
 //  Die Liste arbeitet mit Listeneinträgen ohne Mailinhalt
 //  (`MessageListItem`). Erst beim Öffnen einer Mail lädt
@@ -267,6 +269,14 @@ struct InboxView: View {
                 guard !hasLoadedOnce else { return }
                 hasLoadedOnce = true
                 await viewModel.refresh()
+            }
+            .onChange(of: accountStore.accounts.map(\.id)) { oldIDs, newIDs in
+                // Neue Postfächer (beim ersten Start aus iCloud oder neu
+                // eingerichtet): Liste zeigen und alle Posteingänge abrufen.
+                // Reine Änderungen wie Name oder Farbe lösen nichts aus.
+                guard !Set(newIDs).isSubset(of: Set(oldIDs)) else { return }
+                viewModel.loadFromCache()
+                Task { await viewModel.refresh() }
             }
             .onChange(of: network.isOnline) { wasOnline, isOnline in
                 // Netz ist zurück: aktuelle Ansicht selbst abrufen.
