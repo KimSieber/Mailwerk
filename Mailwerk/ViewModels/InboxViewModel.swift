@@ -6,6 +6,8 @@
 //  gewählt ist (alle Posteingänge, Gekennzeichnet, ein Ordner), welche
 //  Mails sie aus dem Cache zeigt, Abruf vom Server, „Ältere laden“,
 //  Spamfilter beim Abruf und Rückfragen zum Anlegen eines Spam-Ordners.
+//  Dazu die Wischaktionen der Liste (gelesen, kennzeichnen) samt
+//  „Rückgängig“ und der einzige Meldungskanal der Liste (`alert`).
 //
 //  Ablauf: Die Liste wird immer zuerst aus dem lokalen Cache gezeigt
 //  (`loadFromCache`), der Abruf vom Server läuft danach und aktualisiert
@@ -29,7 +31,8 @@
 //  Ablage im MessageStore.
 //
 //  Abhängigkeiten: AccountStore, SpamSettings, SpamFilterService,
-//  MailFetchService, MailSession (Zugangsdaten), MessageStore,
+//  MailFetchService, MailSession (Zugangsdaten), MessageActions,
+//  MessageStore,
 //  NetworkMonitor, SyncWindow, FetchCoordinator.
 //
 
@@ -50,8 +53,13 @@ final class InboxViewModel {
     var messages: [MessageListItem] = []
     /// `true`, solange ein Abruf vom Server läuft.
     var isLoading = false
-    /// Fehlermeldung für die Anzeige; `nil` = keine.
-    var errorMessage: String?
+    /// Meldung für die Anzeige (Abruf- und Aktionsfehler); `nil` = keine.
+    /// Einziger Meldungskanal der Liste.
+    var alert: AlertItem?
+    /// Mails, für die gerade eine Wischaktion läuft (Zeile gesperrt).
+    var processingMessageIDs: Set<String> = []
+    /// Zeitgeber, der den „Rückgängig“-Hinweis nach 5 Sekunden ausblendet.
+    @ObservationIgnored private var undoTask: Task<Void, Never>?
     /// Stand der aktuellen Ansicht laut Datenbank (Tabelle folder_sync).
     /// Überlebt Neustarts und ist auch offline bekannt. `nil` nur, wenn
     /// kein Postfach eingerichtet ist.
@@ -106,15 +114,9 @@ final class InboxViewModel {
     /// Angaben, um ein entferntes Kennzeichen wiederherzustellen.
     struct UndoUnflag: Identifiable {
         /// Kennung für SwiftUI (Cache-ID der Mail).
-        var id: String { messageID }
-        /// Cache-ID der Mail.
-        let messageID: String
-        /// UID der Mail im Ordner.
-        let messageUID: UInt32
-        /// Postfach der Mail.
-        let accountID: UUID
-        /// Ordner der Mail.
-        let folder: String
+        var id: String { target.id }
+        /// Betroffene Mail.
+        let target: MessageActions.Target
     }
 
     /// Ein Postfach ohne Spam-Ordner samt Vorschlag. Angelegt wird nur nach
@@ -351,7 +353,7 @@ final class InboxViewModel {
         }
         loadFromCache()
         if !errors.isEmpty {
-            errorMessage = errors.joined(separator: "\n")
+            alert = AlertItem(title: "Ältere Nachrichten", message: errors.joined(separator: "\n"))
         }
     }
 
@@ -397,7 +399,10 @@ final class InboxViewModel {
             )
             print("📁 [\(pending.account.displayName)] Spam-Ordner \(created) angelegt")
         } catch {
-            errorMessage = "\(pending.account.displayName): Ordner konnte nicht angelegt werden – \(error.localizedDescription)"
+            alert = AlertItem(
+                title: "Spam-Ordner nicht angelegt",
+                message: "\(pending.account.displayName): \(error.localizedDescription)"
+            )
         }
         dismissSpamFolderRequest(pending, declineForSession: false)
     }
@@ -445,7 +450,7 @@ final class InboxViewModel {
         do {
             credentials = try accountStore.credentials(for: account)
         } catch {
-            errorMessage = "\(account.displayName): \(error.localizedDescription)"
+            alert = AlertItem(title: "Fehler beim Abrufen", message: "\(account.displayName): \(error.localizedDescription)")
             return
         }
 
@@ -464,7 +469,7 @@ final class InboxViewModel {
             try await MailFetchService.refreshAndCache(credentials, folder: path)
         } catch {
             if let message = classify(error, context: account.displayName) {
-                errorMessage = message
+                alert = AlertItem(title: "Fehler beim Abrufen", message: message)
             }
         }
         loadFromCache()
@@ -545,7 +550,9 @@ final class InboxViewModel {
             }
         }
 
-        errorMessage = errors.isEmpty ? nil : errors.joined(separator: "\n")
+        if !errors.isEmpty {
+            alert = AlertItem(title: "Fehler beim Abrufen", message: errors.joined(separator: "\n"))
+        }
         print("🔄 Refresh fertig. Fehler: \(errors.count), Nachrichten gesamt: \(messages.count)")
     }
 
@@ -644,6 +651,87 @@ final class InboxViewModel {
             print("📬 [\(account.displayName)] Spam-Ordner \(spamFolder) abgerufen")
         } catch {
             print("⚠️ [\(account.displayName)] Spam-Abruf fehlgeschlagen: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Aktionen an Mails (Wischaktionen)
+
+    /// Schaltet gelesen/ungelesen um.
+    ///
+    /// Verarbeitung: Server und Cache über `MessageActions`, danach die
+    /// Liste neu laden. Während der Aktion ist die Zeile gesperrt.
+    ///
+    /// - Parameter item: Betroffener Listeneintrag.
+    @MainActor
+    func toggleRead(_ item: MessageListItem) async {
+        processingMessageIDs.insert(item.id)
+        defer { processingMessageIDs.remove(item.id) }
+        do {
+            try await MessageActions.setRead(
+                item.isUnread, for: MessageActions.Target(item), accountStore: accountStore
+            )
+            loadFromCache()
+        } catch {
+            alert = .failure("Status ändern fehlgeschlagen", error)
+        }
+    }
+
+    /// Schaltet die Kennzeichnung um.
+    ///
+    /// Verarbeitung: Server und Cache über `MessageActions`. In der Ansicht
+    /// „Gekennzeichnet“ erscheint nach dem Entfernen 5 Sekunden lang ein
+    /// „Rückgängig“-Hinweis.
+    ///
+    /// - Parameter item: Betroffener Listeneintrag.
+    @MainActor
+    func toggleFlag(_ item: MessageListItem) async {
+        processingMessageIDs.insert(item.id)
+        defer { processingMessageIDs.remove(item.id) }
+        let target = MessageActions.Target(item)
+        let newFlagged = !item.isFlagged
+        do {
+            try await MessageActions.setFlagged(newFlagged, for: target, accountStore: accountStore)
+            if selection == .flagged && !newFlagged {
+                offerUndoUnflag(for: target)
+            }
+            loadFromCache()
+        } catch {
+            alert = .failure("Kennzeichnen fehlgeschlagen", error)
+        }
+    }
+
+    /// Zeigt den „Rückgängig“-Hinweis und blendet ihn nach 5 Sekunden aus.
+    ///
+    /// - Parameter target: Mail, deren Kennzeichnung entfernt wurde.
+    @MainActor
+    private func offerUndoUnflag(for target: MessageActions.Target) {
+        undoTask?.cancel()
+        undoUnflag = UndoUnflag(target: target)
+        undoTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled else { return }
+            self?.undoUnflag = nil
+        }
+    }
+
+    /// Blendet den „Rückgängig“-Hinweis aus, ohne etwas zu ändern.
+    @MainActor
+    func dismissUndoUnflag() {
+        undoTask?.cancel()
+        undoUnflag = nil
+    }
+
+    /// Stellt eine eben entfernte Kennzeichnung wieder her.
+    ///
+    /// - Parameter undo: Angaben zur betroffenen Mail.
+    @MainActor
+    func undo(_ undo: UndoUnflag) async {
+        dismissUndoUnflag()
+        do {
+            try await MessageActions.setFlagged(true, for: undo.target, accountStore: accountStore)
+            loadFromCache()
+        } catch {
+            alert = .failure("Rückgängig fehlgeschlagen", error)
         }
     }
 }

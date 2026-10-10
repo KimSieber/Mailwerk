@@ -2,50 +2,68 @@
 //  FolderSidebarView.swift
 //  Mailwerk
 //
-//  Inhalt der Ordnerleiste. Oben „Alle Eingänge“ – die aktuelle Ansicht,
-//  ein Tipp darauf schließt die Leiste. Darunter je Postfach ein
-//  aufklappbarer Abschnitt mit dem Ordnerbaum.
+//  Zweck: Inhalt der Ordnerleiste. Oben „Alle Eingänge“ – die aktuelle
+//  Ansicht, ein Tipp darauf schließt die Leiste – und „Mit Kennzeichnung“.
+//  Darunter je Postfach ein aufklappbarer Abschnitt mit dem Ordnerbaum.
 //
-//  v0.1.7d: Ordner sind auswählbar – Tipp zeigt den Ordnerinhalt.
-//  Unterordner sind immer sichtbar und nur durch Einrückung erkennbar;
-//  auf- und zuklappen lassen sich nur die Postfächer.
+//  Ordner sind auswählbar: Ein Tipp zeigt den Ordnerinhalt. Unterordner
+//  sind immer sichtbar und nur durch Einrückung erkennbar; auf- und
+//  zuklappen lassen sich nur die Postfächer.
 //
-//  v0.1.8a: Langes Drücken (Mac: Rechtsklick) öffnet ein Kontextmenü –
-//  am Postfach „Neuer Ordner …“, an einem Ordner „Neuer Unterordner …“
-//  und bei gewöhnlichen Ordnern „Löschen …“. Sonderordner lassen sich
-//  nicht löschen; bei Unterordnern ist der Eintrag ausgegraut. Ob ein
-//  Ordner Mails enthält, prüft erst der Server unmittelbar vor dem Löschen.
-//  Anlegen und Löschen übernimmt der Aufrufer (`onCreateFolder`,
-//  `onDeleteFolder`).
+//  Langes Drücken (Mac: Rechtsklick) öffnet ein Kontextmenü – am Postfach
+//  „Neuer Ordner …“, an einem Ordner „Neuer Unterordner …“ und bei
+//  gewöhnlichen Ordnern „Löschen …“. Sonderordner lassen sich nicht
+//  löschen; bei Ordnern mit Unterordnern ist der Eintrag ausgegraut. Ob
+//  ein Ordner Mails enthält, prüft erst der Server unmittelbar vor dem
+//  Löschen.
+//
+//  Dialoge: „Neuer Ordner“ ist ein Eingabedialog mit Textfeld. Die
+//  Rückfrage vor dem Löschen und Fehlermeldungen laufen über je einen
+//  Kanal (siehe Dialogs.swift).
+//
+//  Abgrenzung: Anlegen und Löschen übernimmt der Aufrufer
+//  (`onCreateFolder`, `onDeleteFolder`); den Ordnerbaum liefert der
+//  FolderCatalog.
+//
+//  Abhängigkeiten: SwiftUI, FolderCatalog, FolderNode, FolderLabel,
+//  MailActionService (Port für das Löschen), Dialogs.
 //
 
 import SwiftUI
 
+/// Inhalt der Ordnerleiste.
 struct FolderSidebarView: View {
+    /// Eingerichtete Postfächer.
     let accounts: [MailAccount]
+    /// Ordnerbäume der Postfächer.
     let catalog: FolderCatalog
     /// Aufgeklappte Postfächer. Liegt beim Aufrufer, damit der Zustand
     /// das Schließen der Leiste übersteht – aber nicht einen App-Neustart.
     @Binding var expandedAccounts: Set<UUID>
+    /// Gewählte Ansicht.
     @Binding var selection: MailboxSelection
+    /// Anzahl gekennzeichneter Mails (Zahl an „Mit Kennzeichnung“).
     var flaggedCount: Int = 0
     /// Legt einen Ordner an: Postfach, Server-Pfad des Elternordners
     /// (`nil` = oberste Ebene) und eingegebener Name.
     let onCreateFolder: (MailAccount, String?, String) async throws -> Void
     /// Löscht einen leeren Ordner und liefert das Ergebnis der Prüfung.
     let onDeleteFolder: (MailAccount, FolderNode) async throws -> FolderDeletion.Outcome
+    /// Schließt die Leiste.
     let onClose: () -> Void
 
     /// Offener Dialog „Neuer Ordner“.
     @State private var creation: FolderCreationRequest?
+    /// Eingegebener Name im Dialog „Neuer Ordner“.
     @State private var newFolderName = ""
-    /// Offene Rückfrage „Ordner löschen?“.
-    @State private var deletion: FolderDeletionRequest?
     /// Postfach, in dem gerade ein Ordner angelegt oder gelöscht wird.
     @State private var busyAccountID: UUID?
-    /// Meldung nach einer gescheiterten Aktion.
-    @State private var failure: FolderActionFailure?
+    /// Einziger Meldungskanal der Leiste.
+    @State private var activeAlert: AlertItem?
+    /// Einziger Rückfragekanal der Leiste.
+    @State private var activeConfirmation: ConfirmationRequest?
 
+    /// Aufbau: feste Einträge, Postfach-Abschnitte, Dialoge.
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -92,8 +110,7 @@ struct FolderSidebarView: View {
                                 beginCreation(in: account, under: parent)
                             },
                             onDeleteFolder: { node in
-                                guard busyAccountID == nil else { return }
-                                deletion = FolderDeletionRequest(account: account, node: node)
+                                confirmDeletion(of: node, in: account)
                             },
                             onRetry: { Task { await catalog.retry(account) } }
                         )
@@ -124,41 +141,26 @@ struct FolderSidebarView: View {
         } message: { request in
             Text(request.location)
         }
-        .alert(
-            deletion.map { "„\($0.node.name)“ löschen?" } ?? "",
-            isPresented: Binding(
-                get: { deletion != nil },
-                set: { if !$0 { deletion = nil } }
-            ),
-            presenting: deletion
-        ) { request in
-            Button("Abbrechen", role: .cancel) {}
-            Button("Löschen", role: .destructive) { delete(request) }
-        } message: { _ in
-            Text("Gelöscht wird nur, wenn der Ordner leer ist. Das lässt sich nicht rückgängig machen.")
-        }
-        .alert(
-            failure?.title ?? "",
-            isPresented: Binding(
-                get: { failure != nil },
-                set: { if !$0 { failure = nil } }
-            ),
-            presenting: failure
-        ) { _ in
-            Button("OK") { failure = nil }
-        } message: { failure in
-            Text(failure.message)
-        }
+        .confirmationRequest($activeConfirmation)
+        .alertItem($activeAlert)
     }
 
     // MARK: - Ordner anlegen
 
+    /// Öffnet den Dialog „Neuer Ordner“, sofern im Postfach nichts läuft.
+    ///
+    /// - Parameters:
+    ///   - account: Postfach.
+    ///   - parent: Übergeordneter Ordner, `nil` = oberste Ebene.
     private func beginCreation(in account: MailAccount, under parent: FolderNode?) {
         guard busyAccountID == nil else { return }
         newFolderName = ""
         creation = FolderCreationRequest(account: account, parent: parent)
     }
 
+    /// Legt den Ordner über den Aufrufer an und lädt danach den Baum neu.
+    ///
+    /// - Parameter request: Postfach und Ort aus dem Dialog.
     private func create(_ request: FolderCreationRequest) {
         let name = newFolderName
         busyAccountID = request.account.id
@@ -169,39 +171,71 @@ struct FolderSidebarView: View {
                 expandedAccounts.insert(request.account.id)
                 await catalog.retry(request.account)
             } catch {
-                failure = FolderActionFailure(title: "Ordner nicht angelegt", message: error.localizedDescription)
+                activeAlert = .failure("Ordner nicht angelegt", error)
             }
         }
     }
 
     // MARK: - Ordner löschen
 
-    private func delete(_ request: FolderDeletionRequest) {
-        busyAccountID = request.account.id
+    /// Fragt vor dem Löschen eines Ordners nach, sofern im Postfach nichts läuft.
+    ///
+    /// - Parameters:
+    ///   - node: Zu löschender Ordner.
+    ///   - account: Postfach des Ordners.
+    private func confirmDeletion(of node: FolderNode, in account: MailAccount) {
+        guard busyAccountID == nil else { return }
+        activeConfirmation = ConfirmationRequest(
+            title: "„\(node.name)“ löschen?",
+            message: "Gelöscht wird nur, wenn der Ordner leer ist. Das lässt sich nicht rückgängig machen.",
+            confirmLabel: "Löschen"
+        ) {
+            delete(node, in: account)
+        }
+    }
+
+    /// Löscht den Ordner über den Aufrufer.
+    ///
+    /// Verarbeitung: Wurde nicht gelöscht (enthält Mails, hat Unterordner,
+    /// …), erklärt eine Meldung den Grund. Außer bei „enthält Mails“ ist
+    /// die angezeigte Liste veraltet und wird neu geladen.
+    ///
+    /// - Parameters:
+    ///   - node: Zu löschender Ordner.
+    ///   - account: Postfach des Ordners.
+    private func delete(_ node: FolderNode, in account: MailAccount) {
+        busyAccountID = account.id
         Task { @MainActor in
             defer { busyAccountID = nil }
             do {
-                let outcome = try await onDeleteFolder(request.account, request.node)
+                let outcome = try await onDeleteFolder(account, node)
                 if let message = outcome.userMessage {
-                    failure = FolderActionFailure(title: "Ordner nicht gelöscht", message: message)
+                    activeAlert = AlertItem(title: "Ordner nicht gelöscht", message: message)
                 }
                 // Außer bei „enthält Mails“ ist die angezeigte Liste
                 // veraltet – auch bei „gibt es nicht mehr“ oder
                 // „hat inzwischen Unterordner“.
                 if case .notEmpty = outcome {} else {
-                    await catalog.retry(request.account)
+                    await catalog.retry(account)
                 }
             } catch {
-                failure = FolderActionFailure(title: "Ordner nicht gelöscht", message: error.localizedDescription)
+                activeAlert = .failure("Ordner nicht gelöscht", error)
             }
         }
     }
 
+    /// Wählt eine Ansicht und schließt die Leiste.
+    ///
+    /// - Parameter newSelection: Gewählte Ansicht.
     private func select(_ newSelection: MailboxSelection) {
         selection = newSelection
         onClose()
     }
 
+    /// Bindung „aufgeklappt“ für ein Postfach.
+    ///
+    /// - Parameter accountID: Postfach.
+    /// - Returns: Bindung an die Menge der aufgeklappten Postfächer.
     private func expansionBinding(for accountID: UUID) -> Binding<Bool> {
         Binding(
             get: { expandedAccounts.contains(accountID) },
@@ -218,21 +252,31 @@ struct FolderSidebarView: View {
 
 // MARK: - Postfach-Abschnitt
 
+/// Abschnitt eines Postfachs: Kopfzeile zum Auf- und Zuklappen und
+/// darunter der Ordnerbaum bzw. Lade- und Fehlerzustand.
 private struct AccountFolderSection: View {
+    /// Postfach.
     let account: MailAccount
+    /// Ladezustand des Ordnerbaums.
     let state: FolderCatalog.State
     /// Eine Aktion im Postfach läuft (etwa: Ordner wird angelegt).
     var isBusy = false
     /// Der eigene Lösch-Weg arbeitet nur mit Port 993.
     var canDeleteFolders = true
+    /// Abschnitt aufgeklappt.
     @Binding var isExpanded: Bool
+    /// Gewählte Ansicht (für die Markierung des Ordners).
     let selection: MailboxSelection
+    /// Ordner gewählt.
     let onSelect: (FolderNode) -> Void
     /// Dialog „Neuer Ordner“ öffnen; `nil` = oberste Ebene.
     let onNewFolder: (FolderNode?) -> Void
+    /// Löschen eines Ordners angefragt.
     let onDeleteFolder: (FolderNode) -> Void
+    /// Laden nach einem Fehler erneut versuchen.
     let onRetry: () -> Void
 
+    /// Aufbau: Kopfzeile, bei aufgeklapptem Abschnitt der Inhalt.
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
@@ -243,6 +287,8 @@ private struct AccountFolderSection: View {
         }
     }
 
+    /// Kopfzeile: Pfeil, Farbpunkt, Name, Ladeanzeige; Kontextmenü
+    /// „Neuer Ordner …“.
     private var header: some View {
         Button {
             withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
@@ -280,6 +326,10 @@ private struct AccountFolderSection: View {
         .accessibilityValue(isExpanded ? "aufgeklappt" : "zugeklappt")
     }
 
+    /// Prüft, ob ein Ordner die gewählte Ansicht ist.
+    ///
+    /// - Parameter node: Ordner.
+    /// - Returns: `true`, wenn gewählt.
     private func isFolderSelected(_ node: FolderNode) -> Bool {
         if case .folder(let id, let path, _) = selection {
             return id == account.id && path == node.id
@@ -289,6 +339,9 @@ private struct AccountFolderSection: View {
 
     /// Löschen nur bei gewöhnlichen, wählbaren Ordnern; Sonderordner
     /// bekommen den Eintrag gar nicht.
+    ///
+    /// - Parameter node: Ordner.
+    /// - Returns: Eintrag im Kontextmenü (verborgen, ausgegraut, aktiv).
     private func deletionOption(for node: FolderNode) -> FolderRow.DeletionOption {
         guard node.role == .regular, node.isSelectable else { return .hidden }
         if !canDeleteFolders { return .disabled("Löschen (nur über Port 993)") }
@@ -296,6 +349,8 @@ private struct AccountFolderSection: View {
         return .enabled { onDeleteFolder(node) }
     }
 
+    /// Inhalt je nach Ladezustand: Hinweis, Fehler mit „Erneut versuchen“
+    /// oder der eingerückte Ordnerbaum.
     @ViewBuilder
     private var content: some View {
         switch state {
@@ -348,17 +403,26 @@ private struct AccountFolderSection: View {
 /// Eine Ordnerzeile. Wählbare Ordner reagieren auf Tipp; reine
 /// Container (`\Noselect`) erscheinen abgeschwächt und sind nicht tippbar.
 private struct FolderRow: View {
+    /// Ordner mit Einrückungstiefe.
     let entry: IndentedFolder
+    /// Farbe des Postfachs (Markierung des gewählten Ordners).
     let accountColor: Color
+    /// Ordner ist die gewählte Ansicht.
     var isSelected = false
+    /// Ordner gewählt.
     let onSelect: () -> Void
+    /// „Neuer Unterordner …“ gewählt.
     let onNewSubfolder: () -> Void
+    /// Eintrag „Löschen …“ im Kontextmenü.
     var deletion: DeletionOption = .hidden
 
+    /// Darstellung des Eintrags „Löschen …“.
     enum DeletionOption {
+        /// Kein Eintrag (Sonderordner).
         case hidden
         /// Sichtbar, aber ausgegraut – mit Grund im Titel.
         case disabled(String)
+        /// Aktiv, mit auszuführender Aktion.
         case enabled(() -> Void)
     }
 
@@ -368,6 +432,7 @@ private struct FolderRow: View {
     /// Zusätzliche Einrückung je Unterordner-Ebene.
     static let levelIndent: CGFloat = 18
 
+    /// Aufbau: Markierung, Ordnername, Kontextmenü.
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 10) {
@@ -419,12 +484,18 @@ private struct FolderRow: View {
 /// Eine auswählbare Zeile der Leiste. Die gewählte Ansicht wird
 /// zurückhaltend mit der Akzentfarbe hinterlegt.
 struct SidebarRow: View {
+    /// Beschriftung.
     let title: String
+    /// SF-Symbol.
     let systemImage: String
+    /// Zahl rechts (z. B. gekennzeichnete Mails); `nil` = keine.
     var badge: Int? = nil
+    /// Zeile ist die gewählte Ansicht.
     var isSelected = false
+    /// Tipp auf die Zeile.
     let action: () -> Void
 
+    /// Aufbau: Symbol, Titel, Zahl, Hinterlegung bei Auswahl.
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
@@ -462,35 +533,24 @@ struct SidebarRow: View {
 
 /// Wo ein neuer Ordner angelegt werden soll.
 private struct FolderCreationRequest: Identifiable {
+    /// Postfach.
     let account: MailAccount
     /// Übergeordneter Ordner, `nil` = oberste Ebene des Postfachs.
     let parent: FolderNode?
 
+    /// Kennung für SwiftUI.
     var id: String { "\(account.id)|\(parent?.id ?? "")" }
 
+    /// Titel des Dialogs.
     var title: String {
         parent == nil ? "Neuer Ordner" : "Neuer Unterordner"
     }
 
+    /// Ort des neuen Ordners für den Dialogtext.
     var location: String {
         if let parent {
             return "In „\(parent.name)“ (\(account.displayName))"
         }
         return "Auf oberster Ebene von \(account.displayName)"
     }
-}
-
-// MARK: - Rückfrage „Ordner löschen“ und Fehlermeldung
-
-private struct FolderDeletionRequest: Identifiable {
-    let account: MailAccount
-    let node: FolderNode
-
-    var id: String { "\(account.id)|\(node.id)" }
-}
-
-private struct FolderActionFailure: Identifiable {
-    let id = UUID()
-    let title: String
-    let message: String
 }

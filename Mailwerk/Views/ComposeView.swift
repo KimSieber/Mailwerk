@@ -14,11 +14,14 @@
 //  Fläche unterhalb des Inhalts setzt die Schreibmarke ans Textende.
 //  Auf dem iPhone blendet Herunterwischen im Inhalt die Tastatur aus.
 //
+//  Meldungen und die Rückfrage „Entwurf verwerfen?“ laufen über je einen
+//  Kanal (siehe Dialogs.swift).
+//
 //  Abgrenzung: Zustand, Versand und Vorbelegung → ComposeViewModel;
 //  Editor → RichTextEditor; Formatierungsleiste → FormattingToolbar;
 //  Darstellung des Zitats → HTMLMailView; Empfängerfelder → RecipientField.
 //
-//  Abhängigkeiten: SwiftUI, UniformTypeIdentifiers, PhotosUI (iOS).
+//  Abhängigkeiten: SwiftUI, UniformTypeIdentifiers, PhotosUI (iOS), Dialogs.
 //
 
 import SwiftUI
@@ -35,16 +38,16 @@ struct ComposeView: View {
     private let onSent: () -> Void
 
     @Environment(\.dismiss) private var dismiss
-    /// Rückfrage „Entwurf verwerfen?" sichtbar.
-    @State private var showDiscardConfirm = false
+    /// Einziger Meldungskanal des Fensters (Fehler, Hinweise nach dem Versand).
+    @State private var activeAlert: AlertItem?
+    /// Einziger Rückfragekanal des Fensters („Entwurf verwerfen?“).
+    @State private var activeConfirmation: ConfirmationRequest?
     /// Dateiauswahl sichtbar.
     @State private var showFileImporter = false
     /// Zitat aufgeklappt.
     @State private var showQuote = false
     /// Gemessene Höhe des Zitats.
     @State private var quoteHeight: CGFloat = 200
-    /// Hinweise nach dem Versand sichtbar.
-    @State private var showWarnings = false
     /// Sichtbare Höhe des Scrollbereichs – für die freie Fläche unter dem Inhalt.
     @State private var visibleHeight: CGFloat = 0
     /// Höhe von Kopfbereich, Editor und Zitat – für die freie Fläche unter dem Inhalt.
@@ -92,34 +95,12 @@ struct ComposeView: View {
             #endif
             .toolbar { toolbarContent }
             .interactiveDismissDisabled(model.hasContent)
-            .confirmationDialog(
-                "Entwurf verwerfen?",
-                isPresented: $showDiscardConfirm,
-                titleVisibility: .visible
-            ) {
-                Button("Verwerfen", role: .destructive) { dismiss() }
-                Button("Weiter bearbeiten", role: .cancel) {}
-            } message: {
-                Text("Die Nachricht wurde noch nicht gesendet und geht verloren.")
-            }
-            .alert(
-                "Versand fehlgeschlagen",
-                isPresented: Binding(
-                    get: { model.errorMessage != nil },
-                    set: { if !$0 { model.errorMessage = nil } }
-                )
-            ) {
-                Button("OK") { model.errorMessage = nil }
-            } message: {
-                Text(model.errorMessage ?? "")
-            }
-            .alert("Hinweis zum Versand", isPresented: $showWarnings) {
-                Button("OK") {
-                    onSent()
-                    dismiss()
-                }
-            } message: {
-                Text(model.warnings.joined(separator: "\n\n"))
+            .confirmationRequest($activeConfirmation)
+            .onChange(of: model.errorMessage) { _, message in
+                // Fehler des ViewModels in den Meldungskanal übernehmen.
+                guard let message else { return }
+                activeAlert = AlertItem(title: "Versand fehlgeschlagen", message: message)
+                model.errorMessage = nil
             }
             .fileImporter(
                 isPresented: $showFileImporter,
@@ -129,6 +110,7 @@ struct ComposeView: View {
                 handleFileImport(result)
             }
         }
+        .alertItem($activeAlert)
         .macSheetFrame(.composer)
     }
 
@@ -315,7 +297,7 @@ struct ComposeView: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .cancellationAction) {
             Button {
-                if model.hasContent { showDiscardConfirm = true } else { dismiss() }
+                if model.hasContent { confirmDiscard() } else { dismiss() }
             } label: {
                 Image(systemName: "xmark")
             }
@@ -386,11 +368,23 @@ struct ComposeView: View {
 
     // MARK: - Aktionen
 
+    /// Fragt vor dem Verwerfen eines Entwurfs nach.
+    private func confirmDiscard() {
+        activeConfirmation = ConfirmationRequest(
+            title: "Entwurf verwerfen?",
+            message: "Die Nachricht wurde noch nicht gesendet und geht verloren.",
+            confirmLabel: "Verwerfen",
+            cancelLabel: "Weiter bearbeiten"
+        ) {
+            dismiss()
+        }
+    }
+
     /// Sendet die Mail.
     ///
     /// Verarbeitung: Ohne Hinweise schließt das Fenster sofort; gibt es
     /// Hinweise (z. B. Gesendet-Kopie fehlgeschlagen), werden sie zuerst
-    /// angezeigt und das Fenster schließt nach „OK".
+    /// angezeigt und das Fenster schließt nach „OK“.
     private func send() async {
         let sent = await model.send()
         guard sent else { return }
@@ -398,7 +392,13 @@ struct ComposeView: View {
             onSent()
             dismiss()
         } else {
-            showWarnings = true
+            activeAlert = AlertItem(
+                title: "Hinweis zum Versand",
+                message: model.warnings.joined(separator: "\n\n")
+            ) {
+                onSent()
+                dismiss()
+            }
         }
     }
 
@@ -424,11 +424,14 @@ struct ComposeView: View {
                         data: data
                     )
                 } catch {
-                    model.errorMessage = "Datei „\(url.lastPathComponent)“ konnte nicht gelesen werden: \(error.localizedDescription)"
+                    activeAlert = AlertItem(
+                        title: "Datei nicht angehängt",
+                        message: "„\(url.lastPathComponent)“ konnte nicht gelesen werden: \(error.localizedDescription)"
+                    )
                 }
             }
         case .failure(let error):
-            model.errorMessage = error.localizedDescription
+            activeAlert = .failure("Datei nicht angehängt", error)
         }
     }
 
@@ -446,7 +449,7 @@ struct ComposeView: View {
             let mime = item.supportedContentTypes.first?.preferredMIMEType ?? "image/jpeg"
             model.addAttachment(filename: name, mimeType: mime, data: data)
         } catch {
-            model.errorMessage = "Foto konnte nicht geladen werden: \(error.localizedDescription)"
+            activeAlert = .failure("Foto nicht angehängt", error)
         }
     }
     #endif

@@ -20,11 +20,14 @@
 //  entstünde bei jedem Neuaufbau durch SwiftUI ein weiteres, sofort
 //  verworfenes ViewModel samt Laden der Liste aus dem Cache.
 //
-//  Abgrenzung: Zustand und Abruf im InboxViewModel, Mailansicht in
-//  MessageDetailView, Ordnerleiste in FolderSidebarView.
+//  Meldungen und Rückfragen laufen über je einen Kanal (`alertItem`,
+//  `confirmationRequest`, siehe Dialogs.swift).
+//
+//  Abgrenzung: Zustand, Abruf und Wischaktionen im InboxViewModel,
+//  Mailansicht in MessageDetailView, Ordnerleiste in FolderSidebarView.
 //
 //  Abhängigkeiten: InboxViewModel, MessageStore, MailActionService,
-//  FolderCatalog, NetworkMonitor, MessageDetailView, ComposeView.
+//  FolderCatalog, NetworkMonitor, MessageDetailView, ComposeView, Dialogs.
 //
 
 import SwiftUI
@@ -56,12 +59,6 @@ struct InboxView: View {
     @State private var expandedFolderAccounts: Set<UUID> = []
     /// Erster Abruf nach dem Start ist erfolgt.
     @State private var hasLoadedOnce = false
-    /// Fehlermeldung einer Wischaktion; `nil` = keine.
-    @State private var errorMessage: String?
-    /// Mails, für die gerade eine Wischaktion läuft (gesperrt).
-    @State private var processingMessageIDs: Set<String> = []
-    /// Zeitgeber, der den „Rückgängig“-Hinweis nach 5 Sekunden ausblendet.
-    @State private var undoTask: Task<Void, Never>?
     /// Netzzustand (online/offline).
     private let network = NetworkMonitor.shared
 
@@ -293,23 +290,7 @@ struct InboxView: View {
             .sheet(isPresented: $showingAccounts) {
                 AccountListView(accountStore: accountStore)
             }
-            .alert(
-                "Spam-Ordner anlegen?",
-                isPresented: Binding(
-                    get: { viewModel.pendingSpamFolders.first != nil },
-                    set: { _ in }
-                ),
-                presenting: viewModel.pendingSpamFolders.first
-            ) { pending in
-                Button("Anlegen") {
-                    Task { await viewModel.createSpamFolder(for: pending) }
-                }
-                Button("Nicht jetzt", role: .cancel) {
-                    viewModel.dismissSpamFolderRequest(pending, declineForSession: true)
-                }
-            } message: { pending in
-                Text("Das Postfach „\(pending.account.displayName)“ hat keinen Spam-Ordner. Ohne ihn kann der Filter dort nichts aussortieren. Vorgeschlagen wird „\(pending.proposal)“.")
-            }
+            .confirmationRequest(spamFolderConfirmation)
             .sheet(isPresented: $showingSpamSettings) {
                 SpamSettingsView(settings: spamSettings, filterLists: filterLists)
             }
@@ -320,34 +301,15 @@ struct InboxView: View {
                     onSent: { viewModel.loadFromCache() }
                 )
             }
-            .alert(
-                "Fehler beim Abrufen",
-                isPresented: Binding(
-                    get: { viewModel.errorMessage != nil },
-                    set: { if !$0 { viewModel.errorMessage = nil } }
-                )
-            ) {
-                Button("OK") { viewModel.errorMessage = nil }
-            } message: {
-                Text(viewModel.errorMessage ?? "")
-            }
-            .alert(
-                "Aktion fehlgeschlagen",
-                isPresented: Binding(
-                    get: { errorMessage != nil },
-                    set: { if !$0 { errorMessage = nil } }
-                )
-            ) {
-                Button("OK") { errorMessage = nil }
-            } message: {
-                Text(errorMessage ?? "")
-            }
         }
+        // Einziger Meldungskanal der Liste – am äußeren Element, getrennt
+        // von der Rückfrage am Inhalt.
+        .alertItem($viewModel.alert)
         .overlay(alignment: .bottom) {
             if let undo = viewModel.undoUnflag {
                 UndoBanner(
-                    onUndo: { undoUnflag(undo) },
-                    onDismiss: { viewModel.undoUnflag = nil }
+                    onUndo: { Task { await viewModel.undo(undo) } },
+                    onDismiss: { viewModel.dismissUndoUnflag() }
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .padding(.bottom, 16)
@@ -445,7 +407,7 @@ struct InboxView: View {
         }
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             Button {
-                Task { await toggleRead(message) }
+                Task { await viewModel.toggleRead(message) }
             } label: {
                 Label(
                     message.isUnread ? "Gelesen" : "Ungelesen",
@@ -456,7 +418,7 @@ struct InboxView: View {
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button {
-                Task { await toggleFlag(message) }
+                Task { await viewModel.toggleFlag(message) }
             } label: {
                 Label(
                     message.isFlagged ? "Entflaggen" : "Flaggen",
@@ -465,7 +427,7 @@ struct InboxView: View {
             }
             .tint(.orange)
         }
-        .disabled(processingMessageIDs.contains(message.id))
+        .disabled(viewModel.processingMessageIDs.contains(message.id))
     }
 
     // MARK: - Ordner löschen
@@ -495,102 +457,38 @@ struct InboxView: View {
         return outcome
     }
 
-    // MARK: - Swipe-Aktionen
+    // MARK: - Rückfragen
 
-    /// Schaltet gelesen/ungelesen um (Wischaktion).
+    /// Rückfrage „Spam-Ordner anlegen?“ zur ersten offenen Anfrage.
     ///
-    /// Verarbeitung: Setzt das Flag auf dem Server, übernimmt es in den
-    /// Cache und lädt die Liste neu. Während der Aktion ist die Zeile gesperrt.
-    ///
-    /// - Parameter message: Betroffener Listeneintrag.
-    @MainActor
-    private func toggleRead(_ message: MessageListItem) async {
-        processingMessageIDs.insert(message.id)
-        defer { processingMessageIDs.remove(message.id) }
-
-        let markAsRead = message.isUnread
-        do {
-            try await MailActionService.setRead(
-                uid: Int(message.uid),
-                isRead: markAsRead,
-                accountID: message.accountID,
-                accountStore: accountStore,
-                folder: message.folder
-            )
-            MessageStore.shared.updateFlags(messageID: message.id, isUnread: !markAsRead)
-            viewModel.loadFromCache()
-        } catch {
-            errorMessage = "Status ändern fehlgeschlagen: \(error.localizedDescription)"
-        }
-    }
-
-    /// Schaltet die Kennzeichnung um (Wischaktion).
-    ///
-    /// Verarbeitung: Setzt das Flag auf dem Server und im Cache. In der
-    /// Ansicht „Gekennzeichnet“ erscheint nach dem Entfernen für 5 Sekunden
-    /// ein „Rückgängig“-Hinweis.
-    ///
-    /// - Parameter message: Betroffener Listeneintrag.
-    @MainActor
-    private func toggleFlag(_ message: MessageListItem) async {
-        processingMessageIDs.insert(message.id)
-        defer { processingMessageIDs.remove(message.id) }
-
-        let newFlagged = !message.isFlagged
-        do {
-            try await MailActionService.setFlagged(
-                uid: Int(message.uid),
-                isFlagged: newFlagged,
-                accountID: message.accountID,
-                accountStore: accountStore,
-                folder: message.folder
-            )
-            MessageStore.shared.updateFlagged(messageID: message.id, isFlagged: newFlagged)
-
-            // In der Kennzeichen-Sicht: Entflaggen bietet „Rückgängig" an.
-            if viewModel.selection == .flagged && !newFlagged {
-                undoTask?.cancel()
-                viewModel.undoUnflag = InboxViewModel.UndoUnflag(
-                    messageID: message.id,
-                    messageUID: message.uid,
-                    accountID: message.accountID,
-                    folder: message.folder
-                )
-                undoTask = Task {
-                    try? await Task.sleep(for: .seconds(5))
-                    guard !Task.isCancelled else { return }
-                    viewModel.undoUnflag = nil
+    /// Verarbeitung: Die Anfragen stehen in einer Warteschlange des
+    /// ViewModels; gezeigt wird immer die erste. Beide Knöpfe nehmen sie
+    /// sofort aus der Warteschlange, damit sie nicht erneut erscheint,
+    /// während das Anlegen noch läuft. „Nicht jetzt“ fragt für dieses
+    /// Postfach in dieser Sitzung nicht wieder.
+    private var spamFolderConfirmation: Binding<ConfirmationRequest?> {
+        Binding(
+            get: {
+                viewModel.pendingSpamFolders.first.map { pending in
+                    ConfirmationRequest(
+                        id: "spamFolder-\(pending.account.id.uuidString)",
+                        title: "Spam-Ordner anlegen?",
+                        message: "Das Postfach „\(pending.account.displayName)“ hat keinen Spam-Ordner. Ohne ihn kann der Filter dort nichts aussortieren. Vorgeschlagen wird „\(pending.proposal)“.",
+                        confirmLabel: "Anlegen",
+                        isDestructive: false,
+                        cancelLabel: "Nicht jetzt",
+                        onCancel: {
+                            viewModel.dismissSpamFolderRequest(pending, declineForSession: true)
+                        },
+                        onConfirm: {
+                            viewModel.dismissSpamFolderRequest(pending, declineForSession: false)
+                            Task { await viewModel.createSpamFolder(for: pending) }
+                        }
+                    )
                 }
-            }
-
-            viewModel.loadFromCache()
-        } catch {
-            errorMessage = "Kennzeichnen fehlgeschlagen: \(error.localizedDescription)"
-        }
-    }
-
-    /// Stellt eine eben entfernte Kennzeichnung wieder her.
-    ///
-    /// - Parameter undo: Angaben zur betroffenen Mail.
-    @MainActor
-    private func undoUnflag(_ undo: InboxViewModel.UndoUnflag) {
-        undoTask?.cancel()
-        viewModel.undoUnflag = nil
-        Task {
-            do {
-                try await MailActionService.setFlagged(
-                    uid: Int(undo.messageUID),
-                    isFlagged: true,
-                    accountID: undo.accountID,
-                    accountStore: accountStore,
-                    folder: undo.folder
-                )
-                MessageStore.shared.updateFlagged(messageID: undo.messageID, isFlagged: true)
-                viewModel.loadFromCache()
-            } catch {
-                errorMessage = "Rückgängig fehlgeschlagen: \(error.localizedDescription)"
-            }
-        }
+            },
+            set: { _ in }
+        )
     }
 
     // MARK: - Plattform

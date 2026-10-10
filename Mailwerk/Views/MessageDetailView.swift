@@ -2,82 +2,96 @@
 //  MessageDetailView.swift
 //  Mailwerk
 //
+//  Zweck: Ansicht einer einzelnen Mail – Kopfdaten, Inhalt (HTML oder
+//  Text), Anhänge mit Vorschau, Teilen und Nachladen sowie das
+//  Aktionsmenü: Antworten/Weiterleiten, Kennzeichnen, Gelesen, Verschieben,
+//  Spam-Aktionen (Blockieren/Vertrauen), Teilen, Drucken, Anlagen lokal
+//  löschen und Mail löschen.
+//
+//  Eine ungelesene Mail wird beim Öffnen als gelesen markiert.
+//
+//  Aktionen an der Mail laufen über `MessageActions` (Server und Cache
+//  gemeinsam). Meldungen und Rückfragen haben je einen Kanal
+//  (`activeAlert`, `activeConfirmation`, siehe Dialogs.swift). Vorher
+//  hingen drei Rückfragen und zwei Meldungen an derselben Ansicht und
+//  wurden aus dem Menü heraus geöffnet – eine in SwiftUI unzuverlässige
+//  Bauweise.
+//
+//  Abgrenzung: Laden der Mail aus dem Cache → MessageDetailLoader;
+//  HTML-Darstellung → HTMLMailView; Verfassen → ComposeView; Ordnerwahl →
+//  FolderMoveSheet; Anhang-Zeile → AttachmentRow; Teilen → MailShareSheet;
+//  Druck → MailPrinter.
+//
+//  Abhängigkeiten: SwiftUI, QuickLook, MessageActions, SpamFilterService,
+//  AttachmentManager, MessageStore, Dialogs.
+//
 
 import SwiftUI
 import QuickLook
 import WebKit
 
+/// Ansicht einer einzelnen Mail.
 struct MessageDetailView: View {
+    /// Angezeigte Mail.
     let message: CachedMessage
+    /// Quelle für Postfächer und Zugangsdaten.
     let accountStore: AccountStore
+    /// Spamfilter für Blockieren und Vertrauen.
     let spamFilter: SpamFilterService
+    /// Wird nach jeder Änderung aufgerufen (Liste neu laden).
     let onChange: (() -> Void)?
 
     @Environment(\.dismiss) private var dismiss
 
+    /// Gemessene Höhe des HTML-Inhalts.
     @State private var webViewHeight: CGFloat = 100
+    /// Anhänge der Mail aus dem Cache.
     @State private var attachments: [CachedAttachment] = []
+    /// Datei für die QuickLook-Vorschau; `nil` = keine Vorschau offen.
     @State private var previewURL: URL?
+    /// Temporäre Dateien der geladenen Anhänge zum Teilen, je Anhang-ID.
     @State private var shareURLs: [String: URL] = [:]
+    /// Anhänge, die gerade nachgeladen werden.
     @State private var downloadingIDs: Set<String> = []
-    @State private var errorMessage: String?
-    @State private var showDeleteAttachmentsConfirm = false
+    /// Teilen-Sheet sichtbar.
     @State private var showShareSheet = false
-
-    // MARK: - Basis-Aktionen (v0.1.2)
+    /// Gelesen-Zustand (lokal nachgeführt).
     @State private var isUnread: Bool
+    /// Kennzeichnung (lokal nachgeführt).
     @State private var isFlagged: Bool
+    /// `true`, solange eine Aktion an der Mail läuft.
     @State private var isProcessingAction = false
-    @State private var showDeleteMessageConfirm = false
+    /// Ordnerwahl zum Verschieben sichtbar.
     @State private var showFolderPicker = false
-
-    // MARK: - Verfassen (v0.1.4)
+    /// Zu verfassende Antwort bzw. Weiterleitung.
     @State private var composeRequest: ComposeRequest?
     /// Getippter mailto:-Link aus der Mail → neue Mail in Mailwerk.
     @State private var mailtoRequest: MailtoLink?
+    /// Einziger Meldungskanal der Ansicht.
+    @State private var activeAlert: AlertItem?
+    /// Einziger Rückfragekanal der Ansicht.
+    @State private var activeConfirmation: ConfirmationRequest?
 
-    // MARK: - Spam (v0.1.5)
-    @State private var pendingSpamAction: SpamActionRequest?
-    @State private var spamStatusMessage: String?
-
-    /// Eine angefragte Listenaktion, die noch bestätigt werden muss.
-    private struct SpamActionRequest: Identifiable {
-        enum Kind { case block, trust }
-        let id = UUID()
-        let kind: Kind
-        let entryKind: FilterEntryKind
-        let value: String
-
-        var title: String {
-            switch kind {
-            case .block: return "\(value) blockieren?"
-            case .trust: return "\(value) vertrauen?"
-            }
-        }
-
-        var explanation: String {
-            let scope = entryKind == .domain
-                ? "Alle künftigen Mails dieser Domain"
-                : "Alle künftigen Mails dieses Absenders"
-            switch kind {
-            case .block:
-                return "\(scope) wandern in den Spam-Ordner. Diese Mail wird mitverschoben."
-            case .trust:
-                return "\(scope) bleiben im Posteingang. Liegt diese Mail im Spam-Ordner, wird sie zurückgeholt."
-            }
-        }
-
-        var confirmLabel: String {
-            kind == .block ? "Blockieren" : "Vertrauen"
-        }
+    /// Art einer Spam-Aktion.
+    private enum SpamActionKind {
+        case block, trust
     }
 
     /// Kapselt die Art der zu verfassenden Nachricht für das Sheet.
     private struct ComposeRequest: Identifiable {
+        /// Kennung für SwiftUI.
         let id = UUID()
+        /// Antworten, Allen antworten oder Weiterleiten.
         let kind: ComposeKind
     }
 
+    /// Übernimmt die Mail und die Abhängigkeiten.
+    ///
+    /// - Parameters:
+    ///   - message: Angezeigte Mail.
+    ///   - accountStore: Quelle für Postfächer und Zugangsdaten.
+    ///   - spamFilter: Spamfilter für Blockieren und Vertrauen.
+    ///   - onChange: Wird nach jeder Änderung aufgerufen.
     init(
         message: CachedMessage,
         accountStore: AccountStore,
@@ -92,294 +106,200 @@ struct MessageDetailView: View {
         _isFlagged = State(initialValue: message.isFlagged)
     }
 
+    /// Ziel der Aktionen an dieser Mail.
+    private var target: MessageActions.Target { MessageActions.Target(message) }
+
+    /// Aufbau: Kopfdaten, Inhalt, Anhänge; Symbolleiste mit Antworten und
+    /// Menü; Sheets, Vorschau, Meldung und Rückfrage.
     var body: some View {
+        content
+            .navigationTitle(message.accountDisplayName)
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar { toolbarContent }
+            .sheet(item: $mailtoRequest) { link in
+                ComposeView(
+                    accountStore: accountStore,
+                    kind: .new,
+                    mailto: link,
+                    onSent: { onChange?() }
+                )
+            }
+            .sheet(item: $composeRequest) { request in
+                ComposeView(
+                    accountStore: accountStore,
+                    kind: request.kind,
+                    original: message,
+                    onSent: { onChange?() }
+                )
+            }
+            .sheet(isPresented: $showShareSheet) {
+                MailShareSheet(message: message, attachments: attachments)
+            }
+            .sheet(isPresented: $showFolderPicker) {
+                if let account = accountStore.accounts.first(where: { $0.id == message.accountID }) {
+                    FolderMoveSheet(
+                        account: account,
+                        currentFolder: message.folder,
+                        accountStore: accountStore
+                    ) { path in
+                        Task { await moveMessage(to: path) }
+                    }
+                }
+            }
+            .quickLookPreview($previewURL)
+            .confirmationRequest($activeConfirmation)
+            .task { await prepareOnOpen() }
+    }
+
+    // MARK: - Inhalt
+
+    /// Kopfdaten, Inhalt und Anhänge in einem Scrollbereich. Trägt den
+    /// Meldungskanal – getrennt vom Rückfragekanal am äußeren Element.
+    private var content: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                // MARK: - Header
-                HStack {
-                    Text(message.subject)
-                        .font(.title2)
-                        .bold()
-                    if isFlagged {
-                        Image(systemName: "flag.fill")
-                            .foregroundStyle(.orange)
-                    }
-                }
-                Text("Von: \(message.from)")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                if !message.to.isEmpty {
-                    Text("An: \(message.to)")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                if !message.headers.ccList.isEmpty {
-                    Text("Kopie: \(message.headers.ccList.joined(separator: ", "))")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                if let date = message.date {
-                    Text(date, format: .dateTime.weekday(.abbreviated).day(.twoDigits).month(.twoDigits).year().hour(.defaultDigits(amPM: .omitted)).minute(.twoDigits))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                header
                 Divider()
-
-                // MARK: - Body
-                if let html = message.htmlBody {
-                    HTMLMailView(
-                        html: html,
-                        contentHeight: $webViewHeight,
-                        onMailto: { mailtoRequest = $0 }
-                    )
-                        .frame(height: max(100, webViewHeight))
-                } else if let text = message.textBody {
-                    Text(text)
-                } else {
-                    Text("Kein Inhalt verfügbar").foregroundStyle(.secondary)
-                }
-
-                // MARK: - Anhänge
+                messageBody
                 if !attachments.isEmpty {
                     Divider()
-
-                    Label(
-                        "Anhänge (\(attachments.count))",
-                        systemImage: "paperclip"
-                    )
-                    .font(.headline)
-
-                    ForEach(attachments) { attachment in
-                        AttachmentRow(
-                            attachment: attachment,
-                            isDownloading: downloadingIDs.contains(attachment.id),
-                            onTap: { handleTap(attachment) },
-                            shareURL: shareURLs[attachment.id]
-                        )
-                    }
+                    attachmentList
                 }
             }
             .padding()
         }
-        .navigationTitle(message.accountDisplayName)
-        #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
-        #endif
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                // Tap antwortet direkt, langes Drücken zeigt alle Varianten
-                Menu {
-                    replyButtons
-                } label: {
-                    Image(systemName: "arrowshape.turn.up.left")
-                } primaryAction: {
-                    composeRequest = ComposeRequest(kind: .reply)
-                }
-            }
-            ToolbarItem(placement: .primaryAction) {
-                if isProcessingAction {
-                    ProgressView()
-                } else {
-                    messageMenu
-                }
-            }
-        }
-        .sheet(item: $mailtoRequest) { link in
-            ComposeView(
-                accountStore: accountStore,
-                kind: .new,
-                mailto: link,
-                onSent: { onChange?() }
-            )
-        }
-        .sheet(item: $composeRequest) { request in
-            ComposeView(
-                accountStore: accountStore,
-                kind: request.kind,
-                original: message,
-                onSent: { onChange?() }
-            )
-        }
-        .quickLookPreview($previewURL)
-        .alert("Fehler", isPresented: Binding(
-            get: { errorMessage != nil },
-            set: { if !$0 { errorMessage = nil } }
-        )) {
-            Button("OK") { errorMessage = nil }
-        } message: {
-            Text(errorMessage ?? "")
-        }
-        .confirmationDialog(
-            "Anlagen lokal löschen?",
-            isPresented: $showDeleteAttachmentsConfirm,
-            titleVisibility: .visible
-        ) {
-            Button("Löschen", role: .destructive) {
-                deleteLocalAttachments()
-            }
-            Button("Abbrechen", role: .cancel) {}
-        } message: {
-            Text("Die Anhang-Daten werden lokal gelöscht, um Speicher freizugeben. Die Metadaten bleiben erhalten und die Anhänge können erneut vom Server geladen werden.")
-        }
-        .confirmationDialog(
-            "Mail löschen?",
-            isPresented: $showDeleteMessageConfirm,
-            titleVisibility: .visible
-        ) {
-            Button("Löschen", role: .destructive) {
-                Task { await deleteMessageAction() }
-            }
-            Button("Abbrechen", role: .cancel) {}
-        } message: {
-            Text("Die Mail wird auf dem Server gelöscht bzw. in den Papierkorb verschoben.")
-        }
-        .confirmationDialog(
-            pendingSpamAction?.title ?? "",
-            isPresented: Binding(
-                get: { pendingSpamAction != nil },
-                set: { if !$0 { pendingSpamAction = nil } }
-            ),
-            titleVisibility: .visible,
-            presenting: pendingSpamAction
-        ) { request in
-            Button(request.confirmLabel, role: request.kind == .block ? .destructive : nil) {
-                Task { await performSpamAction(request) }
-            }
-            Button("Abbrechen", role: .cancel) { pendingSpamAction = nil }
-        } message: { request in
-            Text(request.explanation)
-        }
-        .alert(
-            "Listeneintrag",
-            isPresented: Binding(
-                get: { spamStatusMessage != nil },
-                set: { if !$0 { spamStatusMessage = nil } }
-            )
-        ) {
-            Button("OK") { spamStatusMessage = nil }
-        } message: {
-            Text(spamStatusMessage ?? "")
-        }
-        .sheet(isPresented: $showShareSheet) {
-            MailShareSheet(message: message, attachments: attachments)
-        }
-        .sheet(isPresented: $showFolderPicker) {
-            if let account = accountStore.accounts.first(where: { $0.id == message.accountID }) {
-                FolderMoveSheet(
-                    account: account,
-                    currentFolder: message.folder,
-                    accountStore: accountStore
-                ) { path in
-                    Task { await moveMessageAction(to: path) }
-                }
-            }
-        }
-        .task {
-            attachments = MessageStore.shared.attachments(forMessage: message.id)
-            prepareShareURLs()
+        .alertItem($activeAlert)
+    }
 
-            // Ungelesene Mail beim Öffnen als gelesen markieren
-            if isUnread {
-                do {
-                    try await MailActionService.setRead(
-                        uid: Int(message.uid),
-                        isRead: true,
-                        accountID: message.accountID,
-                        accountStore: accountStore,
-                        folder: message.folder
-                    )
-                    MessageStore.shared.updateFlags(messageID: message.id, isUnread: false)
-                    isUnread = false
-                    onChange?()
-                } catch {
-                    print("⚠️ Gelesen-Markierung fehlgeschlagen: \(error.localizedDescription)")
-                }
+    /// Betreff, Kennzeichnung, Absender, Empfänger, Kopie und Datum.
+    @ViewBuilder
+    private var header: some View {
+        HStack {
+            Text(message.subject)
+                .font(.title2)
+                .bold()
+            if isFlagged {
+                Image(systemName: "flag.fill")
+                    .foregroundStyle(.orange)
+            }
+        }
+        Text("Von: \(message.from)")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+        if !message.to.isEmpty {
+            Text("An: \(message.to)")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        if !message.headers.ccList.isEmpty {
+            Text("Kopie: \(message.headers.ccList.joined(separator: ", "))")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        if let date = message.date {
+            Text(date, format: .dateTime.weekday(.abbreviated).day(.twoDigits).month(.twoDigits).year().hour(.defaultDigits(amPM: .omitted)).minute(.twoDigits))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Inhalt der Mail: HTML bevorzugt, sonst Text.
+    @ViewBuilder
+    private var messageBody: some View {
+        if let html = message.htmlBody {
+            HTMLMailView(
+                html: html,
+                contentHeight: $webViewHeight,
+                onMailto: { mailtoRequest = $0 }
+            )
+            .frame(height: max(100, webViewHeight))
+        } else if let text = message.textBody {
+            Text(text)
+        } else {
+            Text("Kein Inhalt verfügbar").foregroundStyle(.secondary)
+        }
+    }
+
+    /// Liste der Anhänge mit Vorschau, Nachladen und Teilen.
+    private var attachmentList: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Anhänge (\(attachments.count))", systemImage: "paperclip")
+                .font(.headline)
+
+            ForEach(attachments) { attachment in
+                AttachmentRow(
+                    attachment: attachment,
+                    isDownloading: downloadingIDs.contains(attachment.id),
+                    onTap: { handleTap(attachment) },
+                    shareURL: shareURLs[attachment.id]
+                )
             }
         }
     }
 
-    // MARK: - Aktionsmenü
+    // MARK: - Symbolleiste und Menü
 
+    /// Antworten (Tipp antwortet direkt, langes Drücken zeigt alle
+    /// Varianten) und das Aktionsmenü.
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .primaryAction) {
+            Menu {
+                replyButtons
+            } label: {
+                Image(systemName: "arrowshape.turn.up.left")
+            } primaryAction: {
+                composeRequest = ComposeRequest(kind: .reply)
+            }
+        }
+        ToolbarItem(placement: .primaryAction) {
+            if isProcessingAction {
+                ProgressView()
+            } else {
+                messageMenu
+            }
+        }
+    }
+
+    /// Aktionsmenü der Mail.
     private var messageMenu: some View {
         Menu {
-            // ── Kommunikation ──
             Section {
                 replyButtons
             }
 
-            // ── Organisation ──
             Section {
                 Button {
-                    Task { await toggleFlagAction() }
+                    Task { await toggleFlag() }
                 } label: {
                     Label(
                         isFlagged ? "Kennzeichnung entfernen" : "Kennzeichnen",
                         systemImage: isFlagged ? "flag.slash" : "flag"
                     )
                 }
-                .disabled(isProcessingAction)
 
                 Button {
-                    Task { await toggleReadAction() }
+                    Task { await toggleRead() }
                 } label: {
                     Label(
                         isUnread ? "Als gelesen markieren" : "Als ungelesen markieren",
                         systemImage: isUnread ? "envelope.open" : "envelope.badge"
                     )
                 }
-                .disabled(isProcessingAction)
 
                 Button {
                     showFolderPicker = true
                 } label: {
                     Label("In Ordner verschieben", systemImage: "folder")
                 }
-                .disabled(isProcessingAction)
             }
 
-            // ── Spam ──
             Section {
-                if let sender = FilterAddress.sender(fromHeader: message.from) {
-                    Menu {
-                        Button {
-                            pendingSpamAction = SpamActionRequest(
-                                kind: .block, entryKind: .address, value: sender.address
-                            )
-                        } label: {
-                            Label("\(sender.address) blockieren", systemImage: "person.crop.circle.badge.xmark")
-                        }
-
-                        Button {
-                            pendingSpamAction = SpamActionRequest(
-                                kind: .block, entryKind: .domain, value: sender.domain
-                            )
-                        } label: {
-                            Label("\(sender.domain) blockieren", systemImage: "globe.badge.chevron.backward")
-                        }
-
-                        Button {
-                            pendingSpamAction = SpamActionRequest(
-                                kind: .trust, entryKind: .address, value: sender.address
-                            )
-                        } label: {
-                            Label("\(sender.address) vertrauen", systemImage: "person.crop.circle.badge.checkmark")
-                        }
-
-                        Button {
-                            pendingSpamAction = SpamActionRequest(
-                                kind: .trust, entryKind: .domain, value: sender.domain
-                            )
-                        } label: {
-                            Label("\(sender.domain) vertrauen", systemImage: "globe")
-                        }
-                    } label: {
-                        Label("Spam / Vertrauen", systemImage: "shield")
-                    }
-                }
+                spamMenu
             }
-            .disabled(isProcessingAction)
 
-            // ── Sonstiges ──
             Section {
                 Button {
                     showShareSheet = true
@@ -395,25 +315,57 @@ struct MessageDetailView: View {
 
                 if hasLocalAttachmentData {
                     Button(role: .destructive) {
-                        showDeleteAttachmentsConfirm = true
+                        confirmDeleteLocalAttachments()
                     } label: {
                         Label("Anlagen lokal löschen", systemImage: "trash")
                     }
                 }
 
                 Button(role: .destructive) {
-                    showDeleteMessageConfirm = true
+                    confirmDeleteMessage()
                 } label: {
                     Label("Mail löschen", systemImage: "trash.fill")
                 }
-                .disabled(isProcessingAction)
             }
         } label: {
             Image(systemName: "ellipsis.circle")
         }
+        .disabled(isProcessingAction)
     }
 
-    /// Antworten, Allen antworten und Weiterleiten – im Menü und in der Toolbar.
+    /// Untermenü „Spam / Vertrauen“ für Absenderadresse und Domain.
+    @ViewBuilder
+    private var spamMenu: some View {
+        if let sender = FilterAddress.sender(fromHeader: message.from) {
+            Menu {
+                Button {
+                    confirmSpamAction(.block, entryKind: .address, value: sender.address)
+                } label: {
+                    Label("\(sender.address) blockieren", systemImage: "person.crop.circle.badge.xmark")
+                }
+                Button {
+                    confirmSpamAction(.block, entryKind: .domain, value: sender.domain)
+                } label: {
+                    Label("\(sender.domain) blockieren", systemImage: "globe.badge.chevron.backward")
+                }
+                Button {
+                    confirmSpamAction(.trust, entryKind: .address, value: sender.address)
+                } label: {
+                    Label("\(sender.address) vertrauen", systemImage: "person.crop.circle.badge.checkmark")
+                }
+                Button {
+                    confirmSpamAction(.trust, entryKind: .domain, value: sender.domain)
+                } label: {
+                    Label("\(sender.domain) vertrauen", systemImage: "globe")
+                }
+            } label: {
+                Label("Spam / Vertrauen", systemImage: "shield")
+            }
+        }
+    }
+
+    /// Antworten, Allen antworten und Weiterleiten – im Menü und in der
+    /// Symbolleiste.
     @ViewBuilder
     private var replyButtons: some View {
         Button {
@@ -435,142 +387,192 @@ struct MessageDetailView: View {
         }
     }
 
-    /// Prüft ob mindestens ein Anhang lokale Daten hat, die gelöscht werden könnten.
+    /// `true`, wenn mindestens ein Anhang lokale Daten hat, die gelöscht
+    /// werden könnten.
     private var hasLocalAttachmentData: Bool {
         attachments.contains { $0.data != nil }
     }
 
-    // MARK: - Basis-Aktionen (v0.1.2)
+    // MARK: - Beim Öffnen
 
+    /// Lädt die Anhänge, bereitet das Teilen vor und markiert eine
+    /// ungelesene Mail als gelesen.
+    ///
+    /// Verarbeitung: Scheitert das Markieren, bleibt die Mail ungelesen;
+    /// eine Meldung erscheint nicht, weil der Nutzer nichts ausgelöst hat.
     @MainActor
-    private func toggleReadAction() async {
+    private func prepareOnOpen() async {
+        attachments = MessageStore.shared.attachments(forMessage: message.id)
+        prepareShareURLs()
+
+        guard isUnread else { return }
+        do {
+            try await MessageActions.setRead(true, for: target, accountStore: accountStore)
+            isUnread = false
+            onChange?()
+        } catch {
+            print("⚠️ Gelesen-Markierung fehlgeschlagen: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Aktionen an der Mail
+
+    /// Schaltet gelesen/ungelesen um.
+    @MainActor
+    private func toggleRead() async {
         isProcessingAction = true
         defer { isProcessingAction = false }
-
-        let markAsRead = isUnread  // aktuell ungelesen → Tap markiert als gelesen
+        let markAsRead = isUnread
         do {
-            try await MailActionService.setRead(
-                uid: Int(message.uid),
-                isRead: markAsRead,
-                accountID: message.accountID,
-                accountStore: accountStore,
-                folder: message.folder
-            )
-            MessageStore.shared.updateFlags(messageID: message.id, isUnread: !markAsRead)
+            try await MessageActions.setRead(markAsRead, for: target, accountStore: accountStore)
             isUnread = !markAsRead
             onChange?()
         } catch {
-            errorMessage = "Aktion fehlgeschlagen: \(error.localizedDescription)"
+            activeAlert = .failure("Status ändern fehlgeschlagen", error)
         }
     }
 
+    /// Schaltet die Kennzeichnung um.
     @MainActor
-    private func toggleFlagAction() async {
+    private func toggleFlag() async {
         isProcessingAction = true
         defer { isProcessingAction = false }
-
         let newFlagged = !isFlagged
         do {
-            try await MailActionService.setFlagged(
-                uid: Int(message.uid),
-                isFlagged: newFlagged,
-                accountID: message.accountID,
-                accountStore: accountStore,
-                folder: message.folder
-            )
-            MessageStore.shared.updateFlagged(messageID: message.id, isFlagged: newFlagged)
+            try await MessageActions.setFlagged(newFlagged, for: target, accountStore: accountStore)
             isFlagged = newFlagged
             onChange?()
         } catch {
-            errorMessage = "Aktion fehlgeschlagen: \(error.localizedDescription)"
+            activeAlert = .failure("Kennzeichnen fehlgeschlagen", error)
         }
     }
 
+    /// Fragt vor dem Löschen der Mail nach.
+    private func confirmDeleteMessage() {
+        activeConfirmation = ConfirmationRequest(
+            title: "Mail löschen?",
+            message: "Die Mail wird auf dem Server gelöscht bzw. in den Papierkorb verschoben.",
+            confirmLabel: "Löschen"
+        ) {
+            Task { await deleteMessage() }
+        }
+    }
+
+    /// Löscht die Mail und kehrt zur Liste zurück.
     @MainActor
-    private func deleteMessageAction() async {
+    private func deleteMessage() async {
         isProcessingAction = true
         defer { isProcessingAction = false }
-
         do {
-            try await MailActionService.deleteMessage(
-                uid: Int(message.uid),
-                accountID: message.accountID,
-                accountStore: accountStore,
-                folder: message.folder
-            )
-            MessageStore.shared.deleteMessage(id: message.id)
+            try await MessageActions.delete(target, accountStore: accountStore)
             onChange?()
             dismiss()
         } catch {
-            errorMessage = "Löschen fehlgeschlagen: \(error.localizedDescription)"
+            activeAlert = .failure("Löschen fehlgeschlagen", error)
         }
     }
 
-    /// Verschiebt die Mail in den gewählten Ordner (Server-Pfad) und
-    /// entfernt sie aus dem Cache des bisherigen Ordners.
+    /// Verschiebt die Mail in den gewählten Ordner und kehrt zur Liste zurück.
+    ///
+    /// - Parameter path: Server-Pfad des Zielordners.
     @MainActor
-    private func moveMessageAction(to path: String) async {
+    private func moveMessage(to path: String) async {
         isProcessingAction = true
         defer { isProcessingAction = false }
-
         do {
-            try await MailActionService.moveMessage(
-                uid: Int(message.uid),
-                toFolder: path,
-                accountID: message.accountID,
-                accountStore: accountStore,
-                folder: message.folder
-            )
-            MessageStore.shared.deleteMessage(id: message.id)
+            try await MessageActions.move(target, to: path, accountStore: accountStore)
             onChange?()
             dismiss()
         } catch {
-            errorMessage = "Verschieben fehlgeschlagen: \(error.localizedDescription)"
+            activeAlert = .failure("Verschieben fehlgeschlagen", error)
         }
     }
 
-    // MARK: - Spam-Aktionen (v0.1.5)
+    // MARK: - Spam-Aktionen
 
+    /// Fragt vor dem Blockieren bzw. Vertrauen nach.
+    ///
+    /// - Parameters:
+    ///   - kind: Blockieren oder Vertrauen.
+    ///   - entryKind: Adresse oder Domain.
+    ///   - value: Einzutragende Adresse bzw. Domain.
+    private func confirmSpamAction(_ kind: SpamActionKind, entryKind: FilterEntryKind, value: String) {
+        let scope = entryKind == .domain
+            ? "Alle künftigen Mails dieser Domain"
+            : "Alle künftigen Mails dieses Absenders"
+        let isBlock = kind == .block
+        activeConfirmation = ConfirmationRequest(
+            title: isBlock ? "\(value) blockieren?" : "\(value) vertrauen?",
+            message: isBlock
+                ? "\(scope) wandern in den Spam-Ordner. Diese Mail wird mitverschoben."
+                : "\(scope) bleiben im Posteingang. Liegt diese Mail im Spam-Ordner, wird sie zurückgeholt.",
+            confirmLabel: isBlock ? "Blockieren" : "Vertrauen",
+            isDestructive: isBlock
+        ) {
+            Task { await performSpamAction(kind, entryKind: entryKind, value: value) }
+        }
+    }
+
+    /// Trägt Adresse bzw. Domain in die Liste ein und verschiebt die Mail
+    /// bei Bedarf.
+    ///
+    /// Verarbeitung: Wurde die Mail verschoben, zeigt diese Ansicht eine
+    /// Mail, die hier nicht mehr liegt – also zurück zur Liste. Sonst
+    /// bestätigt eine Meldung den Eintrag. Steht der Wert schon auf der
+    /// anderen Liste, wird der Eintrag abgelehnt.
+    ///
+    /// - Parameters:
+    ///   - kind: Blockieren oder Vertrauen.
+    ///   - entryKind: Adresse oder Domain.
+    ///   - value: Einzutragende Adresse bzw. Domain.
     @MainActor
-    private func performSpamAction(_ request: SpamActionRequest) async {
-        pendingSpamAction = nil
+    private func performSpamAction(_ kind: SpamActionKind, entryKind: FilterEntryKind, value: String) async {
         isProcessingAction = true
         defer { isProcessingAction = false }
-
         do {
             let moved: Bool
-            switch request.kind {
-            case .block:
-                moved = try await spamFilter.block(message, kind: request.entryKind)
-            case .trust:
-                moved = try await spamFilter.trust(message, kind: request.entryKind)
+            switch kind {
+            case .block: moved = try await spamFilter.block(message, kind: entryKind)
+            case .trust: moved = try await spamFilter.trust(message, kind: entryKind)
             }
             onChange?()
-
-            // Verschoben heißt: Diese Ansicht zeigt eine Mail, die hier nicht
-            // mehr liegt – also zurück zur Liste.
             if moved {
                 dismiss()
             } else {
-                spamStatusMessage = "\(request.value) steht jetzt auf der \(request.kind == .block ? "Blacklist" : "Whitelist")."
+                activeAlert = AlertItem(
+                    title: "Listeneintrag",
+                    message: "\(value) steht jetzt auf der \(kind == .block ? "Blacklist" : "Whitelist")."
+                )
             }
         } catch FilterListError.alreadyOnOtherList(let list) {
             let other = list == .white ? "Whitelist" : "Blacklist"
-            spamStatusMessage = "\(request.value) steht bereits auf der \(other). Entferne den Eintrag dort zuerst."
+            activeAlert = AlertItem(
+                title: "Listeneintrag",
+                message: "\(value) steht bereits auf der \(other). Entferne den Eintrag dort zuerst."
+            )
         } catch {
-            errorMessage = "Listeneintrag fehlgeschlagen: \(error.localizedDescription)"
+            activeAlert = .failure("Listeneintrag fehlgeschlagen", error)
         }
     }
 
     // MARK: - Teilen & Drucken
 
+    /// Druckt die Mail samt Kopfdaten und Anhangliste.
     private func printMessage() {
         let html = Self.printableHTML(for: message, attachments: attachments)
-        let printer = MailPrinter()
-        printer.print(html: html)
+        MailPrinter().print(html: html)
     }
 
-    /// Formatiertes HTML mit Header-Informationen für Druck und Teilen.
+    /// Formatiertes HTML mit Kopfdaten und Anhangliste für Druck und Teilen.
+    ///
+    /// Verarbeitung: Kopfdaten und Text werden für HTML maskiert; eine
+    /// reine Textmail erscheint als vorformatierter Block. Breite Tabellen
+    /// und Bilder werden auf die Seitenbreite begrenzt.
+    ///
+    /// - Parameters:
+    ///   - message: Mail.
+    ///   - attachments: Anhänge für die Liste am Ende.
+    /// - Returns: Vollständiges HTML-Dokument.
     static func printableHTML(for message: CachedMessage, attachments: [CachedAttachment] = []) -> String {
         var header = "<b>Von:</b> \(Self.escaped(message.from))<br>"
         header += "<b>An:</b> \(Self.escaped(message.to))<br>"
@@ -635,6 +637,10 @@ struct MessageDetailView: View {
             """
     }
 
+    /// Anhangliste für Druck und Teilen.
+    ///
+    /// - Parameter attachments: Anhänge.
+    /// - Returns: HTML-Abschnitt; leer ohne Anhänge.
     private static func attachmentSection(_ attachments: [CachedAttachment]) -> String {
         guard !attachments.isEmpty else { return "" }
         var rows = ""
@@ -653,6 +659,10 @@ struct MessageDetailView: View {
             """
     }
 
+    /// Symbol für einen Anhang nach seinem MIME-Typ.
+    ///
+    /// - Parameter contentType: MIME-Typ.
+    /// - Returns: Emoji für die Anhangliste.
     private static func attachmentIcon(for contentType: String) -> String {
         let ct = contentType.lowercased()
         if ct.hasPrefix("image/") { return "🖼️" }
@@ -664,6 +674,10 @@ struct MessageDetailView: View {
         return "📎"
     }
 
+    /// Lesbare Größe (B, KB, MB).
+    ///
+    /// - Parameter bytes: Größe in Bytes.
+    /// - Returns: Größe mit Einheit.
     private static func formattedSize(_ bytes: Int) -> String {
         if bytes < 1024 { return "\(bytes) B" }
         let kb = Double(bytes) / 1024
@@ -672,6 +686,10 @@ struct MessageDetailView: View {
         return String(format: "%.1f MB", mb)
     }
 
+    /// Maskiert `&`, `<` und `>` für HTML.
+    ///
+    /// - Parameter text: Rohtext.
+    /// - Returns: Maskierter Text.
     private static func escaped(_ text: String) -> String {
         text.replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
@@ -680,18 +698,33 @@ struct MessageDetailView: View {
 
     // MARK: - Anlagen lokal löschen
 
+    /// Fragt vor dem lokalen Löschen der Anhang-Daten nach.
+    private func confirmDeleteLocalAttachments() {
+        activeConfirmation = ConfirmationRequest(
+            title: "Anlagen lokal löschen?",
+            message: "Die Anhang-Daten werden lokal gelöscht, um Speicher freizugeben. Die Metadaten bleiben erhalten und die Anhänge können erneut vom Server geladen werden.",
+            confirmLabel: "Löschen"
+        ) {
+            deleteLocalAttachments()
+        }
+    }
+
+    /// Löscht die Daten aller Anhänge dieser Mail aus dem Cache; die
+    /// Einträge bleiben, die Daten lassen sich neu laden.
     private func deleteLocalAttachments() {
         for attachment in attachments {
             MessageStore.shared.deleteAttachmentData(id: attachment.id)
         }
-        // Anhänge-Liste neu laden
         attachments = MessageStore.shared.attachments(forMessage: message.id)
-        // Share-URLs bereinigen
         shareURLs.removeAll()
     }
 
-    // MARK: - Tap-Handling
+    // MARK: - Anhänge öffnen
 
+    /// Öffnet die Vorschau eines Anhangs; fehlen die Daten, werden sie
+    /// zuerst nachgeladen.
+    ///
+    /// - Parameter attachment: Angetippter Anhang.
     private func handleTap(_ attachment: CachedAttachment) {
         if attachment.data != nil {
             openPreview(attachment)
@@ -700,20 +733,24 @@ struct MessageDetailView: View {
         }
     }
 
+    /// Schreibt den Anhang in eine temporäre Datei und öffnet QuickLook.
+    ///
+    /// - Parameter attachment: Anhang mit Daten.
     private func openPreview(_ attachment: CachedAttachment) {
         do {
-            let url = try AttachmentManager.writeTempFile(for: attachment)
-            previewURL = url
+            previewURL = try AttachmentManager.writeTempFile(for: attachment)
         } catch {
-            errorMessage = "Vorschau nicht möglich: \(error.localizedDescription)"
+            activeAlert = .failure("Vorschau nicht möglich", error)
         }
     }
 
+    /// Lädt einen Anhang vom Server nach und öffnet danach die Vorschau.
+    ///
+    /// - Parameter attachment: Anhang ohne Daten.
     @MainActor
     private func downloadAndPreview(_ attachment: CachedAttachment) async {
         downloadingIDs.insert(attachment.id)
         defer { downloadingIDs.remove(attachment.id) }
-
         do {
             let updated = try await AttachmentManager.downloadAttachment(
                 attachment,
@@ -726,18 +763,16 @@ struct MessageDetailView: View {
             prepareShareURLs()
             openPreview(updated)
         } catch {
-            errorMessage = "Download fehlgeschlagen: \(error.localizedDescription)"
+            activeAlert = .failure("Download fehlgeschlagen", error)
         }
     }
 
-    // MARK: - Share-URLs vorbereiten
-
+    /// Schreibt alle geladenen Anhänge als temporäre Dateien, damit das
+    /// Teilen ohne Verzögerung bereitsteht.
     private func prepareShareURLs() {
-        for attachment in attachments where attachment.data != nil {
-            if shareURLs[attachment.id] == nil {
-                if let url = try? AttachmentManager.writeTempFile(for: attachment) {
-                    shareURLs[attachment.id] = url
-                }
+        for attachment in attachments where attachment.data != nil && shareURLs[attachment.id] == nil {
+            if let url = try? AttachmentManager.writeTempFile(for: attachment) {
+                shareURLs[attachment.id] = url
             }
         }
     }
