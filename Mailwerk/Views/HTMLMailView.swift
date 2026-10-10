@@ -11,6 +11,13 @@
 //  Tabellen-Mindestbreiten nicht. Nach dem Verkleinern ist die Seite so
 //  breit wie der Bildschirm, Zoomen per Geste funktioniert wie gewohnt.
 //
+//  Gemessen wird die Höhe des `body`. Damit die Randabstände des ersten
+//  und letzten Absatzes darin enthalten sind, bildet der `body` einen
+//  eigenen Block (`display: flow-root`). Ohne das ragen diese Abstände
+//  über den `body` hinaus („margin collapsing“), die Messung fällt um
+//  sie zu klein aus, und das Ende der Mail wird abgeschnitten – bei
+//  schlichten Mails aus Absätzen um 20–30 Punkte.
+//
 //  Der Inhalt wird nur neu geladen, wenn sich das HTML tatsächlich
 //  geändert hat. SwiftUI ruft `update…View` bei jeder Änderung der
 //  Umgebung auf – auch, wenn diese Ansicht selbst ihre Höhe meldet.
@@ -152,6 +159,10 @@ extension HTMLMailView {
                     word-wrap: break-word;
                     overflow-wrap: break-word;
                     -webkit-text-size-adjust: 100%;
+                    /* Eigener Block: Randabstände des ersten und letzten
+                       Absatzes bleiben im body und zählen zur gemessenen
+                       Höhe. !important, weil Mails body-Stile mitbringen. */
+                    display: flow-root !important;
                 }
                 /* Breite Tabellen und Container auf die Viewport-Breite
                    beschränken. !important überstimmt inline-Styles, die
