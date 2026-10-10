@@ -695,7 +695,7 @@
 			repositoryURL = "https://github.com/Cocoanetics/SwiftMail.git";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 1.13.0;
+				minimumVersion = 1.15.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
