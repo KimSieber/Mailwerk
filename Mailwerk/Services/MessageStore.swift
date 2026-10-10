@@ -43,11 +43,13 @@
 //
 //  Abhängigkeiten: SQLite3 (System-Framework), CachedMessage,
 //  CachedAttachment, FolderListing, MailFolder (Name des Posteingangs),
-//  ServerReconciliation (Plan-Typ), FolderSyncState, MessageListItem.
+//  ServerReconciliation (Plan-Typ), FolderSyncState, MessageListItem,
+//  Log.
 //
 
 import Foundation
 import SQLite3
+import os
 
 /// SQLite soll übergebene Texte/Blobs selbst kopieren (SQLITE_TRANSIENT = -1).
 /// Das C-Makro ist in Swift nicht verfügbar, daher hier nachgebildet.
@@ -178,7 +180,7 @@ final class MessageStore: @unchecked Sendable {
             let directory = try Self.prepareCacheDirectory(in: base)
             path = directory.appendingPathComponent(Self.databaseFileName).path
         } catch {
-            print("🗄️ Verzeichnis für die Ablage nicht verfügbar: \(error)")
+            Log.store.error("🗄️ Verzeichnis für die Ablage nicht verfügbar: \(String(describing: error), privacy: .public)")
             path = nil
         }
         self.init(path: path)
@@ -205,19 +207,19 @@ final class MessageStore: @unchecked Sendable {
                 db = handle
 
             case .corrupt(let code, let message):
-                print("🗄️ Datenbank beschädigt (\(code): \(message)) → wird gelöscht und neu angelegt")
+                Log.store.error("🗄️ Datenbank beschädigt (\(code): \(message, privacy: .public)) → wird gelöscht und neu angelegt")
                 Self.removeDatabaseFiles(at: path)
                 if case .opened(let handle) = Self.open(path) {
                     db = handle
                     startupNotice = .rebuiltAfterCorruption
                 } else {
-                    print("🗄️ Neuanlage fehlgeschlagen → Ablage im Arbeitsspeicher")
+                    Log.store.error("🗄️ Neuanlage fehlgeschlagen → Ablage im Arbeitsspeicher")
                     db = Self.openInMemory()
                     startupNotice = .unavailable
                 }
 
             case .failed(let code, let message):
-                print("🗄️ Datenbank nicht zu öffnen (\(code): \(message)) → Ablage im Arbeitsspeicher, nichts gelöscht")
+                Log.store.error("🗄️ Datenbank nicht zu öffnen (\(code): \(message, privacy: .public)) → Ablage im Arbeitsspeicher, nichts gelöscht")
                 db = Self.openInMemory()
                 startupNotice = .unavailable
             }
@@ -328,7 +330,7 @@ final class MessageStore: @unchecked Sendable {
             do {
                 try FileManager.default.removeItem(atPath: file)
             } catch {
-                print("🗄️ Löschen fehlgeschlagen (\(file)): \(error)")
+                Log.store.error("🗄️ Löschen fehlgeschlagen (\(file, privacy: .public)): \(String(describing: error), privacy: .public)")
             }
         }
     }
@@ -344,7 +346,7 @@ final class MessageStore: @unchecked Sendable {
         var handle: OpaquePointer?
         let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_MEMORY
         guard sqlite3_open_v2(":memory:", &handle, flags, nil) == SQLITE_OK else {
-            print("🗄️ Ablage im Arbeitsspeicher nicht möglich")
+            Log.store.error("🗄️ Ablage im Arbeitsspeicher nicht möglich")
             sqlite3_close(handle)
             return nil
         }
@@ -1458,7 +1460,7 @@ final class MessageStore: @unchecked Sendable {
             try body()
             return true
         } catch {
-            print("🗄️ Schreiben fehlgeschlagen (\(context)): \(error)")
+            Log.store.error("🗄️ Schreiben fehlgeschlagen (\(context, privacy: .public)): \(String(describing: error), privacy: .public)")
             return false
         }
     }
@@ -1703,7 +1705,7 @@ final class MessageStore: @unchecked Sendable {
     private func prepare(_ sql: String) -> OpaquePointer? {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            print("🗄️ SQL-Fehler: \(errMsg) – \(sql.prefix(80))")
+            Log.store.error("🗄️ SQL-Fehler: \(self.errMsg, privacy: .public) – \(String(sql.prefix(80)), privacy: .public)")
             return nil
         }
         return stmt
@@ -1719,7 +1721,7 @@ final class MessageStore: @unchecked Sendable {
     @discardableResult
     private func exec(_ sql: String) -> Bool {
         let ok = sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK
-        if !ok { print("🗄️ SQL-Fehler: \(errMsg) – \(sql.prefix(80))") }
+        if !ok { Log.store.error("🗄️ SQL-Fehler: \(self.errMsg, privacy: .public) – \(String(sql.prefix(80)), privacy: .public)") }
         return ok
     }
 }

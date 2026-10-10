@@ -14,10 +14,11 @@
 //  der Eingabe → FilterListInput; Export → FilterListExporter.
 //
 //  Abhängigkeiten: SwiftUI, FilterListRepository, FilterListInput,
-//  FilterListExporter, FilterListCloudEvents, Dialogs.
+//  FilterListExporter, FilterListCloudEvents, Dialogs, Log.
 //
 
 import SwiftUI
+import os
 
 /// Pflege der White- bzw. Blacklist.
 struct FilterListView: View {
@@ -138,7 +139,7 @@ struct FilterListView: View {
             exportURL = try FilterListExporter.writeTemporaryFile(for: entries, list: list)
         } catch {
             exportURL = nil
-            print("⚠️ Export der Liste fehlgeschlagen: \(error.localizedDescription)")
+            Log.spam.error("⚠️ Export der Liste fehlgeschlagen: \(error.localizedDescription, privacy: .public)")
         }
     }
 

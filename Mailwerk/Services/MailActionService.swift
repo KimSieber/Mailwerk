@@ -23,12 +23,14 @@
 //
 //  Abhängigkeiten: SwiftMail (IMAP), MailSession (Verbindung und
 //  Zugangsdaten), UserFacingError, FolderCreationPlanner, FolderDeletion,
-//  FolderTreeBuilder, MailFolder, MessageStore (Ordnerliste offline).
+//  FolderTreeBuilder, MailFolder, MessageStore (Ordnerliste offline),
+//  Log.
 //
 
 import Foundation
 import SwiftMail
 import NIOIMAPCore
+import os
 
 /// IMAP-Aktionen an Mails und Ordnern.
 enum MailActionService {
@@ -162,7 +164,7 @@ enum MailActionService {
 
             if let trash = trashFolder {
                 _ = try await server.move(message: imapUID, to: trash.id)
-                print("🗑️ Mail UID \(uid) nach \(trash.id) verschoben")
+                Log.actions.info("🗑️ Mail UID \(uid) nach \(trash.id, privacy: .public) verschoben")
                 return trash.id
             } else {
                 try await server.store(
@@ -171,7 +173,7 @@ enum MailActionService {
                     operation: .add
                 )
                 try await server.expunge()
-                print("🗑️ Mail UID \(uid) gelöscht (EXPUNGE)")
+                Log.actions.info("🗑️ Mail UID \(uid) gelöscht (EXPUNGE)")
                 return nil
             }
         }
@@ -205,7 +207,7 @@ enum MailActionService {
             _ = try await server.selectMailbox(folder)
             let copyUID = try await server.move(message: SwiftMail.UID(uid), to: toFolder)
             let newUID = copyUID?.mapping.first?.destination.value
-            print("📁 Mail UID \(uid) von \(folder) nach \(toFolder) verschoben (neue UID: \(newUID.map(String.init) ?? "unbekannt"))")
+            Log.actions.info("📁 Mail UID \(uid) von \(folder, privacy: .public) nach \(toFolder, privacy: .public) verschoben (neue UID: \(newUID.map(String.init) ?? "unbekannt", privacy: .public))")
             return newUID
         }
     }
@@ -234,7 +236,7 @@ enum MailActionService {
             accountID: accountID, accountStore: accountStore
         ) { server in
             try await server.createMailbox(path)
-            print("📁 Ordner \(path) angelegt")
+            Log.actions.info("📁 Ordner \(path, privacy: .public) angelegt")
 
             let folders = try await fetchMailboxList(server)
             let created = folders.first { $0.id == path }
@@ -276,7 +278,7 @@ enum MailActionService {
                 listing: FolderListing(folders: folders, namespacePrefix: prefix)
             )
             try await server.createMailbox(path)
-            print("📁 Ordner \(path) angelegt")
+            Log.actions.info("📁 Ordner \(path, privacy: .public) angelegt")
             return path
         }
     }
@@ -309,16 +311,16 @@ enum MailActionService {
         ) { server -> FolderDeletion.Outcome in
             let folders = try await fetchMailboxList(server, includeInbox: true)
             if let blocked = FolderDeletion.precheck(path: path, folders: folders) {
-                print("📁 Ordner \(path) nicht gelöscht: \(blocked)")
+                Log.actions.info("📁 Ordner \(path, privacy: .public) nicht gelöscht: \(String(describing: blocked), privacy: .public)")
                 return blocked
             }
             let status = try await server.mailboxStatus(path)
             if let blocked = FolderDeletion.outcome(messageCount: status.messageCount) {
-                print("📁 Ordner \(path) nicht gelöscht: \(blocked)")
+                Log.actions.info("📁 Ordner \(path, privacy: .public) nicht gelöscht: \(String(describing: blocked), privacy: .public)")
                 return blocked
             }
             try await server.deleteMailbox(path)
-            print("📁 Ordner \(path) gelöscht")
+            Log.actions.info("📁 Ordner \(path, privacy: .public) gelöscht")
             return FolderDeletion.Outcome.deleted
         }
     }

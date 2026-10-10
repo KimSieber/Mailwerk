@@ -16,10 +16,11 @@
 //  Ordnerliste → MailActionService.
 //
 //  Abhängigkeiten: SwiftUI, MailActionService, MessageStore,
-//  FolderTreeBuilder, FolderLabel, NetworkMonitor, Dialogs.
+//  FolderTreeBuilder, FolderLabel, NetworkMonitor, Dialogs, Log.
 //
 
 import SwiftUI
+import os
 
 /// Auswahl des Zielordners beim Verschieben einer Mail.
 struct FolderMoveSheet: View {
@@ -152,7 +153,7 @@ struct FolderMoveSheet: View {
         } catch where error is CancellationError || Task.isCancelled {
             // Dialog geschlossen – nichts zu tun.
         } catch {
-            print("⚠️ [\(account.displayName)] Ordnerliste für Verschieben: \(error.localizedDescription)")
+            Log.view.error("⚠️ [\(account.displayName, privacy: .private)] Ordnerliste für Verschieben: \(error.localizedDescription, privacy: .public)")
             if tree == nil { loadError = error.localizedDescription }
         }
     }

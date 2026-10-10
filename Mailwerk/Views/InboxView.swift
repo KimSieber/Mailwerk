@@ -27,10 +27,12 @@
 //  Mailansicht in MessageDetailView, Ordnerleiste in FolderSidebarView.
 //
 //  Abhängigkeiten: InboxViewModel, MessageStore, MailActionService,
-//  FolderCatalog, NetworkMonitor, MessageDetailView, ComposeView, Dialogs.
+//  FolderCatalog, NetworkMonitor, MessageDetailView, ComposeView, Dialogs,
+//  Log.
 //
 
 import SwiftUI
+import os
 
 /// Hauptansicht mit der Nachrichtenliste.
 struct InboxView: View {
@@ -839,7 +841,7 @@ private struct MessageDetailLoader: View {
             #if DEBUG
             let millis = Int(Date().timeIntervalSince(started) * 1000)
             let bytes = (loaded.textBody?.utf8.count ?? 0) + (loaded.htmlBody?.utf8.count ?? 0)
-            print("⏱ Mail geöffnet: \(millis) ms, Mailtext \(bytes / 1024) KB")
+            Log.view.debug("⏱ Mail geöffnet: \(millis) ms, Mailtext \(bytes / 1024) KB")
             #endif
         } else {
             isMissing = true

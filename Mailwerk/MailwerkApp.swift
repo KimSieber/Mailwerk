@@ -16,11 +16,12 @@
 //  Abgrenzung: Wurzelansicht → ContentView.
 //
 //  Abhängigkeiten: SwiftUI, SwiftData, AttachmentManager (Aufräumen),
-//  MessageStore (Starthinweis), AppObjects, Dialogs.
+//  MessageStore (Starthinweis), AppObjects, Dialogs, Log.
 //
 
 import SwiftUI
 import SwiftData
+import os
 
 @main
 struct MailwerkApp: App {
@@ -105,10 +106,10 @@ struct MailwerkApp: App {
         for (name, configuration) in candidates {
             do {
                 let container = try ModelContainer(for: schema, configurations: configuration)
-                print("🗂️ Filterlisten-Speicher: \(name)")
+                Log.spam.info("🗂️ Filterlisten-Speicher: \(name, privacy: .public)")
                 return container
             } catch {
-                print("⚠️ Filterlisten-Speicher \(name) nicht verfügbar: \(error.localizedDescription)")
+                Log.spam.error("⚠️ Filterlisten-Speicher \(name, privacy: .public) nicht verfügbar: \(error.localizedDescription, privacy: .public)")
             }
         }
 

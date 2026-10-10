@@ -24,11 +24,13 @@
 //
 //  Abhängigkeiten: SwiftMail (SMTP/IMAP), MailServerFactory (TLS-Vorgaben
 //  für SMTP), MailSession (IMAP-Verbindung und Zugangsdaten), AccountStore,
-//  MessageStore (Cache-Markierung), FlagState (Keyword `$Forwarded`).
+//  MessageStore (Cache-Markierung), FlagState (Keyword `$Forwarded`),
+//  Log.
 //
 
 import Foundation
 import SwiftMail
+import os
 
 /// Ein Anhang, der mitgesendet wird.
 struct OutgoingAttachment: Equatable {
@@ -235,7 +237,7 @@ enum MailSendService {
 
         // 1. Versand – Fehler brechen hier ab
         try await submit(email, account: account, password: password)
-        print("✉️ [\(account.displayName)] Nachricht versendet: \(email.messageID?.description ?? "-")")
+        Log.send.info("✉️ [\(account.displayName, privacy: .private)] Nachricht versendet: \(email.messageID?.description ?? "-", privacy: .private)")
 
         // 2. + 3. Nacharbeiten – Fehler werden zu Warnungen
         var report = SendReport()
@@ -406,7 +408,7 @@ enum MailSendService {
         return try await MailSession.withIMAP(credentials) { imap in
             let folder = try await sentFolderPath(imap)
             try await imap.append(email: copy, to: folder, flags: [SwiftMail.Flag.seen])
-            print("📤 [\(credentials.account.displayName)] Kopie abgelegt in \(folder)")
+            Log.send.info("📤 [\(credentials.account.displayName, privacy: .private)] Kopie abgelegt in \(folder, privacy: .public)")
             return folder
         }
     }

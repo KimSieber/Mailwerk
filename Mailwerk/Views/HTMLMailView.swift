@@ -30,11 +30,12 @@
 //  Abgrenzung: Aufbau der Mailansicht → MessageDetailView; Zitat in der
 //  Antwort → ComposeView; Einordnung von Links → MailLinkAction.
 //
-//  Abhängigkeiten: SwiftUI, WebKit, MailLinkAction.
+//  Abhängigkeiten: SwiftUI, WebKit, MailLinkAction, Log.
 //
 
 import SwiftUI
 import WebKit
+import os
 
 #if os(macOS)
 /// HTML-Inhalt einer Mail (macOS).
@@ -220,7 +221,7 @@ extension HTMLMailView {
             guard html != loadedHTML else { return }
             loadedHTML = html
             #if DEBUG
-            print("⏱ HTML geladen: \(html.utf8.count / 1024) KB")
+            Log.view.debug("⏱ HTML geladen: \(html.utf8.count / 1024) KB")
             #endif
             HTMLMailView.loadHTML(html, in: webView)
         }
@@ -252,7 +253,7 @@ extension HTMLMailView {
                 case .compose(let link):
                     parent.onMailto?(link)
                 case .ignore:
-                    print("🔗 Link ignoriert: \(url.scheme ?? "?")")
+                    Log.view.info("🔗 Link ignoriert: \(url.scheme ?? "?", privacy: .public)")
                 }
                 return .cancel
             }

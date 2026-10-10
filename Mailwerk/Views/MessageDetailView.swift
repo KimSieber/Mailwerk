@@ -24,12 +24,13 @@
 //  (Mail als HTML, geladene Anhänge) liegen dafür schon beim Öffnen bereit.
 //
 //  Abhängigkeiten: SwiftUI, QuickLook, MessageActions, SpamFilterService,
-//  AttachmentManager, MessageStore, MailPrintFormatter, Dialogs.
+//  AttachmentManager, MessageStore, MailPrintFormatter, Dialogs, Log.
 //
 
 import SwiftUI
 import QuickLook
 import WebKit
+import os
 
 /// Ansicht einer einzelnen Mail.
 struct MessageDetailView: View {
@@ -413,7 +414,7 @@ struct MessageDetailView: View {
         do {
             mailFileURL = try MailPrintFormatter.writeTemporaryFile(for: message, attachments: attachments)
         } catch {
-            print("⚠️ Mail als Datei zum Teilen nicht geschrieben: \(error.localizedDescription)")
+            Log.view.error("⚠️ Mail als Datei zum Teilen nicht geschrieben: \(error.localizedDescription, privacy: .public)")
         }
 
         guard isUnread else { return }
@@ -422,7 +423,7 @@ struct MessageDetailView: View {
             isUnread = false
             onChange?()
         } catch {
-            print("⚠️ Gelesen-Markierung fehlgeschlagen: \(error.localizedDescription)")
+            Log.actions.error("⚠️ Gelesen-Markierung fehlgeschlagen: \(error.localizedDescription, privacy: .public)")
         }
     }
 

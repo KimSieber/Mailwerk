@@ -33,11 +33,12 @@
 //  Abhängigkeiten: AccountStore, SpamSettings, SpamFilterService,
 //  MailFetchService, MailSession (Zugangsdaten), MessageActions,
 //  MessageStore, NetworkMonitor, SyncWindow, FetchCoordinator,
-//  FolderKey, MailFolder.
+//  FolderKey, MailFolder, Log.
 //
 
 import Foundation
 import Observation
+import os
 
 /// Zustand und Abläufe der Nachrichtenliste.
 @Observable
@@ -202,7 +203,10 @@ final class InboxViewModel {
         let millis = Int(Date().timeIntervalSince(startedAt) * 1000)
         cacheLoadCount += 1
         let textBytes = messages.reduce(0) { $0 + ($1.preview?.utf8.count ?? 0) }
-        print("⏱ Liste aus Cache #\(cacheLoadCount): \(messages.count) Mails, \(millis) ms, Vorschautexte \(textBytes / 1024) KB, Ansichtsabfragen seither: \(viewQueryCount)")
+        let loadNumber = cacheLoadCount
+        let count = messages.count
+        let queries = viewQueryCount
+        Log.view.debug("⏱ Liste aus Cache #\(loadNumber): \(count) Mails, \(millis) ms, Vorschautexte \(textBytes / 1024) KB, Ansichtsabfragen seither: \(queries)")
         viewQueryCount = 0
     }
     #endif
@@ -322,7 +326,7 @@ final class InboxViewModel {
                 case .noOlder:
                     exhaustedFolders.insert(key)
                 case .loaded(let count, let failed, _, let hasMore):
-                    print("📬 [\(target.account.displayName)/\(target.folder)] \(count) ältere Nachrichten geladen, \(failed) fehlgeschlagen")
+                    Log.fetch.info("📬 [\(target.account.displayName, privacy: .private)/\(target.folder, privacy: .public)] \(count) ältere Nachrichten geladen, \(failed) fehlgeschlagen")
                     if failed > 0 {
                         // Fensterbeginn ist stehen geblieben; erneutes Tippen
                         // versucht denselben Zeitraum noch einmal.
@@ -359,7 +363,7 @@ final class InboxViewModel {
     private func classify(_ error: Error, context: String) -> String? {
         if MailFetchService.isConnectionError(error) || !network.isOnline {
             connectionFailed = true
-            print("📴 \(context): keine Verbindung (\(error.localizedDescription))")
+            Log.fetch.info("📴 \(context, privacy: .private): keine Verbindung (\(error.localizedDescription, privacy: .public))")
             return nil
         }
         return "\(context): \(error.localizedDescription)"
@@ -387,7 +391,7 @@ final class InboxViewModel {
             let created = try await spamFilter.createSpamFolder(
                 pending.proposal, for: pending.account
             )
-            print("📁 [\(pending.account.displayName)] Spam-Ordner \(created) angelegt")
+            Log.spam.info("📁 [\(pending.account.displayName, privacy: .private)] Spam-Ordner \(created, privacy: .public) angelegt")
         } catch {
             alert = AlertItem(
                 title: "Spam-Ordner nicht angelegt",
@@ -490,13 +494,13 @@ final class InboxViewModel {
         operation: @escaping @MainActor () async -> Void
     ) async {
         if fetches.isScheduled(request) {
-            print("🔁 Abruf \(label) läuft bereits – angeschlossen")
+            Log.fetch.info("🔁 Abruf \(label, privacy: .public) läuft bereits – angeschlossen")
         } else if fetches.isBusy {
-            print("⏳ Abruf \(label) wartet auf laufenden Abruf")
+            Log.fetch.info("⏳ Abruf \(label, privacy: .public) wartet auf laufenden Abruf")
         }
         let outcome = await fetches.run(request, operation: operation)
         if outcome == .superseded {
-            print("⏭ Abruf \(label) übersprungen – neuerer Ordner gewählt")
+            Log.fetch.info("⏭ Abruf \(label, privacy: .public) übersprungen – neuerer Ordner gewählt")
         }
     }
 
@@ -516,7 +520,7 @@ final class InboxViewModel {
         guard network.isOnline else {
             connectionFailed = true
             loadFromCache()
-            print("📴 Refresh übersprungen: kein Netz")
+            Log.fetch.info("📴 Refresh übersprungen: kein Netz")
             return
         }
 
@@ -524,7 +528,8 @@ final class InboxViewModel {
         defer { isLoading = false }
         connectionFailed = false
 
-        print("🔄 Refresh gestartet für \(accountStore.accounts.count) Konten")
+        let accountCount = accountStore.accounts.count
+        Log.fetch.info("🔄 Refresh gestartet für \(accountCount) Konten")
 
         var errors: [String] = []
         var processed: Set<UUID> = []
@@ -535,7 +540,7 @@ final class InboxViewModel {
 
             if !network.isOnline {
                 connectionFailed = true
-                print("📴 Refresh abgebrochen: Netz verloren")
+                Log.fetch.info("📴 Refresh abgebrochen: Netz verloren")
                 break
             }
         }
@@ -543,7 +548,8 @@ final class InboxViewModel {
         if !errors.isEmpty {
             alert = AlertItem(title: "Fehler beim Abrufen", message: errors.joined(separator: "\n"))
         }
-        print("🔄 Refresh fertig. Fehler: \(errors.count), Nachrichten gesamt: \(messages.count)")
+        let total = messages.count
+        Log.fetch.info("🔄 Refresh fertig. Fehler: \(errors.count), Nachrichten gesamt: \(total)")
     }
 
     /// Ruft ein Postfach ab: Spamfilter, Posteingang, Spam-Ordner.
@@ -558,12 +564,12 @@ final class InboxViewModel {
     ///   werden still vermerkt und erscheinen hier nicht).
     @MainActor
     private func refreshAccount(_ account: MailAccount) async -> [String] {
-        print("🔄 Starte Abruf: \(account.displayName) (ID: \(account.id.uuidString))")
+        Log.fetch.info("🔄 Starte Abruf: \(account.displayName, privacy: .private) (ID: \(account.id.uuidString, privacy: .public))")
         let credentials: MailCredentials
         do {
             credentials = try accountStore.credentials(for: account)
         } catch {
-            print("❌ \(account.displayName): \(error.localizedDescription)")
+            Log.fetch.error("❌ \(account.displayName, privacy: .private): \(error.localizedDescription, privacy: .public)")
             return [classify(error, context: account.displayName)].compactMap { $0 }
         }
 
@@ -575,7 +581,7 @@ final class InboxViewModel {
         do {
             try await MailFetchService.refreshAndCache(credentials)
         } catch {
-            print("❌ \(account.displayName): \(error.localizedDescription)")
+            Log.fetch.error("❌ \(account.displayName, privacy: .private): \(error.localizedDescription, privacy: .public)")
             if let message = classify(error, context: account.displayName) {
                 errors.append(message)
             }
@@ -583,7 +589,7 @@ final class InboxViewModel {
         }
 
         await refreshSpamFolder(of: account.id, credentials: credentials)
-        print("✅ \(account.displayName): Abruf abgeschlossen")
+        Log.fetch.info("✅ \(account.displayName, privacy: .private): Abruf abgeschlossen")
         return errors
     }
 
@@ -616,7 +622,7 @@ final class InboxViewModel {
             }
             return nil
         } catch {
-            print("⚠️ \(account.displayName): Spamfilter fehlgeschlagen: \(error.localizedDescription)")
+            Log.spam.error("⚠️ \(account.displayName, privacy: .private): Spamfilter fehlgeschlagen: \(error.localizedDescription, privacy: .public)")
             return classify(error, context: "\(account.displayName): Spamfilter")
         }
     }
@@ -638,9 +644,9 @@ final class InboxViewModel {
               let spamFolder = account.spamFolder, !spamFolder.isEmpty else { return }
         do {
             try await MailFetchService.refreshAndCache(credentials, folder: spamFolder)
-            print("📬 [\(account.displayName)] Spam-Ordner \(spamFolder) abgerufen")
+            Log.fetch.info("📬 [\(account.displayName, privacy: .private)] Spam-Ordner \(spamFolder, privacy: .public) abgerufen")
         } catch {
-            print("⚠️ [\(account.displayName)] Spam-Abruf fehlgeschlagen: \(error.localizedDescription)")
+            Log.fetch.error("⚠️ [\(account.displayName, privacy: .private)] Spam-Abruf fehlgeschlagen: \(error.localizedDescription, privacy: .public)")
         }
     }
 

@@ -23,11 +23,12 @@
 //  Zugangsdaten), AccountStore, FilterListRepository, SpamFilterPlanner,
 //  SpamFolderResolver, SpamHeaderParser, MailActionService (Ordnerliste,
 //  Ordner anlegen), MessageStore (Cache nachziehen), SyncWindow (Zeitraum),
-//  MailFolder (Posteingang).
+//  MailFolder (Posteingang), Log.
 //
 
 import Foundation
 import SwiftMail
+import os
 
 /// Spamfilter und Spam-Aktionen.
 @MainActor
@@ -113,7 +114,7 @@ final class SpamFilterService {
             case .found(let folder):
                 spamFolder = folder
             case .missing(let proposal):
-                print("🚧 [\(account.displayName)] Kein Spam-Ordner gefunden, Vorschlag: \(proposal)")
+                Log.spam.info("🚧 [\(account.displayName, privacy: .private)] Kein Spam-Ordner gefunden, Vorschlag: \(proposal, privacy: .public)")
                 return .needsSpamFolder(proposal: proposal)
             }
             accountStore.setSpamFolder(spamFolder, for: account.id)
@@ -130,7 +131,7 @@ final class SpamFilterService {
             // `all` liefert ESEARCH, `ordered` eine einfache SEARCH-Antwort.
             let matches = searchResult.all ?? UIDSet(searchResult.ordered ?? [])
             let uids = matches.toArray()
-            print("🛡️ [\(account.displayName)] \(uids.count) ungeprüfte Mails seit \(sinceDate)")
+            Log.spam.info("🛡️ [\(account.displayName, privacy: .private)] \(uids.count) ungeprüfte Mails seit \(sinceDate, privacy: .public)")
 
             guard !uids.isEmpty else { return .completed }
 
@@ -150,7 +151,7 @@ final class SpamFilterService {
             // 5. Ausführen – Keywords zuerst, dann verschieben
             try await apply(plan, on: server, account: account, spamFolder: spamFolder)
 
-            print("🛡️ [\(account.displayName)] Fertig: \(plan.checked.count) geprüft, \(plan.moveToSpam.count) nach \(spamFolder), \(plan.keep.count) behalten")
+            Log.spam.info("🛡️ [\(account.displayName, privacy: .private)] Fertig: \(plan.checked.count) geprüft, \(plan.moveToSpam.count) nach \(spamFolder, privacy: .public), \(plan.keep.count) behalten")
             return .completed
         }
     }
@@ -413,7 +414,7 @@ final class SpamFilterService {
         } else {
             MessageStore.shared.deleteMessage(id: message.id)
         }
-        print("🛡️ [\(account.displayName)] Mail UID \(message.uid) nach \(folder) verschoben")
+        Log.spam.info("🛡️ [\(account.displayName, privacy: .private)] Mail UID \(message.uid) nach \(folder, privacy: .public) verschoben")
         return true
     }
 

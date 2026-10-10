@@ -23,11 +23,12 @@
 //  MessageStore.
 //
 //  Abhängigkeiten: NSUbiquitousKeyValueStore, KeychainService,
-//  MessageStore (Cache beim Entfernen leeren), MailAccount.
+//  MessageStore (Cache beim Entfernen leeren), MailAccount, Log.
 //
 
 import Foundation
 import Observation
+import os
 
 /// Postfächer und Standard-Postfach, synchronisiert über iCloud.
 @Observable
@@ -102,7 +103,7 @@ final class AccountStore {
         saveAccounts()
 
         let removed = MessageStore.shared.deleteAccount(accountID: account.id)
-        print("🗑️ [\(account.displayName)] Postfach entfernt, \(removed) Mails aus dem Cache gelöscht")
+        Log.store.info("🗑️ [\(account.displayName, privacy: .private)] Postfach entfernt, \(removed) Mails aus dem Cache gelöscht")
 
         if defaultAccountID == account.id {
             setDefaultAccount(nil)
@@ -196,7 +197,7 @@ final class AccountStore {
             do {
                 accounts = try JSONDecoder().decode([MailAccount].self, from: data)
             } catch {
-                print("⚠️ Kontoliste nicht lesbar, wird gesichert: \(error)")
+                Log.store.error("⚠️ Kontoliste nicht lesbar, wird gesichert: \(String(describing: error), privacy: .public)")
                 preserveUnreadable(data)
             }
         }
@@ -231,7 +232,7 @@ final class AccountStore {
             store.set(data, forKey: Self.accountsKey)
             store.synchronize()
         } catch {
-            print("⚠️ Kontoliste nicht gespeichert: \(error)")
+            Log.store.error("⚠️ Kontoliste nicht gespeichert: \(String(describing: error), privacy: .public)")
         }
     }
 }

@@ -36,12 +36,14 @@
 //  Abhängigkeiten: SwiftMail (IMAP), MailSession (Verbindung),
 //  MessageStore (Cache), ServerReconciliation (Abgleichslogik),
 //  SyncStatePlanner (Sync-Zustand), SyncWindow (Zeitfenster),
-//  MessageContentPlan (zu ladende Teile), FlagState (Flags), MailFolder.
+//  MessageContentPlan (zu ladende Teile), FlagState (Flags), MailFolder,
+//  Log.
 //
 
 import Foundation
 import SwiftMail
 import NIOIMAPCore
+import os
 
 /// Abruf von Mails und Abgleich des lokalen Caches.
 enum MailFetchService {
@@ -113,7 +115,7 @@ enum MailFetchService {
                 serverUIDNext: serverUIDNext
             )
             if decision == .reset {
-                print("♻️ [\(account.displayName)/\(folder)] UIDVALIDITY geändert → Ordner-Cache wird neu aufgebaut")
+                Log.fetch.info("♻️ [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] UIDVALIDITY geändert → Ordner-Cache wird neu aufgebaut")
                 MessageStore.shared.deleteFolder(accountID: account.id, folder: folder)
             }
 
@@ -125,7 +127,7 @@ enum MailFetchService {
                 calendar: SyncWindow.calendar
             )
 
-            print("📬 [\(account.displayName)/\(folder)] SEARCH ergab \(uids.count) UIDs (seit \(sinceDate))")
+            Log.fetch.info("📬 [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] SEARCH ergab \(uids.count) UIDs (seit \(sinceDate, privacy: .public))")
 
             // Gekennzeichnete Mails des Posteingangs, auch ältere. Die Menge
             // ist klein, die Antwort bleibt weit unter den Puffergrenzen.
@@ -139,12 +141,12 @@ enum MailFetchService {
                 let known = Set(uids.map(\.value))
                 let older = flagged.filter { !known.contains($0.value) }
                 uids += older
-                print("📬 [\(account.displayName)/\(folder)] Gekennzeichnet: \(flagged.count), davon älter: \(older.count)")
+                Log.fetch.info("📬 [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] Gekennzeichnet: \(flagged.count), davon älter: \(older.count)")
             }
 
             // 3. Gefundene Mails speichern
             if uids.isEmpty {
-                print("📬 [\(account.displayName)/\(folder)] Keine UIDs im Zeitraum")
+                Log.fetch.info("📬 [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] Keine UIDs im Zeitraum")
             } else {
                 try await cacheMessages(uids: uids, server: server, account: account, folder: folder)
             }
@@ -168,7 +170,7 @@ enum MailFetchService {
                         server: server, account: account, folder: folder
                     )
                     failed = result.failed
-                    print("🆕 [\(account.displayName)/\(folder)] Neuankünfte: \(result.saved) geladen, \(result.failed) fehlgeschlagen, \(arrivals.deferredCount) zurückgestellt")
+                    Log.fetch.info("🆕 [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] Neuankünfte: \(result.saved) geladen, \(result.failed) fehlgeschlagen, \(arrivals.deferredCount) zurückgestellt")
                 }
                 // Fehlt eine Neuankunft, bleibt UIDNEXT stehen → nächster Abruf versucht sie erneut.
                 nextUIDNext = SyncStatePlanner.uidNextAfterLoading(
@@ -245,9 +247,9 @@ enum MailFetchService {
 
         let fetchMillis = Int(fetchDone.timeIntervalSince(started) * 1000)
         let totalMillis = Int(Date().timeIntervalSince(started) * 1000)
-        print("""
-            🔁 [\(account.displayName)/\(folder)] Abgleich: \(state.all.count) Mails im Ordner, \
-            \(state.forwarded?.count ?? 0) mit \(FlagState.forwardedKeyword), \
+        Log.fetch.info("""
+            🔁 [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] Abgleich: \(state.all.count) Mails im Ordner, \
+            \(state.forwarded?.count ?? 0) mit \(FlagState.forwardedKeyword, privacy: .public), \
             \(plan.removedIDs.count) entfernt, \(plan.flagUpdates.count) Flags geändert \
             (Abfrage \(fetchMillis) ms, gesamt \(totalMillis) ms)
             """)
@@ -293,7 +295,7 @@ enum MailFetchService {
             guard try await hasMessages(
                 on: server, before: start, messageCount: messageCount, calendar: searchCalendar
             ) else {
-                print("📬 [\(account.displayName)/\(folder)] Keine älteren Nachrichten")
+                Log.fetch.info("📬 [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] Keine älteren Nachrichten")
                 return .noOlder
             }
 
@@ -306,7 +308,7 @@ enum MailFetchService {
                     sortCriteria: [.descending(.date)],
                     calendar: searchCalendar
                 )
-                print("📬 [\(account.displayName)/\(folder)] Zeitraum ab \(block.since): \(uids.count) UIDs")
+                Log.fetch.info("📬 [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] Zeitraum ab \(block.since, privacy: .public): \(uids.count) UIDs")
                 if !uids.isEmpty {
                     let result = try await cacheMessages(
                         uids: uids, server: server, account: account, folder: folder
@@ -434,7 +436,7 @@ enum MailFetchService {
         let needsHeaders = MessageStore.shared.messageIDsNeedingHeaders(
             forAccount: account.id, folder: folder
         )
-        print("📬 [\(account.displayName)] Davon bereits im Cache: \(alreadyCached.count)")
+        Log.fetch.info("📬 [\(account.displayName, privacy: .private)] Davon bereits im Cache: \(alreadyCached.count)")
 
         // Header für alle gefundenen UIDs holen (schlank + References),
         // in Paketen, damit keine einzelne Antwort zu groß wird.
@@ -447,7 +449,7 @@ enum MailFetchService {
                 headerFields: extraHeaderFields
             )
         }
-        print("📬 [\(account.displayName)] fetchMessageInfosBulk lieferte \(infos.count) Infos")
+        Log.fetch.info("📬 [\(account.displayName, privacy: .private)] fetchMessageInfosBulk lieferte \(infos.count) Infos")
 
         var savedCount = 0
         var failedCount = 0
@@ -496,7 +498,7 @@ enum MailFetchService {
                     server: server, account: account, folder: folder
                 )
             } catch {
-                print("⚠️ Mail \(msgID) fehlgeschlagen, Ordner wird neu ausgewählt: \(error.localizedDescription)")
+                Log.fetch.error("⚠️ Mail \(msgID, privacy: .public) fehlgeschlagen, Ordner wird neu ausgewählt: \(error.localizedDescription, privacy: .public)")
                 _ = try await server.selectMailbox(folder)
                 do {
                     stored = try await storeNewMessage(
@@ -506,7 +508,7 @@ enum MailFetchService {
                 } catch {
                     // Auch nach neuer Auswahl nicht ladbar: überspringen,
                     // ein späterer Abruf versucht sie erneut.
-                    print("⚠️ Mail \(msgID) übersprungen: \(error.localizedDescription)")
+                    Log.fetch.error("⚠️ Mail \(msgID, privacy: .public) übersprungen: \(error.localizedDescription, privacy: .public)")
                     stored = false
                 }
             }
@@ -517,7 +519,7 @@ enum MailFetchService {
             }
         }
 
-        print("📬 [\(account.displayName)] Fertig: \(savedCount) neu gespeichert, \(failedCount) fehlgeschlagen, \(alreadyCached.count) aus Cache, \(headersBackfilled) Header nachgefüllt, \(skippedCount) übersprungen (keine UID)")
+        Log.fetch.info("📬 [\(account.displayName, privacy: .private)] Fertig: \(savedCount) neu gespeichert, \(failedCount) fehlgeschlagen, \(alreadyCached.count) aus Cache, \(headersBackfilled) Header nachgefüllt, \(skippedCount) übersprungen (keine UID)")
 
         return CacheResult(saved: savedCount, failed: failedCount)
     }
@@ -608,7 +610,7 @@ enum MailFetchService {
                         messageInfo: info, part: attachment
                     )
                 } catch {
-                    print("⚠️ Anhang \(attachment.section) von Mail \(msgID) nicht geladen, nur Eintrag gespeichert: \(error.localizedDescription)")
+                    Log.fetch.error("⚠️ Anhang \(attachment.section.description, privacy: .public) von Mail \(msgID, privacy: .public) nicht geladen, nur Eintrag gespeichert: \(error.localizedDescription, privacy: .public)")
                 }
                 cachedAttachments.append(CachedAttachment(
                     id: "\(msgID)-\(attachment.section)",
@@ -636,11 +638,11 @@ enum MailFetchService {
         if !plan.attachments.isEmpty {
             let textKB = bodyData.values.reduce(0) { $0 + $1.count } / 1024
             let attachmentKB = cachedAttachments.reduce(0) { $0 + ($1.data?.count ?? 0) } / 1024
-            print("📎 [\(account.displayName)] Mail \(uid.value): \(plan.attachments.count) Anhänge, Größe \(totalSize / 1024) KB, geladen: Text \(textKB) KB, Anhänge \(attachmentKB) KB")
+            Log.fetch.debug("📎 [\(account.displayName, privacy: .private)] Mail \(uid.value): \(plan.attachments.count) Anhänge, Größe \(totalSize / 1024) KB, geladen: Text \(textKB) KB, Anhänge \(attachmentKB) KB")
         }
 
         guard MessageStore.shared.saveMessageWithAttachments(cached, attachments: cachedAttachments) else {
-            print("⚠️ Mail \(msgID) nicht gespeichert (Ablage zurückgerollt)")
+            Log.fetch.error("⚠️ Mail \(msgID, privacy: .public) nicht gespeichert (Ablage zurückgerollt)")
             return false
         }
         return true
