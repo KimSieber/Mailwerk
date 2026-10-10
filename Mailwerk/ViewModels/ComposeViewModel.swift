@@ -21,6 +21,7 @@
 import Foundation
 import Observation
 
+/// Zustand und Ablauf des Verfassen-Fensters.
 @Observable
 final class ComposeViewModel {
 
@@ -53,6 +54,17 @@ final class ComposeViewModel {
     var errorMessage: String?
     /// Hinweise nach erfolgreichem Versand (z. B. Kopie nicht abgelegt).
     var warnings: [String] = []
+    /// Ein Anhang der weitergeleiteten Mail ließ sich nicht laden; die
+    /// Ansicht fragt, ob ohne ihn gesendet werden soll. `nil` = kein Fehler.
+    var attachmentFailure: AttachmentFailure?
+
+    /// Nicht ladbarer Anhang der weitergeleiteten Mail samt Grund.
+    struct AttachmentFailure {
+        /// Betroffener Anhang.
+        let attachment: CachedAttachment
+        /// Fehlertext.
+        let reason: String
+    }
 
     // MARK: Bezug zur Originalmail
 
@@ -80,8 +92,9 @@ final class ComposeViewModel {
     /// eigene Adresse entfällt bei „Allen antworten“). Beim Weiterleiten
     /// werden die Anhänge der Originalmail übernommen; noch nicht geladene
     /// werden erst beim Senden nachgeladen. Ein mailto:-Link überschreibt
-    /// Empfänger, Betreff und Text. Zuletzt wird der Ausgangszustand für
-    /// die Änderungserkennung festgehalten.
+    /// Empfänger, Betreff und Text. Erst ganz am Ende wird der
+    /// Ausgangszustand für die Änderungserkennung festgehalten – einmal,
+    /// aus den fertig vorbelegten Feldern.
     ///
     /// - Parameters:
     ///   - accountStore: Quelle für Postfächer und Standard-Postfach.
@@ -122,16 +135,6 @@ final class ComposeViewModel {
         inReplyTo = prefill.inReplyTo
         references = prefill.references
 
-        // Aus der Vorbelegung bilden, nicht aus den Eigenschaften: im
-        // Initialisierer darf noch nicht aus self gelesen werden.
-        initialState = State(
-            to: prefill.to,
-            cc: prefill.cc,
-            bcc: [],
-            subject: prefill.subject,
-            attachmentCount: 0
-        )
-
         if kind == .forward, let original {
             // Anhänge der Originalmail übernehmen; fehlende Daten werden
             // erst beim Senden nachgeladen.
@@ -144,10 +147,6 @@ final class ComposeViewModel {
                     data: data
                 )
             }
-            initialState = State(
-                to: to, cc: cc, bcc: bcc,
-                subject: subject, attachmentCount: attachments.count
-            )
         }
 
         // Getippter mailto:-Link aus einer Mail: Felder vorbelegen.
@@ -162,26 +161,30 @@ final class ComposeViewModel {
                 body = NSAttributedString(string: linkBody, attributes: RichTextController.defaultAttributes)
             }
             initialBody = body
-            initialState = State(
-                to: to, cc: cc, bcc: bcc,
-                subject: subject, attachmentCount: attachments.count
-            )
         }
+
+        initialState = currentState
     }
 
     // MARK: - Änderungserkennung
 
     /// Ausgangszustand nach der Vorbelegung – dient dem Vergleich beim Abbrechen.
     private struct State: Equatable {
+        /// Empfänger.
         let to: [MailAddress]
+        /// Kopie-Empfänger.
         let cc: [MailAddress]
+        /// Blindkopie-Empfänger.
         let bcc: [MailAddress]
+        /// Betreff.
         let subject: String
+        /// Anzahl der Anhänge.
         let attachmentCount: Int
     }
 
     /// Zustand direkt nach der Vorbelegung; Grundlage von `hasContent`.
-    private var initialState: State
+    /// Der Startwert gilt nur, bis `init` ihn am Ende setzt.
+    private var initialState = State(to: [], cc: [], bcc: [], subject: "", attachmentCount: 0)
     /// Vorbelegter Text (nur aus mailto:-Links); unverändert zählt er
     /// beim Abbrechen nicht als Eingabe.
     private var initialBody = NSAttributedString()
@@ -230,6 +233,19 @@ final class ComposeViewModel {
 
     // MARK: - Anhänge
 
+    /// Verzichtet auf einen Anhang der weitergeleiteten Mail, der sich
+    /// nicht laden ließ.
+    ///
+    /// Verarbeitung: Der Anhang wird aus den nachzuladenden entfernt; ein
+    /// erneutes Senden versucht ihn nicht mehr. Bereits geladene Anhänge
+    /// bleiben.
+    ///
+    /// - Parameter attachment: Nicht ladbarer Anhang.
+    func skipAttachment(_ attachment: CachedAttachment) {
+        pendingOriginalAttachments.removeAll { $0.id == attachment.id }
+        attachmentFailure = nil
+    }
+
     /// Fügt einen eigenen Anhang hinzu.
     ///
     /// - Parameters:
@@ -257,7 +273,8 @@ final class ComposeViewModel {
     /// nach, baut dann die versandfertige Nachricht samt Bezug auf die
     /// Originalmail (Postfach, Ordner, UID) und übergibt sie dem
     /// MailSendService. Warnungen der Nacharbeiten landen in `warnings`,
-    /// Fehler in `errorMessage`.
+    /// Fehler in `errorMessage`. Lässt sich ein Anhang nicht laden, steht
+    /// er in `attachmentFailure`; gesendet wird dann nicht.
     ///
     /// - Returns: true, wenn versendet wurde und das Fenster geschlossen werden kann.
     @MainActor
@@ -328,7 +345,8 @@ final class ComposeViewModel {
     /// Verarbeitung: Holt jeden noch nicht geladenen Anhang über den
     /// AttachmentManager (im Ordner der Originalmail) und fügt ihn den
     /// mitzusendenden Anhängen hinzu. Beim ersten Fehler wird abgebrochen
-    /// und die Meldung in `errorMessage` gesetzt.
+    /// und der Anhang samt Grund in `attachmentFailure` gesetzt. Schon
+    /// geladene Anhänge bleiben, ein erneuter Versuch lädt nur den Rest.
     ///
     /// - Returns: true, wenn alle Anhänge vorliegen; false bei einem Fehler.
     @MainActor
@@ -351,7 +369,9 @@ final class ComposeViewModel {
                     pendingOriginalAttachments[index] = loaded
                 }
             } catch {
-                errorMessage = "Anhang „\(attachment.filename)“ konnte nicht geladen werden: \(error.localizedDescription)"
+                attachmentFailure = AttachmentFailure(
+                    attachment: attachment, reason: error.localizedDescription
+                )
                 return false
             }
         }

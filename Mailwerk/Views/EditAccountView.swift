@@ -2,37 +2,70 @@
 //  EditAccountView.swift
 //  Mailwerk
 //
-//  Created by Kim Sieber on 20.09.26.
+//  Zweck: Formular zum Bearbeiten eines Postfachs – Bezeichnung,
+//  Absendername, Zugangsdaten, Server, Farbe – mit Verbindungstest. Ein
+//  leeres Passwortfeld lässt das gespeicherte Passwort unverändert.
+//  Scheitert das Speichern, bleibt das Formular offen und eine Meldung
+//  erklärt den Grund.
+//
+//  Abgrenzung: Neues Postfach → AddAccountView; Speichern →
+//  AccountStore; Verbindungstest → MailConnectionTester.
+//
+//  Abhängigkeiten: SwiftUI, AccountStore, MailConnectionTester,
+//  ColorPickerGrid, Dialogs.
 //
 
 import SwiftUI
 
+/// Formular „Postfach bearbeiten“.
 struct EditAccountView: View {
     @Environment(\.dismiss) private var dismiss
+    /// Quelle für Postfächer und Passwörter.
     let accountStore: AccountStore
+    /// Bearbeitetes Postfach (Stand beim Öffnen).
     let account: MailAccount
 
     // Formularfelder, vorbelegt mit den aktuellen Werten
+    /// Bezeichnung in Mailwerk.
     @State private var displayName: String
+    /// Absendername beim Empfänger.
     @State private var senderName: String
+    /// Benutzername bzw. Adresse.
     @State private var username: String
-    @State private var password: String = ""  // leer = nicht ändern
+    /// Neues Passwort; leer = nicht ändern.
+    @State private var password: String = ""
+    /// IMAP-Server.
     @State private var imapHost: String
+    /// IMAP-Port als Text.
     @State private var imapPort: String
+    /// SMTP-Server.
     @State private var smtpHost: String
+    /// SMTP-Port als Text.
     @State private var smtpPort: String
+    /// Farbe des Postfachs; `nil` = keine.
     @State private var selectedColor: AccountColor?
-    @State private var saveError: String?
+    /// Einziger Meldungskanal der Ansicht.
+    @State private var activeAlert: AlertItem?
 
     // Verbindungstest
+    /// Verbindungstest läuft.
     @State private var isTesting = false
+    /// Ergebnis des letzten Verbindungstests.
     @State private var testResult: TestResult?
 
+    /// Ergebnis des Verbindungstests.
     enum TestResult: Equatable {
+        /// IMAP und SMTP erreichbar.
         case success
+        /// Fehlgeschlagen (mit Meldung).
         case failure(String)
     }
 
+    /// Belegt das Formular mit den Werten des Postfachs vor.
+    ///
+    /// - Parameters:
+    ///   - accountStore: Quelle für Postfächer und Passwörter.
+    ///   - account: Zu bearbeitendes Postfach.
     init(accountStore: AccountStore, account: MailAccount) {
         self.accountStore = accountStore
         self.account = account
@@ -46,12 +79,14 @@ struct EditAccountView: View {
         _selectedColor = State(initialValue: AccountColor.from(hex: account.colorHex))
     }
 
+    /// Pflichtfelder gefüllt und Ports als Zahl lesbar.
     private var isValid: Bool {
         !displayName.isEmpty && !username.isEmpty
             && !imapHost.isEmpty && !smtpHost.isEmpty
             && Int(imapPort) != nil && Int(smtpPort) != nil
     }
 
+    /// Formular mit Konto, Servern, Farbe und Verbindungstest.
     var body: some View {
         NavigationStack {
             Form {
@@ -122,23 +157,18 @@ struct EditAccountView: View {
                         .disabled(!isValid)
                 }
             }
-            .alert(
-                "Speichern fehlgeschlagen",
-                isPresented: Binding(
-                    get: { saveError != nil },
-                    set: { if !$0 { saveError = nil } }
-                )
-            ) {
-                Button("OK") { saveError = nil }
-            } message: {
-                Text(saveError ?? "")
-            }
         }
+        .alertItem($activeAlert)
         .macSheetFrame(.form)
     }
 
     // MARK: - Aktionen
 
+    /// Speichert die Änderungen und schließt das Formular.
+    ///
+    /// Verarbeitung: Ungültige Ports fallen auf die Standardwerte zurück
+    /// (die Eingabe ist durch `isValid` geprüft). Scheitert das Speichern
+    /// (z. B. Schlüsselbund), bleibt das Formular offen.
     private func save() {
         var updated = account
         updated.displayName = displayName
@@ -157,11 +187,15 @@ struct EditAccountView: View {
             )
             dismiss()
         } catch {
-            // Formular bleibt offen, damit keine Eingaben verloren gehen
-            saveError = error.localizedDescription
+            activeAlert = .failure("Speichern fehlgeschlagen", error)
         }
     }
 
+    /// Prüft IMAP und SMTP mit den eingegebenen Werten.
+    ///
+    /// Verarbeitung: Ohne neues Passwort wird das gespeicherte gelesen; ein
+    /// Fehler des Schlüsselbunds wird benannt, statt als „kein Passwort“
+    /// zu erscheinen. Das Ergebnis steht in `testResult`.
     @MainActor
     private func testConnection() async {
         guard let imapPortInt = Int(imapPort),

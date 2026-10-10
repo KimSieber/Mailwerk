@@ -20,7 +20,7 @@
 //  Voraussetzung auf dem Mac: In der App-Sandbox muss „Printing“
 //  freigegeben sein (Signing & Capabilities → App Sandbox → Hardware).
 //
-//  Abgrenzung: Anzeige einer Mail → HTMLMailView; Teilen → MailShareSheet.
+//  Abgrenzung: Anzeige einer Mail → HTMLMailView; Teilen → MessageDetailView (`ShareLink`).
 //
 //  Abhängigkeiten: WebKit.
 //

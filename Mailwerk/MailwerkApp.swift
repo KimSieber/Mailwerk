@@ -16,7 +16,7 @@
 //  Abgrenzung: Wurzelansicht → ContentView.
 //
 //  Abhängigkeiten: SwiftUI, SwiftData, AttachmentManager (Aufräumen),
-//  MessageStore (Starthinweis), AppObjects.
+//  MessageStore (Starthinweis), AppObjects, Dialogs.
 //
 
 import SwiftUI
@@ -34,7 +34,7 @@ struct MailwerkApp: App {
     private let objects: AppObjects
 
     /// Hinweis des Mail-Speichers vom Start; `nil` = keiner anzuzeigen.
-    @State private var storeNotice: StoreStartupNotice?
+    @State private var storeNotice: AlertItem?
 
     /// Richtet Speicher und Objekte einmalig beim Start ein.
     ///
@@ -59,20 +59,11 @@ struct MailwerkApp: App {
             ContentView(objects: objects)
             .task {
                 // Einmalig abholen; der Speicher liefert ihn nur einmal.
-                storeNotice = MessageStore.shared.consumeStartupNotice()
+                if let notice = MessageStore.shared.consumeStartupNotice() {
+                    storeNotice = AlertItem(title: notice.title, message: notice.message)
+                }
             }
-            .alert(
-                storeNotice?.title ?? "",
-                isPresented: Binding(
-                    get: { storeNotice != nil },
-                    set: { if !$0 { storeNotice = nil } }
-                ),
-                presenting: storeNotice
-            ) { _ in
-                Button("OK") { storeNotice = nil }
-            } message: { notice in
-                Text(notice.message)
-            }
+            .alertItem($storeNotice)
         }
         .modelContainer(modelContainer)
     }

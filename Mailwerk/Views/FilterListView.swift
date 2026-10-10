@@ -2,28 +2,44 @@
 //  FilterListView.swift
 //  Mailwerk
 //
-//  Pflege einer der beiden Filterlisten. Einträge lassen sich einzeln
-//  löschen und mehrere auf einmal hinzufügen – getrennt durch Komma,
-//  Semikolon, Zeilenumbruch oder Leerzeichen.
+//  Zweck: Pflege einer der beiden Filterlisten. Einträge lassen sich
+//  einzeln löschen und mehrere auf einmal hinzufügen – getrennt durch
+//  Komma, Semikolon, Zeilenumbruch oder Leerzeichen.
 //
 //  Die Ansicht lädt beim Öffnen und erneut, sobald der iCloud-Abgleich
 //  Änderungen von einem anderen Gerät übernommen hat. So bleibt eine
 //  geöffnete Liste aktuell, ohne dass man sie schließen muss.
 //
+//  Abgrenzung: Speicherung und Abgleich → FilterListRepository; Zerlegen
+//  der Eingabe → FilterListInput; Export → FilterListExporter.
+//
+//  Abhängigkeiten: SwiftUI, FilterListRepository, FilterListInput,
+//  FilterListExporter, FilterListCloudEvents, Dialogs.
+//
 
 import SwiftUI
 
+/// Pflege der White- bzw. Blacklist.
 struct FilterListView: View {
+    /// Gepflegte Liste.
     let list: FilterList
+    /// Speicher der Filterlisten.
     let repository: any FilterListRepository
 
+    /// Einträge dieser Liste.
     @State private var entries: [FilterEntryItem] = []
+    /// Eingabe für neue Einträge.
     @State private var input = ""
+    /// Ergebnis des letzten Hinzufügens.
     @State private var statusMessage: String?
-    @State private var errorMessage: String?
+    /// Einziger Meldungskanal der Ansicht.
+    @State private var activeAlert: AlertItem?
+    /// Hinzufügen läuft.
     @State private var isWorking = false
+    /// Textdatei der Liste für das Teilen-Menü; `nil` bei leerer Liste.
     @State private var exportURL: URL?
 
+    /// Eingabe, Ergebnis und Einträge; Teilen in der Symbolleiste.
     var body: some View {
         List {
             Section {
@@ -88,27 +104,25 @@ struct FilterListView: View {
         .onReceive(FilterListCloudEvents.remoteChangesImported) {
             Task { await reload() }
         }
-        .alert(
-            "Listenpflege fehlgeschlagen",
-            isPresented: Binding(
-                get: { errorMessage != nil },
-                set: { if !$0 { errorMessage = nil } }
-            )
-        ) {
-            Button("OK") { errorMessage = nil }
-        } message: {
-            Text(errorMessage ?? "")
-        }
+        .alertItem($activeAlert)
     }
 
     // MARK: - Aktionen
 
+    /// Meldet einen Fehler der Listenpflege.
+    ///
+    /// - Parameter error: Aufgetretener Fehler.
+    private func report(_ error: Error) {
+        activeAlert = .failure("Listenpflege fehlgeschlagen", error)
+    }
+
+    /// Lädt die Einträge dieser Liste und erneuert die Exportdatei.
     private func reload() async {
         do {
             entries = try await repository.entries().filter { $0.list == list }
             updateExportFile()
         } catch {
-            errorMessage = error.localizedDescription
+            report(error)
         }
     }
 
@@ -128,6 +142,12 @@ struct FilterListView: View {
         }
     }
 
+    /// Fügt die eingegebenen Einträge hinzu.
+    ///
+    /// Verarbeitung: Einträge, die schon auf der anderen Liste stehen,
+    /// werden gesammelt und im Ergebnis benannt; ein anderer Fehler bricht
+    /// ab und erscheint als Meldung. Die Eingabe wird nur geleert, wenn
+    /// alles übernommen wurde.
     private func addEntries() async {
         isWorking = true
         defer { isWorking = false }
@@ -143,7 +163,7 @@ struct FilterListView: View {
             } catch FilterListError.alreadyOnOtherList {
                 conflicts.append(entry.value)
             } catch {
-                errorMessage = error.localizedDescription
+                report(error)
                 break
             }
         }
@@ -155,6 +175,9 @@ struct FilterListView: View {
         await reload()
     }
 
+    /// Löscht die gewählten Einträge.
+    ///
+    /// - Parameter offsets: Positionen in `entries`.
     private func delete(at offsets: IndexSet) {
         let ids = offsets.map { entries[$0].id }
         Task {
@@ -162,13 +185,19 @@ struct FilterListView: View {
                 for id in ids { try await repository.remove(id) }
                 await reload()
             } catch {
-                errorMessage = error.localizedDescription
+                report(error)
             }
         }
     }
 
     /// Fasst zusammen, was beim Hinzufügen passiert ist. Abgelehnte Einträge
     /// werden benannt, damit klar ist, was noch zu tun ist.
+    ///
+    /// - Parameters:
+    ///   - added: Anzahl übernommener Einträge.
+    ///   - invalid: Nicht verwertbare Angaben.
+    ///   - conflicts: Angaben, die schon auf der anderen Liste stehen.
+    /// - Returns: Zusammenfassung für die Anzeige.
     private func summary(added: Int, invalid: [String], conflicts: [String]) -> String {
         var parts: [String] = []
         if added > 0 {

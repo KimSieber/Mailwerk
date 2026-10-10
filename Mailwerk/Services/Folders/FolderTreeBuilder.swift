@@ -2,8 +2,8 @@
 //  FolderTreeBuilder.swift
 //  Mailwerk
 //
-//  Baut aus der flachen Ordnerliste eines Postfachs den Ordnerbaum für
-//  die Seitenleiste.
+//  Zweck: Baut aus der flachen Ordnerliste eines Postfachs den Ordnerbaum
+//  für die Seitenleiste.
 //
 //  1. Namespace-Präfix entfernen: Legt ein Server alle Ordner unter
 //     „INBOX.“ ab, stehen sie in der Anzeige auf derselben Ebene wie der
@@ -19,18 +19,22 @@
 //     bestimmt `SpamFolderResolver`, damit Filter und Anzeige übereinstimmen.
 //  4. Sortieren: oberste Ebene nach Rolle, sonst alphabetisch.
 //
-//  v0.1.8a: Namen werden für die Anzeige aus modified UTF-7 dekodiert
+//  Namen werden für die Anzeige aus modified UTF-7 dekodiert
 //  (`MailboxNameCodec`). Pfade (`FolderNode.id`) bleiben in Server-Form.
 //
 //  Reine Logik, deshalb `nonisolated` und ohne IMAP-Zugriff.
 //
+//  Abgrenzung: Ordnerliste vom Server → MailActionService; Anzeige →
+//  FolderSidebarView; Spam-Ordner → SpamFolderResolver.
+//
+//  Abhängigkeiten: MailFolder, FolderListing, FolderNode, FolderRole,
+//  MailboxNameCodec, SpamFolderResolver.
+//
 
 import Foundation
 
+/// Ordnerbaum aus der flachen Ordnerliste.
 nonisolated enum FolderTreeBuilder {
-
-    /// Pfad des Posteingangs laut RFC 3501; Groß-/Kleinschreibung egal.
-    static let inboxPath = "INBOX"
 
     /// Gebräuchliche Namen je Rolle (kleingeschrieben, letztes Segment).
     /// Spam fehlt bewusst: den bestimmt `SpamFolderResolver`.
@@ -43,12 +47,19 @@ nonisolated enum FolderTreeBuilder {
                     "papierkorb", "gelöschte elemente", "gelöschte objekte"])
     ]
 
+    /// Baut den Ordnerbaum.
+    ///
+    /// Verarbeitung: Rollen bestimmen, jeden Ordner entlang seiner
+    /// Pfadsegmente einhängen, einfrieren, gleichlautende Namen auflösen
+    /// und die oberste Ebene nach Rolle sortieren.
+    ///
     /// - Parameters:
     ///   - folders: vollständige Ordnerliste des Kontos, INBOX eingeschlossen.
     ///   - namespacePrefix: Präfix des persönlichen Namespace laut Server
     ///     (etwa „INBOX.“), `nil` oder leer, wenn keins gemeldet wurde –
     ///     bei manitu leer.
     ///   - configuredSpamFolder: für das Konto gemerkter Spam-Ordner.
+    /// - Returns: Knoten der obersten Ebene.
     static func build(
         folders: [MailFolder],
         namespacePrefix: String?,
@@ -80,6 +91,11 @@ nonisolated enum FolderTreeBuilder {
     }
 
     /// Baum aus einer gespeicherten oder frisch geladenen Ordnerliste.
+    ///
+    /// - Parameters:
+    ///   - listing: Ordnerliste mit Namespace-Präfix.
+    ///   - configuredSpamFolder: für das Konto gemerkter Spam-Ordner.
+    /// - Returns: Knoten der obersten Ebene.
     static func build(listing: FolderListing, configuredSpamFolder: String?) -> [FolderNode] {
         build(
             folders: listing.folders,
@@ -90,6 +106,17 @@ nonisolated enum FolderTreeBuilder {
 
     // MARK: - Rollen
 
+    /// Ordnet jedem Ordner seine Rolle zu.
+    ///
+    /// Verarbeitung: Posteingang, dann SPECIAL-USE, dann Spam-Ordner wie im
+    /// Filter, zuletzt gebräuchliche Namen auf der obersten Ebene für noch
+    /// freie Rollen (bei mehreren Treffern der alphabetisch erste Pfad).
+    ///
+    /// - Parameters:
+    ///   - folders: vollständige Ordnerliste.
+    ///   - namespacePrefix: Präfix des persönlichen Namespace.
+    ///   - configuredSpamFolder: gemerkter Spam-Ordner.
+    /// - Returns: Rolle je Ordnerpfad; fehlende Einträge sind gewöhnliche Ordner.
     private static func assignRoles(
         folders: [MailFolder],
         namespacePrefix: String?,
@@ -139,13 +166,22 @@ nonisolated enum FolderTreeBuilder {
 
     // MARK: - Pfade
 
+    /// Prüft, ob ein Pfad der Posteingang ist.
+    ///
+    /// - Parameter path: IMAP-Pfad.
+    /// - Returns: `true` für den Posteingang.
     private static func isInbox(_ path: String) -> Bool {
-        path.caseInsensitiveCompare(inboxPath) == .orderedSame
+        MailFolder.isInbox(path)
     }
 
     /// Pfadsegmente ohne Namespace-Präfix, noch in Server-Form (kodiert) –
     /// so passen sie zur Pfad-Rekonstruktion in `ancestorPath`.
     /// INBOX selbst ist immer ein einzelnes Segment auf oberster Ebene.
+    ///
+    /// - Parameters:
+    ///   - folder: Ordner.
+    ///   - namespacePrefix: Präfix des persönlichen Namespace.
+    /// - Returns: Segmente; leer, wenn nach dem Präfix nichts übrig bleibt.
     private static func displaySegments(
         of folder: MailFolder,
         namespacePrefix: String?
@@ -164,6 +200,11 @@ nonisolated enum FolderTreeBuilder {
 
     /// Letztes Segment, dekodiert – für den Abgleich mit gebräuchlichen
     /// Namen wie „entwürfe“, die der Server kodiert meldet.
+    ///
+    /// - Parameters:
+    ///   - folder: Ordner.
+    ///   - namespacePrefix: Präfix des persönlichen Namespace.
+    /// - Returns: Lesbarer Name des letzten Segments.
     private static func lastSegment(of folder: MailFolder, namespacePrefix: String?) -> String {
         MailboxNameCodec.displayName(
             displaySegments(of: folder, namespacePrefix: namespacePrefix).last ?? folder.id
@@ -172,9 +213,14 @@ nonisolated enum FolderTreeBuilder {
 
     /// Präfixvergleich; der INBOX-Anteil ist laut RFC 3501 nicht
     /// Groß-/Kleinschreibung-relevant, der Rest schon.
+    ///
+    /// - Parameters:
+    ///   - path: IMAP-Pfad.
+    ///   - prefix: Namespace-Präfix.
+    /// - Returns: `true`, wenn `path` mit `prefix` beginnt.
     private static func hasPrefix(_ path: String, _ prefix: String) -> Bool {
         if path.hasPrefix(prefix) { return true }
-        let inboxLength = inboxPath.count
+        let inboxLength = MailFolder.inboxPath.count
         guard prefix.count > inboxLength, path.count >= prefix.count,
               isInbox(String(prefix.prefix(inboxLength))),
               isInbox(String(path.prefix(inboxLength)))
@@ -183,6 +229,12 @@ nonisolated enum FolderTreeBuilder {
     }
 
     /// Vollständiger Pfad einer Zwischenebene, rekonstruiert aus dem Ordner.
+    ///
+    /// - Parameters:
+    ///   - folder: Ordner, dessen Vorfahr gesucht ist.
+    ///   - segments: Segmente des Ordners ohne Namespace-Präfix.
+    ///   - depth: Tiefe des Vorfahren (1 = oberste Ebene).
+    /// - Returns: Server-Pfad des Vorfahren.
     private static func ancestorPath(
         of folder: MailFolder,
         segments: [String],
@@ -199,17 +251,30 @@ nonisolated enum FolderTreeBuilder {
     /// Veränderliche Hilfsstruktur für den Aufbau; wird am Ende zu
     /// unveränderlichen `FolderNode`s eingefroren.
     private final class Draft {
+        /// Server-Pfad.
         let id: String
+        /// Anzeigename.
         var name: String
+        /// Rolle des Ordners.
         var role: FolderRole = .regular
+        /// `false` für ergänzte Zwischenebenen und `\Noselect`-Container.
         var isSelectable = false
+        /// Unterordner, nach Segment (bzw. `inboxKey`).
         var children: [String: Draft] = [:]
 
+        /// Legt einen Knoten an.
+        ///
+        /// - Parameters:
+        ///   - id: Server-Pfad.
+        ///   - name: Anzeigename.
         init(id: String, name: String) {
             self.id = id
             self.name = name
         }
 
+        /// Friert den Knoten samt Unterordnern ein.
+        ///
+        /// - Returns: Unveränderlicher Knoten, Unterordner alphabetisch.
         func freeze() -> FolderNode {
             FolderNode(
                 id: id,
@@ -228,6 +293,12 @@ nonisolated enum FolderTreeBuilder {
 
     /// Ordner, die ohne Namespace-Präfix unter INBOX liegen (etwa bei
     /// Dovecot „INBOX/Projekte“), sind echte Unterordner des Posteingangs.
+    ///
+    /// - Parameters:
+    ///   - folder: Ordner.
+    ///   - segments: Segmente des Ordners ohne Namespace-Präfix.
+    ///   - namespacePrefix: Präfix des persönlichen Namespace.
+    /// - Returns: `true` für den Posteingang und seine Unterordner.
     private static func isNestedUnderInbox(
         _ folder: MailFolder,
         segments: [String],
@@ -241,6 +312,18 @@ nonisolated enum FolderTreeBuilder {
         return true
     }
 
+    /// Hängt einen Ordner entlang seiner Segmente in den Baum ein.
+    ///
+    /// Verarbeitung: Fehlende Zwischenebenen entstehen als nicht wählbare
+    /// Knoten; der letzte Knoten erhält Rolle, Wählbarkeit und ggf. den
+    /// vereinheitlichten Rollennamen.
+    ///
+    /// - Parameters:
+    ///   - folder: Ordner.
+    ///   - segments: Segmente ohne Namespace-Präfix.
+    ///   - underInbox: `true` = erste Ebene ist der Posteingang.
+    ///   - root: Wurzel des Baums.
+    ///   - role: Rolle des Ordners.
     private static func insert(
         _ folder: MailFolder,
         segments: [String],
@@ -278,6 +361,9 @@ nonisolated enum FolderTreeBuilder {
     /// Wenn ein vereinheitlichter Rollenname auf derselben Ebene einem
     /// gewöhnlichen Ordner gleicht, behalten beide ihren Servernamen.
     /// Das vermeidet zwei identische Einträge in der Liste.
+    ///
+    /// - Parameter nodes: Knoten einer Ebene.
+    /// - Returns: Knoten mit eindeutigen Namen.
     private static func resolveNameCollisions(_ nodes: [FolderNode]) -> [FolderNode] {
         // Alle Anzeigenamen auf dieser Ebene zählen.
         var counts: [String: Int] = [:]
@@ -311,11 +397,23 @@ nonisolated enum FolderTreeBuilder {
 
     // MARK: - Sortierung
 
+    /// Alphabetisch nach Anzeigename, bei Gleichheit nach Pfad.
+    ///
+    /// - Parameters:
+    ///   - lhs: Erster Knoten.
+    ///   - rhs: Zweiter Knoten.
+    /// - Returns: `true`, wenn `lhs` vor `rhs` steht.
     private static func alphabetical(_ lhs: FolderNode, _ rhs: FolderNode) -> Bool {
         let order = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
         return order == .orderedSame ? lhs.id < rhs.id : order == .orderedAscending
     }
 
+    /// Oberste Ebene: nach Rolle, innerhalb einer Rolle alphabetisch.
+    ///
+    /// - Parameters:
+    ///   - lhs: Erster Knoten.
+    ///   - rhs: Zweiter Knoten.
+    /// - Returns: `true`, wenn `lhs` vor `rhs` steht.
     private static func topLevelOrder(_ lhs: FolderNode, _ rhs: FolderNode) -> Bool {
         lhs.role == rhs.role ? alphabetical(lhs, rhs) : lhs.role < rhs.role
     }

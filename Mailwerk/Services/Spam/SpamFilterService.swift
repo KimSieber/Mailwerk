@@ -5,7 +5,7 @@
 //  Zweck: Führt den Spamfilter eines Postfachs aus und setzt die
 //  Spam-Aktionen an einzelnen Mails um.
 //
-//  Filterlauf: ungeprüfte Mails der letzten 30 Tage im Posteingang suchen,
+//  Filterlauf: ungeprüfte Mails des Standardfensters im Posteingang suchen,
 //  Absender und Spam-Header lesen, entscheiden, Keywords setzen und
 //  erkannten Spam in den Spam-Ordner desselben Postfachs verschieben.
 //  Die Reihenfolge ist Absicht: erst die Keywords, dann das Verschieben.
@@ -22,7 +22,8 @@
 //  Abhängigkeiten: SwiftMail (IMAP), MailSession (Verbindung und
 //  Zugangsdaten), AccountStore, FilterListRepository, SpamFilterPlanner,
 //  SpamFolderResolver, SpamHeaderParser, MailActionService (Ordnerliste,
-//  Ordner anlegen), MessageStore (Cache nachziehen).
+//  Ordner anlegen), MessageStore (Cache nachziehen), SyncWindow (Zeitraum),
+//  MailFolder (Posteingang).
 //
 
 import Foundation
@@ -34,22 +35,12 @@ final class SpamFilterService {
 
     // MARK: - Ergebnistypen
 
-    /// Zahlen eines abgeschlossenen Filterlaufs.
-    struct RunSummary: Equatable {
-        /// Spam-Ordner des Postfachs.
-        let folder: String
-        /// Anzahl geprüfter Mails.
-        let checked: Int
-        /// Anzahl in den Spam-Ordner verschobener Mails.
-        let movedToSpam: Int
-        /// Anzahl im Posteingang behaltener Mails.
-        let keptInInbox: Int
-    }
-
-    /// Ergebnis eines Filterlaufs.
+    /// Ergebnis eines Filterlaufs. Die Zahlen des Laufs stehen nur im
+    /// Protokoll; die Oberfläche zeigt das Ergebnis über die neu geladene
+    /// Liste.
     enum Outcome: Equatable {
         /// Lauf abgeschlossen.
-        case completed(RunSummary)
+        case completed
         /// Das Postfach hat keinen Spam-Ordner. Der Vorschlag muss dem
         /// Nutzer vorgelegt werden – angelegt wird nur nach Bestätigung.
         case needsSpamFolder(proposal: String)
@@ -98,7 +89,8 @@ final class SpamFilterService {
     ///
     /// Verarbeitung:
     /// 1. Spam-Ordner bestimmen; fehlt er, endet der Lauf mit einem Vorschlag.
-    /// 2. Ungeprüfte Mails der letzten 30 Tage suchen (ohne `$MailwerkChecked`).
+    /// 2. Ungeprüfte Mails des Standardfensters (`SyncWindow`) suchen
+    ///    (ohne `$MailwerkChecked`).
     /// 3. Absender und Spam-Header holen – ohne die Mails als gelesen zu markieren.
     /// 4. Mit `SpamFilterPlanner` entscheiden.
     /// 5. Keywords setzen, dann Spam verschieben und den Cache nachziehen.
@@ -107,7 +99,7 @@ final class SpamFilterService {
     ///   - account: Postfach.
     ///   - scoreLimit: Ab diesem Score rettet auch ein Whitelist-Eintrag eine
     ///     Mail nicht mehr.
-    /// - Returns: Zahlen des Laufs oder den Vorschlag für einen Spam-Ordner.
+    /// - Returns: Abgeschlossen oder der Vorschlag für einen Spam-Ordner.
     /// - Throws: `MailCredentialError`, Fehler der Filterlisten oder IMAP-Fehler.
     @discardableResult
     func run(for account: MailAccount, scoreLimit: Double) async throws -> Outcome {
@@ -116,36 +108,31 @@ final class SpamFilterService {
 
         return try await MailSession.withIMAP(credentials) { server -> Outcome in
             // 1. Spam-Ordner des Postfachs bestimmen
-            let resolution = try await resolveSpamFolder(for: account, on: server)
-            guard case .found(let spamFolder) = resolution else {
-                guard case .missing(let proposal) = resolution else {
-                    return .needsSpamFolder(proposal: SpamFolderResolver.proposedName)
-                }
+            let spamFolder: String
+            switch try await resolveSpamFolder(for: account, on: server) {
+            case .found(let folder):
+                spamFolder = folder
+            case .missing(let proposal):
                 print("🚧 [\(account.displayName)] Kein Spam-Ordner gefunden, Vorschlag: \(proposal)")
                 return .needsSpamFolder(proposal: proposal)
             }
             accountStore.setSpamFolder(spamFolder, for: account.id)
 
-            // 2. Ungeprüfte Mails der letzten 30 Tage suchen
-            _ = try await server.selectMailbox(MailFetchService.inboxFolder)
-            let sinceDate = Calendar.current.date(
-                byAdding: .day, value: -MailFetchService.syncDays, to: Date()
-            )!
+            // 2. Ungeprüfte Mails des Standardfensters suchen
+            _ = try await server.selectMailbox(MailFolder.inboxPath)
+            let sinceDate = SyncWindow.standardStart()
             // Ohne Sortierung: Die Reihenfolge spielt keine Rolle, der Plan
             // sortiert ohnehin. Das spart die SORT-Erweiterung des Servers.
             let searchResult: ExtendedSearchResult<SwiftMail.UID> = try await server.extendedSearch(
-                criteria: [.unkeyword(SpamKeyword.checked), .since(sinceDate)]
+                criteria: [.unkeyword(SpamKeyword.checked), .since(sinceDate)],
+                calendar: SyncWindow.calendar
             )
             // `all` liefert ESEARCH, `ordered` eine einfache SEARCH-Antwort.
             let matches = searchResult.all ?? UIDSet(searchResult.ordered ?? [])
             let uids = matches.toArray()
             print("🛡️ [\(account.displayName)] \(uids.count) ungeprüfte Mails seit \(sinceDate)")
 
-            guard !uids.isEmpty else {
-                return .completed(
-                    RunSummary(folder: spamFolder, checked: 0, movedToSpam: 0, keptInInbox: 0)
-                )
-            }
+            guard !uids.isEmpty else { return .completed }
 
             // 3. Absender und Spam-Header holen – PEEK, die Mails bleiben ungelesen
             let infos = try await server.fetchMessageInfosBulk(
@@ -163,14 +150,8 @@ final class SpamFilterService {
             // 5. Ausführen – Keywords zuerst, dann verschieben
             try await apply(plan, on: server, account: account, spamFolder: spamFolder)
 
-            let summary = RunSummary(
-                folder: spamFolder,
-                checked: plan.checked.count,
-                movedToSpam: plan.moveToSpam.count,
-                keptInInbox: plan.keep.count
-            )
-            print("🛡️ [\(account.displayName)] Fertig: \(summary.checked) geprüft, \(summary.movedToSpam) nach \(spamFolder), \(summary.keptInInbox) behalten")
-            return .completed(summary)
+            print("🛡️ [\(account.displayName)] Fertig: \(plan.checked.count) geprüft, \(plan.moveToSpam.count) nach \(spamFolder), \(plan.keep.count) behalten")
+            return .completed
         }
     }
 
@@ -271,7 +252,7 @@ final class SpamFilterService {
 
             guard message.folder == spamFolder else { return false }
             return try await move(
-                message, to: MailFetchService.inboxFolder, on: server, account: account
+                message, to: MailFolder.inboxPath, on: server, account: account
             )
         }
     }
@@ -369,7 +350,7 @@ final class SpamFilterService {
 
         for uid in movedUIDs {
             let cachedID = CachedMessage.makeID(
-                accountID: account.id, folder: MailFetchService.inboxFolder, uid: uid
+                accountID: account.id, folder: MailFolder.inboxPath, uid: uid
             )
             if let newUID = destinations[uid] {
                 MessageStore.shared.relocateMessage(

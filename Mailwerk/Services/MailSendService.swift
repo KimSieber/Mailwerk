@@ -24,7 +24,7 @@
 //
 //  Abhängigkeiten: SwiftMail (SMTP/IMAP), MailServerFactory (TLS-Vorgaben
 //  für SMTP), MailSession (IMAP-Verbindung und Zugangsdaten), AccountStore,
-//  MessageStore (Cache-Markierung).
+//  MessageStore (Cache-Markierung), FlagState (Keyword `$Forwarded`).
 //
 
 import Foundation
@@ -123,18 +123,26 @@ struct SendReport: Equatable {
     var warnings: [String] = []
 }
 
+/// Versand einer Nachricht samt Gesendet-Kopie und Markierung des Originals.
 enum MailSendService {
 
     // MARK: - Fehler
 
     /// Fehler, bei denen die Nachricht nicht (sicher) versendet wurde.
     enum SendError: LocalizedError, Equatable {
+        /// Die Absenderadresse (Benutzername des Postfachs) ist ungültig.
         case invalidSender(String)
+        /// Kein Empfänger angegeben.
         case noRecipients
+        /// Eine Empfängeradresse ist ungültig.
         case invalidRecipient(String)
+        /// Die Nachricht überschreitet das Größenlimit des Servers.
         case messageTooLarge(size: Int, limit: Int)
+        /// Der Server hat die Nachricht endgültig abgelehnt.
         case rejected(String)
+        /// Abbruch an einer Stelle, an der die Nachricht schon raus sein kann.
         case uncertain(String)
+        /// Versand gescheitert; ein erneuter Versuch ist gefahrlos.
         case failed(String)
 
         /// Liefert die deutsche Meldung für den Nutzer.
@@ -174,6 +182,7 @@ enum MailSendService {
 
     /// Fehler der Nacharbeiten nach dem Versand; werden zu Warnungen.
     private enum PostSendError: LocalizedError {
+        /// Kein Gesendet-Ordner auf dem Server.
         case sentFolderNotFound
 
         /// Liefert die deutsche Meldung für den Nutzer.
@@ -303,9 +312,14 @@ enum MailSendService {
     ///
     /// Verarbeitung: Verbindet verschlüsselt, meldet sich an und prüft vorab
     /// das Größenlimit des Servers, um eine verständliche Meldung geben zu
-    /// können. Danach wird versendet und die Verbindung in jedem Fall
-    /// geschlossen. SMTP-Fehler werden nach ihrer Wiederholbarkeit in
-    /// `rejected`, `uncertain` oder `failed` übersetzt.
+    /// können. Danach wird versendet. Die Verbindung wird an genau einer
+    /// Stelle geschlossen – nach Erfolg wie nach Fehler. Fehler übersetzt
+    /// `sendError(for:)`.
+    ///
+    /// Für die Größenprüfung baut SwiftMail die Nachricht einmal zusätzlich
+    /// zusammen. Das ist Absicht: Nur so stimmt die Größe genau (Kodierung,
+    /// Kopfzeilen, Trennlinien); eine Schätzung würde knapp unter dem Limit
+    /// falsch entscheiden. Geprüft wird nur, wenn der Server ein Limit meldet.
     ///
     /// - Parameters:
     ///   - email: Versandfertige Nachricht.
@@ -314,6 +328,7 @@ enum MailSendService {
     /// - Throws: `SendError` bei jedem Fehlschlag.
     private static func submit(_ email: Email, account: MailAccount, password: String) async throws {
         let smtp = MailServerFactory.smtpServer(for: account)
+        var failure: Error?
         do {
             try await smtp.connect()
             try await smtp.login(username: account.username, password: password)
@@ -328,24 +343,37 @@ enum MailSendService {
             }
 
             _ = try await smtp.sendEmail(email)
-            try? await smtp.disconnect()
-        } catch let error as SendError {
-            try? await smtp.disconnect()
-            throw error
-        } catch let error as SMTPSendError {
-            try? await smtp.disconnect()
-            switch error.retryDisposition {
-            case .permanent:
-                let detail = error.response.map { "\($0.code) \($0.message)" } ?? error.localizedDescription
-                throw SendError.rejected(detail)
-            case .unsafeToRetry:
-                throw SendError.uncertain(error.localizedDescription)
-            case .retryable:
-                throw SendError.failed(error.localizedDescription)
-            }
         } catch {
-            try? await smtp.disconnect()
-            throw SendError.failed(error.localizedDescription)
+            failure = error
+        }
+        try? await smtp.disconnect()
+        if let failure {
+            throw sendError(for: failure)
+        }
+    }
+
+    /// Übersetzt einen Fehler beim Versand in einen `SendError`.
+    ///
+    /// Verarbeitung: Eigene `SendError` bleiben unverändert. SMTP-Fehler
+    /// werden nach ihrer Wiederholbarkeit eingeordnet: endgültig →
+    /// `rejected`, unsicher → `uncertain`, wiederholbar → `failed`. Alles
+    /// andere (z. B. Verbindungsfehler) wird zu `failed`.
+    ///
+    /// - Parameter error: Aufgetretener Fehler.
+    /// - Returns: Fehler für den Aufrufer.
+    private static func sendError(for error: Error) -> SendError {
+        if let sendError = error as? SendError { return sendError }
+        guard let smtpError = error as? SMTPSendError else {
+            return .failed(error.localizedDescription)
+        }
+        switch smtpError.retryDisposition {
+        case .permanent:
+            let detail = smtpError.response.map { "\($0.code) \($0.message)" } ?? smtpError.localizedDescription
+            return .rejected(detail)
+        case .unsafeToRetry:
+            return .uncertain(smtpError.localizedDescription)
+        case .retryable:
+            return .failed(smtpError.localizedDescription)
         }
     }
 
@@ -432,7 +460,7 @@ enum MailSendService {
         let credentials = try accountStore.credentials(for: origin.accountID)
         let flag: SwiftMail.Flag = origin.kind == .replied
             ? .answered
-            : .custom(MailFetchService.forwardedKeyword)
+            : .custom(FlagState.forwardedKeyword)
 
         try await MailSession.withIMAP(credentials) { imap in
             _ = try await imap.selectMailbox(origin.folder)

@@ -152,44 +152,20 @@ struct InboxView: View {
         NavigationStack {
             // WICHTIG: Jeder Zweig dieser Group muss genau EIN View liefern.
             // Modifier an einer Group wirken auf jedes Kind einzeln – bei
-            // zwei Kindern erschiene z. B. die Toolbar doppelt (v0.1.7d).
+            // zwei Kindern erschiene z. B. die Toolbar doppelt.
             Group {
                 if viewModel.messages.isEmpty && viewModel.isLoading {
-                    VStack(spacing: 16) {
-                        ProgressView()
-                            .controlSize(.large)
-                        Text("Postfächer werden abgerufen …")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    InitialLoadingView()
                 } else if viewModel.messages.isEmpty {
-                    GeometryReader { geo in
-                        ScrollView {
-                            VStack(spacing: 0) {
-                                ContentUnavailableView(
-                                    viewModel.selection == .flagged
-                                        ? "Keine gekennzeichneten Nachrichten"
-                                        : "Keine Nachrichten",
-                                    systemImage: viewModel.selection == .flagged ? "flag" : "tray",
-                                    description: Text(
-                                        accountStore.accounts.isEmpty
-                                            ? "Richte zuerst ein Postfach ein."
-                                            : viewModel.selection == .flagged
-                                                ? "Kennzeichne Nachrichten, damit sie hier erscheinen."
-                                                : viewModel.selection.accountID != nil
-                                                    ? "Dieser Ordner enthält keine Nachrichten."
-                                                    : "Zieh nach unten, um abzurufen."
-                                    )
-                                )
-                                // Auch ein leerer Ordner kann ältere Mails haben
-                                // (z. B. ein Archiv ohne Eingänge der letzten 30 Tage).
-                                if viewModel.showsOlderRow && !accountStore.accounts.isEmpty {
-                                    olderRow
-                                        .padding(.horizontal)
-                                }
-                            }
-                            .frame(minHeight: geo.size.height)
+                    EmptyMailboxView(
+                        selection: viewModel.selection,
+                        hasAccounts: !accountStore.accounts.isEmpty
+                    ) {
+                        // Auch ein leerer Ordner kann ältere Mails haben
+                        // (z. B. ein Archiv ohne Eingänge im Standardfenster).
+                        if viewModel.showsOlderRow && !accountStore.accounts.isEmpty {
+                            olderRow
+                                .padding(.horizontal)
                         }
                     }
                 } else {
@@ -367,9 +343,10 @@ struct InboxView: View {
     /// Eigene Eigenschaft statt Teil von `body`, damit der Compiler den
     /// Ausdruck in vertretbarer Zeit prüfen kann.
     private var messageList: some View {
-        List {
+        let colors = accountColors
+        return List {
             ForEach(viewModel.messages) { message in
-                messageRow(for: message)
+                messageRow(for: message, colorHex: colors[message.accountID])
             }
 
             // Letzte Zeile der Liste – gehört IN die List, damit
@@ -382,15 +359,28 @@ struct InboxView: View {
         }
     }
 
+    /// Farbe je Postfach – einmal je Listenaufbau statt einer Suche je Zeile.
+    /// Postfächer ohne Farbe fehlen.
+    private var accountColors: [UUID: String] {
+        Dictionary(
+            accountStore.accounts.compactMap { account in
+                account.colorHex.map { (account.id, $0) }
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
+    }
+
     /// Eine Zeile der Liste: Link zur Mail, Wischaktionen, Sperre während
     /// einer laufenden Aktion.
     ///
     /// Verarbeitung: Der Link öffnet `MessageDetailLoader`, der die
     /// vollständige Mail erst beim Öffnen aus dem Cache lädt.
     ///
-    /// - Parameter message: Darzustellender Listeneintrag.
+    /// - Parameters:
+    ///   - message: Darzustellender Listeneintrag.
+    ///   - colorHex: Farbe des Postfachs; `nil` = kein Streifen.
     /// - Returns: Die fertige Zeile.
-    private func messageRow(for message: MessageListItem) -> some View {
+    private func messageRow(for message: MessageListItem, colorHex: String?) -> some View {
         NavigationLink {
             MessageDetailLoader(
                 messageID: message.id,
@@ -399,11 +389,7 @@ struct InboxView: View {
                 onChange: { viewModel.loadFromCache() }
             )
         } label: {
-            InboxRow(
-                message: message,
-                colorHex: accountStore.accounts
-                    .first(where: { $0.id == message.accountID })?.colorHex
-            )
+            InboxRow(message: message, colorHex: colorHex)
         }
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             Button {
@@ -570,6 +556,68 @@ private struct InboxTitle: View {
     }
 }
 
+/// Ladeanzeige, solange beim ersten Abruf noch keine Mail im Cache liegt.
+private struct InitialLoadingView: View {
+    /// Fortschrittsanzeige mit Hinweis.
+    var body: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .controlSize(.large)
+            Text("Postfächer werden abgerufen …")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Leere Liste: Hinweis passend zur Ansicht, darunter optional die Zeile
+/// „Ältere Nachrichten laden“. Scrollbar, damit Herunterziehen zum
+/// Abrufen auch bei leerer Liste funktioniert.
+private struct EmptyMailboxView<Footer: View>: View {
+    /// Gewählte Ansicht.
+    let selection: MailboxSelection
+    /// Mindestens ein Postfach ist eingerichtet.
+    let hasAccounts: Bool
+    /// Inhalt unter dem Hinweis (Zeile „Ältere Nachrichten laden“).
+    @ViewBuilder let footer: () -> Footer
+
+    /// Hinweis und Fußzeile, mindestens so hoch wie der verfügbare Platz.
+    var body: some View {
+        GeometryReader { geo in
+            ScrollView {
+                VStack(spacing: 0) {
+                    ContentUnavailableView(
+                        title,
+                        systemImage: selection == .flagged ? "flag" : "tray",
+                        description: Text(hint)
+                    )
+                    footer()
+                }
+                .frame(minHeight: geo.size.height)
+            }
+        }
+    }
+
+    /// Überschrift des Hinweises.
+    private var title: String {
+        selection == .flagged ? "Keine gekennzeichneten Nachrichten" : "Keine Nachrichten"
+    }
+
+    /// Erklärender Text: was zu tun ist bzw. warum die Liste leer ist.
+    private var hint: String {
+        guard hasAccounts else { return "Richte zuerst ein Postfach ein." }
+        switch selection {
+        case .flagged:
+            return "Kennzeichne Nachrichten, damit sie hier erscheinen."
+        case .folder:
+            return "Dieser Ordner enthält keine Nachrichten."
+        case .allInboxes:
+            return "Zieh nach unten, um abzurufen."
+        }
+    }
+}
+
 /// Bewusste Aktion am Listenende: den nächsten älteren Zeitraum laden.
 private struct OlderMessagesRow: View {
     /// Nachladen läuft.
@@ -698,15 +746,21 @@ private struct InboxRow: View {
                         Image(systemName: "flag.fill")
                             .font(.caption2)
                             .foregroundStyle(.orange)
+                            .accessibilityLabel("Gekennzeichnet")
                     }
                     if message.hasAttachments {
                         Image(systemName: "paperclip")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                            .accessibilityLabel("Mit Anhang")
                     }
-                    Text(message.date ?? Date(), format: .dateTime.weekday(.abbreviated).day().month().year().hour().minute())
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    // Ohne Datum bleibt die Stelle leer – die aktuelle Zeit
+                    // würde ein falsches Datum vortäuschen.
+                    if let date = message.date {
+                        Text(date, format: .dateTime.weekday(.abbreviated).day().month().year().hour().minute())
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Text(message.subject)

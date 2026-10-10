@@ -2,7 +2,8 @@
 //  FolderCreationPlanner.swift
 //  Mailwerk
 //
-//  Prüft den Namen eines neuen Ordners und bestimmt seinen Server-Pfad.
+//  Zweck: Prüft den Namen eines neuen Ordners und bestimmt seinen
+//  Server-Pfad.
 //  Grundlage ist eine frische Ordnerliste des Servers (`FolderListing`),
 //  abgerufen in derselben Verbindung wie das anschließende CREATE.
 //
@@ -18,19 +19,36 @@
 //
 //  Reine Logik ohne IMAP-Zugriff, deshalb `nonisolated`.
 //
+//  Abgrenzung: Ordnerliste holen und CREATE → MailActionService;
+//  Eingabe des Namens → FolderSidebarView.
+//
+//  Abhängigkeiten: FolderListing, MailFolder, MailboxNameCodec,
+//  UserFacingError.
+//
 
 import Foundation
 
+/// Namensprüfung und Pfad für neue Ordner.
 nonisolated enum FolderCreationPlanner {
 
-    enum PlanError: LocalizedError, Equatable {
+    /// Eingabefehler beim Anlegen; die Meldung richtet sich an den Nutzer.
+    enum PlanError: UserFacingError, Equatable {
+        /// Kein Name eingegeben.
         case emptyName
+        /// Der Name enthält das Trennzeichen der Ordnerhierarchie.
         case containsDelimiter(String)
+        /// Der Name enthält `*`, `%` oder Steuerzeichen.
         case invalidCharacters
+        /// „INBOX“ auf oberster Ebene.
         case reservedName
+        /// Auf dieser Ebene gibt es den Namen schon (mit vorhandenem Namen).
         case alreadyExists(String)
+        /// Der Server erlaubt an dieser Stelle keine Unterordner.
         case subfoldersNotSupported
 
+        /// Liefert die deutsche Meldung für den Nutzer.
+        ///
+        /// - Returns: Meldungstext für die Anzeige.
         var errorDescription: String? {
             switch self {
             case .emptyName:
@@ -50,12 +68,18 @@ nonisolated enum FolderCreationPlanner {
     }
 
     /// Bestimmt den Server-Pfad des neuen Ordners.
+    ///
+    /// Verarbeitung: Name prüfen, Basis bestimmen (Elternpfad +
+    /// Trennzeichen bzw. Namespace-Präfix), gleichnamige Geschwister ohne
+    /// Groß-/Kleinschreibung ausschließen, Namen kodieren.
+    ///
     /// - Parameters:
     ///   - name: vom Nutzer eingegebener Name (lesbar, nicht kodiert).
     ///   - parentPath: Server-Pfad des übergeordneten Ordners,
     ///     `nil` für die oberste Ebene.
     ///   - listing: aktuelle Ordnerliste inklusive INBOX.
     /// - Returns: Pfad in Server-Form (kodiert), bereit für CREATE.
+    /// - Throws: `PlanError`.
     static func plan(
         name rawName: String,
         parentPath: String?,
@@ -105,17 +129,27 @@ nonisolated enum FolderCreationPlanner {
     // MARK: - Intern
 
     /// Trennzeichen des Servers; alle Ordner eines Kontos nutzen dasselbe.
+    ///
+    /// - Parameter listing: Ordnerliste.
+    /// - Returns: Trennzeichen oder `nil` bei flacher Hierarchie.
     private static func serverDelimiter(in listing: FolderListing) -> String? {
         listing.folders
             .compactMap(\.hierarchyDelimiter)
             .first { !$0.isEmpty }
     }
 
+    /// Prüft, ob ein Pfad oder Name der Posteingang ist.
+    ///
+    /// - Parameter path: Pfad oder Name.
+    /// - Returns: `true` für „INBOX“ in beliebiger Schreibweise.
     private static func isInbox(_ path: String) -> Bool {
-        path.caseInsensitiveCompare(FolderTreeBuilder.inboxPath) == .orderedSame
+        MailFolder.isInbox(path)
     }
 
     /// Platzhalter von LIST und Steuerzeichen sind im Namen nicht erlaubt.
+    ///
+    /// - Parameter scalar: Zeichen des Namens.
+    /// - Returns: `true` für ein unzulässiges Zeichen.
     private static func isForbidden(_ scalar: Unicode.Scalar) -> Bool {
         scalar == "*" || scalar == "%"
             || scalar.properties.generalCategory == .control

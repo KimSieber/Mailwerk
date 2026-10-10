@@ -6,9 +6,8 @@
 //  kennzeichnen, löschen, verschieben – jeweils auf dem Server UND im
 //  lokalen Cache, an einer Stelle.
 //
-//  Vorher stand dieselbe Folge (Server-Aktion → Cache ändern) doppelt in
-//  der Liste (Wischaktionen) und in der Mailansicht (Menü). Die Ansichten
-//  laden danach nur noch ihre Liste neu bzw. schließen sich.
+//  Liste (Wischaktionen) und Mailansicht (Menü) nutzen dieselben
+//  Funktionen und laden danach nur ihre Liste neu bzw. schließen sich.
 //
 //  Ändert sich auf dem Server nichts (Fehler), bleibt auch der Cache
 //  unverändert; der Fehler geht an den Aufrufer, der ihn anzeigt.
@@ -46,13 +45,13 @@ enum MessageActions {
     /// - Throws: `MailCredentialError` oder `MailActionService.ActionError`.
     static func setRead(_ isRead: Bool, for target: Target, accountStore: AccountStore) async throws {
         try await MailActionService.setRead(
-            uid: Int(target.uid),
+            uid: target.uid,
             isRead: isRead,
             accountID: target.accountID,
             accountStore: accountStore,
             folder: target.folder
         )
-        MessageStore.shared.updateFlags(messageID: target.id, isUnread: !isRead)
+        MessageStore.shared.updateUnread(messageID: target.id, isUnread: !isRead)
     }
 
     /// Setzt oder entfernt die Kennzeichnung einer Mail.
@@ -64,7 +63,7 @@ enum MessageActions {
     /// - Throws: `MailCredentialError` oder `MailActionService.ActionError`.
     static func setFlagged(_ isFlagged: Bool, for target: Target, accountStore: AccountStore) async throws {
         try await MailActionService.setFlagged(
-            uid: Int(target.uid),
+            uid: target.uid,
             isFlagged: isFlagged,
             accountID: target.accountID,
             accountStore: accountStore,
@@ -85,7 +84,7 @@ enum MessageActions {
     /// - Throws: `MailCredentialError` oder `MailActionService.ActionError`.
     static func delete(_ target: Target, accountStore: AccountStore) async throws {
         try await MailActionService.deleteMessage(
-            uid: Int(target.uid),
+            uid: target.uid,
             accountID: target.accountID,
             accountStore: accountStore,
             folder: target.folder
@@ -106,7 +105,7 @@ enum MessageActions {
     /// - Throws: `MailCredentialError` oder `MailActionService.ActionError`.
     static func move(_ target: Target, to path: String, accountStore: AccountStore) async throws {
         try await MailActionService.moveMessage(
-            uid: Int(target.uid),
+            uid: target.uid,
             toFolder: path,
             accountID: target.accountID,
             accountStore: accountStore,

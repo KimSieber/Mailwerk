@@ -2,8 +2,8 @@
 //  FolderMoveSheet.swift
 //  Mailwerk
 //
-//  Dialog „In Ordner verschieben“ (v0.1.8c): der Ordnerbaum des Postfachs
-//  der Mail – mit derselben Anzeige wie die Seitenleiste (`FolderLabel`,
+//  Zweck: Dialog „In Ordner verschieben“ – der Ordnerbaum des Postfachs
+//  der Mail mit derselben Anzeige wie die Seitenleiste (`FolderLabel`,
 //  `FolderTreeBuilder`), damit Ordner wiedererkennbar sind.
 //
 //  - Der gespeicherte Baum erscheint sofort, im Hintergrund wird vom
@@ -12,26 +12,41 @@
 //  - Offline bleibt der Dialog offen und meldet, dass Verschieben nicht
 //    möglich ist. Verschoben wird nur zwischen Ordnern desselben Postfachs.
 //
+//  Abgrenzung: Das Verschieben selbst → MessageActions (Aufrufer);
+//  Ordnerliste → MailActionService.
+//
+//  Abhängigkeiten: SwiftUI, MailActionService, MessageStore,
+//  FolderTreeBuilder, FolderLabel, NetworkMonitor, Dialogs.
+//
 
 import SwiftUI
 
+/// Auswahl des Zielordners beim Verschieben einer Mail.
 struct FolderMoveSheet: View {
+    /// Postfach der Mail.
     let account: MailAccount
     /// Server-Pfad des Ordners, in dem die Mail liegt.
     let currentFolder: String
+    /// Quelle für die Zugangsdaten.
     let accountStore: AccountStore
     /// Gewähltes Ziel (Server-Pfad); der Dialog schließt sich danach selbst.
     let onSelect: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
 
+    /// Ordnerbaum; `nil`, solange keiner vorliegt.
     @State private var tree: [FolderNode]?
+    /// Abruf vom Server läuft.
     @State private var isRefreshing = false
+    /// Fehlertext, wenn weder gespeicherter noch frischer Baum vorliegt.
     @State private var loadError: String?
-    @State private var showOfflineNotice = false
+    /// Einziger Meldungskanal der Ansicht.
+    @State private var activeAlert: AlertItem?
 
+    /// Netzzustand (online/offline).
     private let network = NetworkMonitor.shared
 
+    /// Ordnerbaum mit „Abbrechen“; lädt beim Erscheinen.
     var body: some View {
         NavigationStack {
             content
@@ -47,15 +62,12 @@ struct FolderMoveSheet: View {
         }
         .macSheetFrame(.list)
         .task { await load() }
-        .alert("Keine Verbindung", isPresented: $showOfflineNotice) {
-            Button("OK") {}
-        } message: {
-            Text("Verschieben ist nur mit Verbindung zum Server möglich.")
-        }
+        .alertItem($activeAlert)
     }
 
     // MARK: - Inhalt
 
+    /// Baum, Fehlerhinweis mit „Erneut versuchen“ oder Ladeanzeige.
     @ViewBuilder
     private var content: some View {
         if let tree {
@@ -76,6 +88,10 @@ struct FolderMoveSheet: View {
         }
     }
 
+    /// Zeile eines Ordners; nicht wählbare Ordner sind gesperrt.
+    ///
+    /// - Parameter entry: Ordner mit Einrücktiefe.
+    /// - Returns: Die Zeile.
     private func row(_ entry: IndentedFolder) -> some View {
         let isTarget = entry.node.isMoveTarget(from: currentFolder)
         return Button {
@@ -100,16 +116,28 @@ struct FolderMoveSheet: View {
 
     // MARK: - Aktionen
 
+    /// Übernimmt den gewählten Ordner und schließt den Dialog.
+    ///
+    /// Verarbeitung: Offline bleibt der Dialog offen, eine Meldung erklärt
+    /// den Grund.
+    ///
+    /// - Parameter node: Gewählter Ordner.
     private func select(_ node: FolderNode) {
         guard network.isOnline else {
-            showOfflineNotice = true
+            activeAlert = AlertItem(
+                title: "Keine Verbindung",
+                message: "Verschieben ist nur mit Verbindung zum Server möglich."
+            )
             return
         }
         onSelect(node.id)
         dismiss()
     }
 
-    /// Gespeicherter Baum sofort, danach Server. Fehler nur ohne Baum.
+    /// Lädt den Ordnerbaum.
+    ///
+    /// Verarbeitung: Gespeicherter Baum sofort, danach vom Server. Ein
+    /// Fehler erscheint nur, wenn es keinen Baum gibt.
     private func load() async {
         if tree == nil, let listing = MessageStore.shared.folderListing(accountID: account.id) {
             tree = FolderTreeBuilder.build(listing: listing, configuredSpamFolder: account.spamFolder)

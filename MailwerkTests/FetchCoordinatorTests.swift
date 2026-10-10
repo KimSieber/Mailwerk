@@ -208,7 +208,8 @@ struct FetchCoordinatorTests {
         #expect(FetchRequest.supersedes(folder, other))
         #expect(!FetchRequest.supersedes(folder, .inboxes))
         #expect(!FetchRequest.supersedes(.inboxes, folder))
-        #expect(!FetchRequest.supersedes(.older(targets: ["a"]), folder))
-        #expect(!FetchRequest.supersedes(folder, .older(targets: ["a"])))
+        let older = FetchRequest.older(targets: [FolderKey(accountID: account, folder: "X")])
+        #expect(!FetchRequest.supersedes(older, folder))
+        #expect(!FetchRequest.supersedes(folder, older))
     }
 }

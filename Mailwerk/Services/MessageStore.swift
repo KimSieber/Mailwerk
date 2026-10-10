@@ -42,8 +42,8 @@
 //  Darstellung liegen im MailFetchService bzw. in den ViewModels.
 //
 //  Abhängigkeiten: SQLite3 (System-Framework), CachedMessage,
-//  CachedAttachment, FolderListing, ServerReconciliation (Plan-Typ),
-//  FolderSyncState, MessageListItem.
+//  CachedAttachment, FolderListing, MailFolder (Name des Posteingangs),
+//  ServerReconciliation (Plan-Typ), FolderSyncState, MessageListItem.
 //
 
 import Foundation
@@ -425,7 +425,7 @@ final class MessageStore: @unchecked Sendable {
         setUserVersion(Self.schemaVersion)
     }
 
-    /// Stufe 1: alle Erweiterungen bis einschließlich v0.1.9a.
+    /// Stufe 1: alle Erweiterungen aus der Zeit vor `user_version`.
     ///
     /// Verarbeitung: Ergänzt fehlende Spalten, schreibt bei Bedarf die
     /// Kennungen auf das Ordner-Schema um und legt Index und Zusatz-
@@ -702,7 +702,7 @@ final class MessageStore: @unchecked Sendable {
     /// - Parameters:
     ///   - messageID: Cache-ID der Nachricht.
     ///   - isUnread: `true` = ungelesen.
-    func updateFlags(messageID: String, isUnread: Bool) {
+    func updateUnread(messageID: String, isUnread: Bool) {
         updateIntColumn("isUnread", value: isUnread, messageID: messageID)
     }
 
@@ -995,17 +995,15 @@ final class MessageStore: @unchecked Sendable {
     /// - Returns: Listeneinträge ohne Mailinhalt, absteigend nach Datum.
     func allMessages(accountIDs: [UUID], folder: String) -> [MessageListItem] {
         guard !accountIDs.isEmpty else { return [] }
-        let ph = accountIDs.map { _ in "?" }.joined(separator: ",")
         let sql = """
             SELECT \(Self.listColumns) FROM message
-            WHERE accountID IN (\(ph)) AND folder = ? ORDER BY date DESC
+            WHERE accountID IN (\(Self.placeholders(accountIDs.count))) AND folder = ?
+            ORDER BY date DESC
             """
         guard let stmt = prepare(sql) else { return [] }
         defer { sqlite3_finalize(stmt) }
-        for (i, id) in accountIDs.enumerated() {
-            bind(stmt, Int32(i + 1), id.uuidString)
-        }
-        bind(stmt, Int32(accountIDs.count + 1), folder)
+        let next = bind(stmt, accountIDs: accountIDs)
+        bind(stmt, next, folder)
         var result: [MessageListItem] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             result.append(readListItem(stmt))
@@ -1015,24 +1013,14 @@ final class MessageStore: @unchecked Sendable {
 
     /// Listeneinträge eines einzelnen Ordners eines Postfachs.
     ///
+    /// Verarbeitung: Kurzform von `allMessages` mit einem Postfach.
+    ///
     /// - Parameters:
     ///   - accountID: Postfach.
     ///   - folder: IMAP-Ordner.
     /// - Returns: Listeneinträge ohne Mailinhalt, absteigend nach Datum.
     func folderMessages(accountID: UUID, folder: String) -> [MessageListItem] {
-        let sql = """
-            SELECT \(Self.listColumns) FROM message
-            WHERE accountID = ? AND folder = ? ORDER BY date DESC
-            """
-        guard let stmt = prepare(sql) else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        bind(stmt, 1, accountID.uuidString)
-        bind(stmt, 2, folder)
-        var result: [MessageListItem] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            result.append(readListItem(stmt))
-        }
-        return result
+        allMessages(accountIDs: [accountID], folder: folder)
     }
 
     // MARK: - Stand je Ordner
@@ -1154,18 +1142,15 @@ final class MessageStore: @unchecked Sendable {
     /// - Returns: Listeneinträge ohne Mailinhalt, absteigend nach Datum.
     func flaggedInboxMessages(accountIDs: [UUID]) -> [MessageListItem] {
         guard !accountIDs.isEmpty else { return [] }
-        let ph = accountIDs.map { _ in "?" }.joined(separator: ",")
         let sql = """
             SELECT \(Self.listColumns) FROM message
-            WHERE accountID IN (\(ph)) AND folder = ? AND isFlagged = 1
+            WHERE accountID IN (\(Self.placeholders(accountIDs.count))) AND folder = ? AND isFlagged = 1
             ORDER BY date DESC
             """
         guard let stmt = prepare(sql) else { return [] }
         defer { sqlite3_finalize(stmt) }
-        for (i, id) in accountIDs.enumerated() {
-            bind(stmt, Int32(i + 1), id.uuidString)
-        }
-        bind(stmt, Int32(accountIDs.count + 1), MailFetchService.inboxFolder)
+        let next = bind(stmt, accountIDs: accountIDs)
+        bind(stmt, next, MailFolder.inboxPath)
         var result: [MessageListItem] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             result.append(readListItem(stmt))
@@ -1179,17 +1164,14 @@ final class MessageStore: @unchecked Sendable {
     /// - Returns: Anzahl.
     func flaggedInboxCount(accountIDs: [UUID]) -> Int {
         guard !accountIDs.isEmpty else { return 0 }
-        let ph = accountIDs.map { _ in "?" }.joined(separator: ",")
         let sql = """
             SELECT COUNT(*) FROM message
-            WHERE accountID IN (\(ph)) AND folder = ? AND isFlagged = 1
+            WHERE accountID IN (\(Self.placeholders(accountIDs.count))) AND folder = ? AND isFlagged = 1
             """
         guard let stmt = prepare(sql) else { return 0 }
         defer { sqlite3_finalize(stmt) }
-        for (i, id) in accountIDs.enumerated() {
-            bind(stmt, Int32(i + 1), id.uuidString)
-        }
-        bind(stmt, Int32(accountIDs.count + 1), MailFetchService.inboxFolder)
+        let next = bind(stmt, accountIDs: accountIDs)
+        bind(stmt, next, MailFolder.inboxPath)
         return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int(stmt, 0)) : 0
     }
 
@@ -1690,6 +1672,28 @@ final class MessageStore: @unchecked Sendable {
     private func bind(_ s: OpaquePointer?, _ i: Int32, _ v: String?) {
         if let v { sqlite3_bind_text(s, i, v, -1, SQLITE_TRANSIENT) }
         else { sqlite3_bind_null(s, i) }
+    }
+
+    /// Platzhalterliste für `IN (…)`.
+    ///
+    /// - Parameter count: Anzahl der Werte (mindestens 1).
+    /// - Returns: z. B. „?,?,?“ für drei Werte.
+    private static func placeholders(_ count: Int) -> String {
+        Array(repeating: "?", count: count).joined(separator: ",")
+    }
+
+    /// Bindet Postfach-IDs ab Position 1 an die Platzhalter einer
+    /// `IN (…)`-Liste.
+    ///
+    /// - Parameters:
+    ///   - s: Vorbereitetes Statement.
+    ///   - accountIDs: Postfach-IDs in Platzhalter-Reihenfolge.
+    /// - Returns: Nächste freie Platzhalter-Position.
+    private func bind(_ s: OpaquePointer?, accountIDs: [UUID]) -> Int32 {
+        for (offset, id) in accountIDs.enumerated() {
+            bind(s, Int32(offset + 1), id.uuidString)
+        }
+        return Int32(accountIDs.count + 1)
     }
 
     /// Bereitet eine Leseabfrage vor.

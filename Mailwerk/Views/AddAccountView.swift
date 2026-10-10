@@ -2,17 +2,31 @@
 //  AddAccountView.swift
 //  Mailwerk
 //
-//  Created by Kim Sieber on 18.09.26.
+//  Zweck: Formular zum Einrichten eines Postfachs – Bezeichnung,
+//  Absendername, Zugangsdaten, IMAP- und SMTP-Server – mit
+//  Verbindungstest. Speichern legt das Postfach an und das Passwort im
+//  Schlüsselbund ab; scheitert das, bleibt das Formular mit allen
+//  Eingaben offen und eine Meldung erklärt den Grund.
+//
+//  Abgrenzung: Eingabeprüfung, Verbindungstest und Aufbau des Postfachs
+//  → AddAccountViewModel; Bearbeiten → EditAccountView.
+//
+//  Abhängigkeiten: SwiftUI, AddAccountViewModel, AccountStore, Dialogs.
 //
 
 import SwiftUI
 
+/// Formular „Postfach hinzufügen“.
 struct AddAccountView: View {
     @Environment(\.dismiss) private var dismiss
+    /// Eingaben und Verbindungstest.
     @State private var viewModel = AddAccountViewModel()
-    @State private var saveError: String?
+    /// Einziger Meldungskanal der Ansicht.
+    @State private var activeAlert: AlertItem?
+    /// Quelle für Postfächer; hier wird das neue Postfach eingetragen.
     let accountStore: AccountStore
 
+    /// Formular mit Konto, IMAP, SMTP und Verbindungstest.
     var body: some View {
         NavigationStack {
             Form {
@@ -75,31 +89,24 @@ struct AddAccountView: View {
                         .disabled(!viewModel.isValid)
                 }
             }
-            .alert(
-                "Speichern fehlgeschlagen",
-                isPresented: Binding(
-                    get: { saveError != nil },
-                    set: { if !$0 { saveError = nil } }
-                )
-            ) {
-                Button("OK") { saveError = nil }
-            } message: {
-                Text(saveError ?? "")
-            }
         }
+        .alertItem($activeAlert)
         .macSheetFrame(.form)
     }
 
     // MARK: - Aktionen
 
+    /// Legt das Postfach an und schließt das Formular.
+    ///
+    /// Verarbeitung: Scheitert das Speichern (z. B. Schlüsselbund), bleibt
+    /// das Formular offen, damit keine Eingaben verloren gehen.
     private func save() {
         let account = viewModel.makeAccount()
         do {
             try accountStore.addAccount(account, password: viewModel.password)
             dismiss()
         } catch {
-            // Formular bleibt offen, damit keine Eingaben verloren gehen
-            saveError = error.localizedDescription
+            activeAlert = .failure("Speichern fehlgeschlagen", error)
         }
     }
 }

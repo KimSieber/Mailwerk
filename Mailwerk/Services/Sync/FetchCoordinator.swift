@@ -21,7 +21,8 @@
 //  Abgrenzung: Welche Abrufe es gibt und was sie tun → InboxViewModel;
 //  Abruf selbst → MailFetchService.
 //
-//  Abhängigkeiten: keine (nur Swift Concurrency).
+//  Abhängigkeiten: FolderKey (Ziele von „Ältere laden“), sonst nur Swift
+//  Concurrency.
 //
 
 import Foundation
@@ -32,8 +33,8 @@ enum FetchRequest: Hashable {
     case inboxes
     /// Ein einzelner Ordner (Antippen in der Leiste, Herunterziehen dort).
     case folder(accountID: UUID, path: String)
-    /// „Ältere laden“ für die genannten Ordner (Schlüssel Postfach|Ordner).
-    case older(targets: [String])
+    /// „Ältere laden“ für die genannten Ordner.
+    case older(targets: [FolderKey])
 
     /// Verdrängungsregel: Ein neuer Ordnerabruf verdrängt einen noch
     /// wartenden Ordnerabruf – angezeigt wird ohnehin nur der zuletzt

@@ -2,7 +2,7 @@
 //  SpamFolderResolver.swift
 //  Mailwerk
 //
-//  Findet den Spam-Ordner eines Postfachs. Jedes Postfach hat seinen
+//  Zweck: Findet den Spam-Ordner eines Postfachs. Jedes Postfach hat seinen
 //  eigenen – verschoben wird immer innerhalb desselben Kontos.
 //
 //  Reihenfolge der Prüfung:
@@ -13,9 +13,16 @@
 //
 //  Reine Logik, deshalb `nonisolated` und ohne IMAP-Zugriff.
 //
+//  Abgrenzung: Ordnerliste vom Server und Anlegen → MailActionService;
+//  Nutzung im Filter → SpamFilterService, in der Seitenleiste →
+//  FolderTreeBuilder.
+//
+//  Abhängigkeiten: MailFolder.
+//
 
 import Foundation
 
+/// Bestimmung des Spam-Ordners eines Postfachs.
 nonisolated enum SpamFolderResolver {
 
     /// Gebräuchliche Namen in absteigender Verlässlichkeit.
@@ -27,8 +34,7 @@ nonisolated enum SpamFolderResolver {
     /// Name, der beim Anlegen vorgeschlagen wird.
     static let proposedName = "Junk"
 
-    private static let inbox = "INBOX"
-
+    /// Ergebnis der Suche nach dem Spam-Ordner.
     enum Resolution: Equatable {
         /// Ordner vorhanden – vollständiger IMAP-Pfad.
         case found(String)
@@ -37,10 +43,16 @@ nonisolated enum SpamFolderResolver {
         case missing(proposal: String)
     }
 
+    /// Bestimmt den Spam-Ordner.
+    ///
+    /// Verarbeitung: Gemerkter Ordner, dann SPECIAL-USE `\Junk`, dann
+    /// gebräuchliche Namen; sonst ein Vorschlag zum Anlegen.
+    ///
     /// - Parameters:
     ///   - folders: Ordnerliste des Kontos (ohne INBOX).
     ///   - delimiter: Trennzeichen der Ordnerhierarchie, wie vom Server gemeldet.
     ///   - configured: zuvor für dieses Konto gemerkter Ordner.
+    /// - Returns: Gefundener Ordner oder Vorschlag.
     static func resolve(
         folders: [MailFolder],
         delimiter: String?,
@@ -63,6 +75,11 @@ nonisolated enum SpamFolderResolver {
     /// Der gemerkte Ordner, sofern er noch existiert. Zuerst wird exakt
     /// verglichen; IMAP-Pfade sind bis auf INBOX Groß-/Kleinschreibung-relevant,
     /// ein abweichend geschriebener Merkwert soll aber trotzdem greifen.
+    ///
+    /// - Parameters:
+    ///   - folders: Ordnerliste.
+    ///   - configured: gemerkter Pfad.
+    /// - Returns: Passender Ordner oder `nil`.
     private static func configuredMatch(
         in folders: [MailFolder],
         configured: String?
@@ -74,6 +91,11 @@ nonisolated enum SpamFolderResolver {
 
     /// Erster Treffer in der Reihenfolge der Kandidatennamen. Kommt ein Name
     /// mehrfach vor, gewinnt der Ordner auf der obersten Ebene.
+    ///
+    /// - Parameters:
+    ///   - folders: Ordnerliste.
+    ///   - delimiter: Trennzeichen laut Server.
+    /// - Returns: Passender Ordner oder `nil`.
     private static func firstNameMatch(
         in folders: [MailFolder],
         delimiter: String?
@@ -96,13 +118,18 @@ nonisolated enum SpamFolderResolver {
     /// Legt der Server seine Ordner unterhalb der INBOX ab, folgt der
     /// Vorschlag dieser Hierarchie – sonst entsteht ein Ordner, der in
     /// anderen Mail-Programmen an ungewohnter Stelle auftaucht.
+    ///
+    /// - Parameters:
+    ///   - folders: Ordnerliste.
+    ///   - delimiter: Trennzeichen laut Server.
+    /// - Returns: Vorgeschlagener Pfad.
     private static func proposal(for folders: [MailFolder], delimiter: String?) -> String {
         guard !folders.isEmpty,
               let separator = hierarchySeparator(for: folders, delimiter: delimiter)
         else {
             return proposedName
         }
-        let prefix = inbox + separator
+        let prefix = MailFolder.inboxPath + separator
         let allNested = folders.allSatisfy {
             $0.id.lowercased().hasPrefix(prefix.lowercased())
         }
@@ -112,6 +139,11 @@ nonisolated enum SpamFolderResolver {
     // MARK: - Helfer
 
     /// Trennzeichen: bevorzugt die Angabe des Servers, sonst die der Ordner.
+    ///
+    /// - Parameters:
+    ///   - folders: Ordner, deren Trennzeichen als Ersatz dienen.
+    ///   - delimiter: Trennzeichen laut Server.
+    /// - Returns: Trennzeichen oder `nil` bei flacher Hierarchie.
     private static func hierarchySeparator(
         for folders: [MailFolder],
         delimiter: String?
@@ -121,18 +153,37 @@ nonisolated enum SpamFolderResolver {
     }
 
     /// Zerlegt den Pfad. Das Trennzeichen des Ordners selbst hat Vorrang,
-    /// weil es direkt vom Server zu diesem Ordner gemeldet wurde.
+    /// weil es direkt vom Server zu diesem Ordner gemeldet wurde. Ohne
+    /// Trennzeichen ist die Hierarchie flach; der Pfad ist dann ein
+    /// einziges Segment – ein Trennzeichen wird nicht geraten.
+    ///
+    /// - Parameters:
+    ///   - folder: Ordner.
+    ///   - delimiter: Trennzeichen laut Server.
+    /// - Returns: Pfadsegmente.
     private static func segments(of folder: MailFolder, delimiter: String?) -> [String] {
-        let pathSeparator = hierarchySeparator(for: [folder], delimiter: nil)
+        guard let pathSeparator = hierarchySeparator(for: [folder], delimiter: nil)
             ?? hierarchySeparator(for: [], delimiter: delimiter)
-            ?? "."
+        else { return [folder.id] }
         return folder.id.components(separatedBy: pathSeparator)
     }
 
+    /// Letztes Pfadsegment.
+    ///
+    /// - Parameters:
+    ///   - folder: Ordner.
+    ///   - delimiter: Trennzeichen laut Server.
+    /// - Returns: Letztes Segment.
     private static func lastSegment(of folder: MailFolder, delimiter: String?) -> String {
         segments(of: folder, delimiter: delimiter).last ?? folder.id
     }
 
+    /// Tiefe in der Hierarchie (1 = oberste Ebene).
+    ///
+    /// - Parameters:
+    ///   - folder: Ordner.
+    ///   - delimiter: Trennzeichen laut Server.
+    /// - Returns: Anzahl der Segmente.
     private static func depth(of folder: MailFolder, delimiter: String?) -> Int {
         segments(of: folder, delimiter: delimiter).count
     }

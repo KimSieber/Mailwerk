@@ -35,30 +35,20 @@
 //
 //  Abhängigkeiten: SwiftMail (IMAP), MailSession (Verbindung),
 //  MessageStore (Cache), ServerReconciliation (Abgleichslogik),
-//  SyncStatePlanner (Sync-Zustand), MessageContentPlan (zu ladende Teile).
+//  SyncStatePlanner (Sync-Zustand), SyncWindow (Zeitfenster),
+//  MessageContentPlan (zu ladende Teile), FlagState (Flags), MailFolder.
 //
 
 import Foundation
 import SwiftMail
 import NIOIMAPCore
 
+/// Abruf von Mails und Abgleich des lokalen Caches.
 enum MailFetchService {
 
     /// Maximale Nachrichtengröße (RFC822.SIZE) in Bytes, bis zu der
     /// Anhänge automatisch mitgeladen werden. Darüber: erst bei Tap.
     static let autoDownloadThreshold = 5 * 1024 * 1024  // 5 MB
-
-    /// Sync-Zeitraum: nur Nachrichten der letzten 30 Tage abrufen.
-    static let syncDays = 30
-
-    /// Name des Posteingangs. IMAP schreibt genau diese Schreibweise vor.
-    /// `nonisolated`, weil die Konstante als Standardwert eines Parameters
-    /// dient – solche Ausdrücke wertet Swift außerhalb des Main-Actors aus.
-    nonisolated static let inboxFolder = "INBOX"
-
-    /// IMAP-Keyword für weitergeleitete Nachrichten (kein Systemflag, aber
-    /// von Apple Mail, Thunderbird u. a. verwendet).
-    static let forwardedKeyword = "$Forwarded"
 
     /// Zusätzlich zum ENVELOPE angeforderte Header. References ist nicht
     /// Teil des ENVELOPE, wird aber für korrektes Threading gebraucht.
@@ -107,7 +97,7 @@ enum MailFetchService {
     /// - Throws: Verbindungsfehler oder IMAP-Fehler.
     static func refreshAndCache(
         _ credentials: MailCredentials,
-        folder: String = inboxFolder
+        folder: String = MailFolder.inboxPath
     ) async throws {
         let account = credentials.account
         let outcome = try await MailSession.withIMAP(credentials) {
@@ -127,14 +117,12 @@ enum MailFetchService {
                 MessageStore.shared.deleteFolder(accountID: account.id, folder: folder)
             }
 
-            // 2. Serverseitig nur Mails der letzten 30 Tage suchen
-            let sinceDate = Calendar.current.date(
-                byAdding: .day, value: -syncDays, to: Date()
-            )!
+            // 2. Serverseitig nur Mails des Standardfensters suchen
+            let sinceDate = SyncWindow.standardStart()
             var uids: [SwiftMail.UID] = try await server.search(
                 criteria: [.since(sinceDate)],
                 sortCriteria: [.descending(.date)],
-                calendar: Calendar(identifier: .gregorian)
+                calendar: SyncWindow.calendar
             )
 
             print("📬 [\(account.displayName)/\(folder)] SEARCH ergab \(uids.count) UIDs (seit \(sinceDate))")
@@ -142,11 +130,11 @@ enum MailFetchService {
             // Gekennzeichnete Mails des Posteingangs, auch ältere. Die Menge
             // ist klein, die Antwort bleibt weit unter den Puffergrenzen.
             // Bereits gecachte Mails bekommen dabei ihre Flags abgeglichen.
-            if folder == inboxFolder {
+            if MailFolder.isInbox(folder) {
                 let flagged: [SwiftMail.UID] = try await server.search(
                     criteria: [.flagged],
                     sortCriteria: [.descending(.date)],
-                    calendar: Calendar(identifier: .gregorian)
+                    calendar: SyncWindow.calendar
                 )
                 let known = Set(uids.map(\.value))
                 let older = flagged.filter { !known.contains($0.value) }
@@ -259,7 +247,7 @@ enum MailFetchService {
         let totalMillis = Int(Date().timeIntervalSince(started) * 1000)
         print("""
             🔁 [\(account.displayName)/\(folder)] Abgleich: \(state.all.count) Mails im Ordner, \
-            \(state.forwarded?.count ?? 0) mit \(forwardedKeyword), \
+            \(state.forwarded?.count ?? 0) mit \(FlagState.forwardedKeyword), \
             \(plan.removedIDs.count) entfernt, \(plan.flagUpdates.count) Flags geändert \
             (Abfrage \(fetchMillis) ms, gesamt \(totalMillis) ms)
             """)
@@ -287,15 +275,15 @@ enum MailFetchService {
     /// - Throws: Verbindungsfehler oder IMAP-Fehler.
     static func fetchOlder(
         _ credentials: MailCredentials,
-        folder: String = inboxFolder
+        folder: String = MailFolder.inboxPath
     ) async throws -> OlderFetchResult {
         let account = credentials.account
-        let searchCalendar = Calendar(identifier: .gregorian)
+        let searchCalendar = SyncWindow.calendar
         return try await MailSession.withIMAP(credentials) { server -> OlderFetchResult in
             let selection = try await server.selectMailbox(folder)
 
             var start = MessageStore.shared.windowStart(accountID: account.id, folder: folder)
-                ?? SyncWindow.standardStart(now: Date(), days: syncDays)
+                ?? SyncWindow.standardStart()
 
             let messageCount = selection.messageCount
 
@@ -312,7 +300,7 @@ enum MailFetchService {
             var loaded = 0
             var failed = 0
             for _ in 0..<SyncWindow.maxBlocksPerLoad {
-                let block = SyncWindow.nextBlock(before: start, days: syncDays)
+                let block = SyncWindow.nextBlock(before: start)
                 let uids: [SwiftMail.UID] = try await server.search(
                     criteria: [.since(block.since), .before(block.before)],
                     sortCriteria: [.descending(.date)],
@@ -681,39 +669,6 @@ enum MailFetchService {
     }
 
     // MARK: - Helfer
-
-    /// Wertet die IMAP-Flags einer Nachricht in einem Durchlauf aus.
-    ///
-    /// Verarbeitung: Iteriert einmal über die Flags und setzt die
-    /// vier booleschen Werte. `SwiftMail.Flag` voll qualifiziert, da
-    /// NIOIMAPCore ebenfalls `Flag` definiert.
-    ///
-    /// - Parameter flags: IMAP-Flags der Nachricht.
-    private struct FlagState {
-        let isUnread: Bool
-        let isFlagged: Bool
-        let isAnswered: Bool
-        let isForwarded: Bool
-
-        init(_ flags: [SwiftMail.Flag]) {
-            var seen = false, flagged = false, answered = false, forwarded = false
-            for flag in flags {
-                switch flag {
-                case .seen:     seen = true
-                case .flagged:  flagged = true
-                case .answered: answered = true
-                case .custom(let keyword)
-                    where keyword.caseInsensitiveCompare(MailFetchService.forwardedKeyword) == .orderedSame:
-                    forwarded = true
-                default:        break
-                }
-            }
-            isUnread = !seen
-            isFlagged = flagged
-            isAnswered = answered
-            isForwarded = forwarded
-        }
-    }
 
     /// Überführt Adress- und Threading-Header aus dem MessageInfo ins
     /// Cache-Modell.

@@ -102,6 +102,10 @@ struct ComposeView: View {
                 activeAlert = AlertItem(title: "Versand fehlgeschlagen", message: message)
                 model.errorMessage = nil
             }
+            .onChange(of: model.attachmentFailure?.attachment.id) { _, id in
+                guard id != nil else { return }
+                confirmSendWithoutFailedAttachment()
+            }
             .fileImporter(
                 isPresented: $showFileImporter,
                 allowedContentTypes: [.item],
@@ -377,6 +381,25 @@ struct ComposeView: View {
             cancelLabel: "Weiter bearbeiten"
         ) {
             dismiss()
+        }
+    }
+
+    /// Fragt nach, ob ohne den nicht ladbaren Anhang gesendet werden soll.
+    ///
+    /// Verarbeitung: „Ohne Anhang senden“ verzichtet auf den Anhang und
+    /// sendet erneut; „Abbrechen“ lässt die Mail unverändert – ein späteres
+    /// Senden versucht den Anhang noch einmal.
+    private func confirmSendWithoutFailedAttachment() {
+        guard let failure = model.attachmentFailure else { return }
+        activeConfirmation = ConfirmationRequest(
+            title: "Anhang nicht geladen",
+            message: "„\(failure.attachment.filename)“ konnte nicht geladen werden: \(failure.reason)\n\nOhne diesen Anhang senden?",
+            confirmLabel: "Ohne Anhang senden",
+            isDestructive: false,
+            onCancel: { model.attachmentFailure = nil }
+        ) {
+            model.skipAttachment(failure.attachment)
+            Task { await send() }
         }
     }
 

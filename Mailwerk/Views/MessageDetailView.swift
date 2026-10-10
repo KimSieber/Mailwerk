@@ -12,18 +12,19 @@
 //
 //  Aktionen an der Mail laufen über `MessageActions` (Server und Cache
 //  gemeinsam). Meldungen und Rückfragen haben je einen Kanal
-//  (`activeAlert`, `activeConfirmation`, siehe Dialogs.swift). Vorher
-//  hingen drei Rückfragen und zwei Meldungen an derselben Ansicht und
-//  wurden aus dem Menü heraus geöffnet – eine in SwiftUI unzuverlässige
-//  Bauweise.
+//  (`activeAlert`, `activeConfirmation`, siehe Dialogs.swift).
 //
 //  Abgrenzung: Laden der Mail aus dem Cache → MessageDetailLoader;
 //  HTML-Darstellung → HTMLMailView; Verfassen → ComposeView; Ordnerwahl →
-//  FolderMoveSheet; Anhang-Zeile → AttachmentRow; Teilen → MailShareSheet;
-//  Druck → MailPrinter.
+//  FolderMoveSheet; Anhang-Zeile → AttachmentRow; Druck → MailPrinter;
+//  HTML für Druck und Teilen → MailPrintFormatter.
+//
+//  Teilen läuft über `ShareLink` im Menü – auf iPhone/iPad das
+//  Teilen-Blatt, auf dem Mac das Teilen-Untermenü des Systems. Die Dateien
+//  (Mail als HTML, geladene Anhänge) liegen dafür schon beim Öffnen bereit.
 //
 //  Abhängigkeiten: SwiftUI, QuickLook, MessageActions, SpamFilterService,
-//  AttachmentManager, MessageStore, Dialogs.
+//  AttachmentManager, MessageStore, MailPrintFormatter, Dialogs.
 //
 
 import SwiftUI
@@ -51,10 +52,11 @@ struct MessageDetailView: View {
     @State private var previewURL: URL?
     /// Temporäre Dateien der geladenen Anhänge zum Teilen, je Anhang-ID.
     @State private var shareURLs: [String: URL] = [:]
+    /// Die Mail als temporäre HTML-Datei zum Teilen; `nil`, solange sie
+    /// nicht geschrieben ist.
+    @State private var mailFileURL: URL?
     /// Anhänge, die gerade nachgeladen werden.
     @State private var downloadingIDs: Set<String> = []
-    /// Teilen-Sheet sichtbar.
-    @State private var showShareSheet = false
     /// Gelesen-Zustand (lokal nachgeführt).
     @State private var isUnread: Bool
     /// Kennzeichnung (lokal nachgeführt).
@@ -133,9 +135,6 @@ struct MessageDetailView: View {
                     original: message,
                     onSent: { onChange?() }
                 )
-            }
-            .sheet(isPresented: $showShareSheet) {
-                MailShareSheet(message: message, attachments: attachments)
             }
             .sheet(isPresented: $showFolderPicker) {
                 if let account = accountStore.accounts.first(where: { $0.id == message.accountID }) {
@@ -301,11 +300,10 @@ struct MessageDetailView: View {
             }
 
             Section {
-                Button {
-                    showShareSheet = true
-                } label: {
+                ShareLink(items: shareItems) {
                     Label("Teilen", systemImage: "square.and.arrow.up")
                 }
+                .disabled(shareItems.isEmpty)
 
                 Button {
                     printMessage()
@@ -387,6 +385,12 @@ struct MessageDetailView: View {
         }
     }
 
+    /// Dateien zum Teilen: die Mail als HTML, danach die geladenen Anhänge
+    /// in ihrer Reihenfolge.
+    private var shareItems: [URL] {
+        [mailFileURL].compactMap { $0 } + attachments.compactMap { shareURLs[$0.id] }
+    }
+
     /// `true`, wenn mindestens ein Anhang lokale Daten hat, die gelöscht
     /// werden könnten.
     private var hasLocalAttachmentData: Bool {
@@ -398,12 +402,19 @@ struct MessageDetailView: View {
     /// Lädt die Anhänge, bereitet das Teilen vor und markiert eine
     /// ungelesene Mail als gelesen.
     ///
-    /// Verarbeitung: Scheitert das Markieren, bleibt die Mail ungelesen;
-    /// eine Meldung erscheint nicht, weil der Nutzer nichts ausgelöst hat.
+    /// Verarbeitung: Lässt sich die HTML-Datei nicht schreiben, fehlt sie
+    /// beim Teilen; das wird protokolliert. Scheitert das Markieren, bleibt
+    /// die Mail ungelesen; eine Meldung erscheint nicht, weil der Nutzer
+    /// nichts ausgelöst hat.
     @MainActor
     private func prepareOnOpen() async {
         attachments = MessageStore.shared.attachments(forMessage: message.id)
         prepareShareURLs()
+        do {
+            mailFileURL = try MailPrintFormatter.writeTemporaryFile(for: message, attachments: attachments)
+        } catch {
+            print("⚠️ Mail als Datei zum Teilen nicht geschrieben: \(error.localizedDescription)")
+        }
 
         guard isUnread else { return }
         do {
@@ -559,141 +570,8 @@ struct MessageDetailView: View {
 
     /// Druckt die Mail samt Kopfdaten und Anhangliste.
     private func printMessage() {
-        let html = Self.printableHTML(for: message, attachments: attachments)
+        let html = MailPrintFormatter.html(for: message, attachments: attachments)
         MailPrinter().print(html: html)
-    }
-
-    /// Formatiertes HTML mit Kopfdaten und Anhangliste für Druck und Teilen.
-    ///
-    /// Verarbeitung: Kopfdaten und Text werden für HTML maskiert; eine
-    /// reine Textmail erscheint als vorformatierter Block. Breite Tabellen
-    /// und Bilder werden auf die Seitenbreite begrenzt.
-    ///
-    /// - Parameters:
-    ///   - message: Mail.
-    ///   - attachments: Anhänge für die Liste am Ende.
-    /// - Returns: Vollständiges HTML-Dokument.
-    static func printableHTML(for message: CachedMessage, attachments: [CachedAttachment] = []) -> String {
-        var header = "<b>Von:</b> \(Self.escaped(message.from))<br>"
-        header += "<b>An:</b> \(Self.escaped(message.to))<br>"
-        if !message.headers.ccList.isEmpty {
-            header += "<b>Kopie:</b> \(Self.escaped(message.headers.ccList.joined(separator: ", ")))<br>"
-        }
-        if let date = message.date {
-            let fmt = DateFormatter()
-            fmt.dateStyle = .full
-            fmt.timeStyle = .short
-            fmt.locale = Locale(identifier: "de_DE")
-            header += "<b>Datum:</b> \(fmt.string(from: date))<br>"
-        }
-        header += "<b>Betreff:</b> \(Self.escaped(message.subject))<br>"
-
-        let body = message.htmlBody ?? "<pre>\(Self.escaped(message.textBody ?? ""))</pre>"
-
-        return """
-            <!DOCTYPE html>
-            <html>
-            <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>
-                body {
-                    font-family: -apple-system, Helvetica, sans-serif;
-                    font-size: 12pt;
-                    color: #333;
-                    margin: 0;
-                    padding: 0;
-                    word-wrap: break-word;
-                    overflow-wrap: break-word;
-                }
-                .mail-header {
-                    border-bottom: 1px solid #ccc;
-                    padding-bottom: 8pt;
-                    margin-bottom: 12pt;
-                    font-size: 10pt;
-                    line-height: 1.6;
-                }
-                table, div, td, th, img, video, object {
-                    max-width: 100% !important;
-                    height: auto !important;
-                }
-                table[width], td[width], th[width] {
-                    width: auto !important;
-                }
-                img { display: block; }
-                pre, code {
-                    white-space: pre-wrap;
-                    word-wrap: break-word;
-                    max-width: 100%;
-                }
-            </style>
-            </head>
-            <body>
-            <div class="mail-header">\(header)</div>
-            \(body)
-            \(attachmentSection(attachments))
-            </body>
-            </html>
-            """
-    }
-
-    /// Anhangliste für Druck und Teilen.
-    ///
-    /// - Parameter attachments: Anhänge.
-    /// - Returns: HTML-Abschnitt; leer ohne Anhänge.
-    private static func attachmentSection(_ attachments: [CachedAttachment]) -> String {
-        guard !attachments.isEmpty else { return "" }
-        var rows = ""
-        for a in attachments {
-            let icon = attachmentIcon(for: a.contentType)
-            let size = formattedSize(a.sizeBytes)
-            rows += "<tr><td style=\"padding:4pt 8pt 4pt 0\">\(icon)</td>"
-            rows += "<td style=\"padding:4pt 0\">\(escaped(a.filename))</td>"
-            rows += "<td style=\"padding:4pt 0 4pt 12pt;color:#888\">\(size)</td></tr>"
-        }
-        return """
-            <div style="border-top:1px solid #ccc;margin-top:16pt;padding-top:8pt;font-size:10pt">
-            <b>Anlagen (\(attachments.count)):</b>
-            <table style="margin-top:4pt">\(rows)</table>
-            </div>
-            """
-    }
-
-    /// Symbol für einen Anhang nach seinem MIME-Typ.
-    ///
-    /// - Parameter contentType: MIME-Typ.
-    /// - Returns: Emoji für die Anhangliste.
-    private static func attachmentIcon(for contentType: String) -> String {
-        let ct = contentType.lowercased()
-        if ct.hasPrefix("image/") { return "🖼️" }
-        if ct.contains("pdf") { return "📄" }
-        if ct.contains("zip") || ct.contains("archive") || ct.contains("compressed") { return "📦" }
-        if ct.contains("text/") { return "📝" }
-        if ct.contains("audio/") { return "🎵" }
-        if ct.contains("video/") { return "🎬" }
-        return "📎"
-    }
-
-    /// Lesbare Größe (B, KB, MB).
-    ///
-    /// - Parameter bytes: Größe in Bytes.
-    /// - Returns: Größe mit Einheit.
-    private static func formattedSize(_ bytes: Int) -> String {
-        if bytes < 1024 { return "\(bytes) B" }
-        let kb = Double(bytes) / 1024
-        if kb < 1024 { return String(format: "%.0f KB", kb) }
-        let mb = kb / 1024
-        return String(format: "%.1f MB", mb)
-    }
-
-    /// Maskiert `&`, `<` und `>` für HTML.
-    ///
-    /// - Parameter text: Rohtext.
-    /// - Returns: Maskierter Text.
-    private static func escaped(_ text: String) -> String {
-        text.replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
     }
 
     // MARK: - Anlagen lokal löschen

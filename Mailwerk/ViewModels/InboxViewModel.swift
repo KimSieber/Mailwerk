@@ -25,15 +25,15 @@
 //  Messung: In Debug-Builds gibt `loadFromCache` Laufzeit, Anzahl der
 //  Mails und Menge der geladenen Vorschautexte aus (`⏱ …`), außerdem wie
 //  viele Datenbankabfragen die Ansicht seit der letzten Liste ausgelöst
-//  hat. Grundlage für die Performance-Arbeiten in v0.1.9c.
+//  hat – Grundlage für Performance-Messungen.
 //
 //  Abgrenzung: Darstellung in InboxView, Abruf im MailFetchService,
 //  Ablage im MessageStore.
 //
 //  Abhängigkeiten: AccountStore, SpamSettings, SpamFilterService,
 //  MailFetchService, MailSession (Zugangsdaten), MessageActions,
-//  MessageStore,
-//  NetworkMonitor, SyncWindow, FetchCoordinator.
+//  MessageStore, NetworkMonitor, SyncWindow, FetchCoordinator,
+//  FolderKey, MailFolder.
 //
 
 import Foundation
@@ -75,7 +75,7 @@ final class InboxViewModel {
     var olderConnectionFailed = false
     /// Ordner, für die der Server nichts Älteres mehr hat. Nur für diese
     /// Sitzung – nach einem Neustart stellt ein Tipp das erneut fest.
-    private var exhaustedFolders: Set<String> = []
+    private var exhaustedFolders: Set<FolderKey> = []
 
     /// Netzzustand (online/offline).
     private let network = NetworkMonitor.shared
@@ -174,7 +174,7 @@ final class InboxViewModel {
         switch selection {
         case .allInboxes:
             messages = MessageStore.shared.allMessages(
-                accountIDs: accountIDs, folder: MailFetchService.inboxFolder
+                accountIDs: accountIDs, folder: MailFolder.inboxPath
             )
         case .flagged:
             messages = MessageStore.shared.flaggedInboxMessages(
@@ -219,7 +219,7 @@ final class InboxViewModel {
         switch selection {
         case .allInboxes, .flagged:
             return .oldest(accounts.map {
-                MessageStore.shared.lastSync(accountID: $0.id, folder: MailFetchService.inboxFolder)
+                MessageStore.shared.lastSync(accountID: $0.id, folder: MailFolder.inboxPath)
             })
         case .folder(let accountID, let path, _):
             return .oldest([MessageStore.shared.lastSync(accountID: accountID, folder: path)])
@@ -234,7 +234,7 @@ final class InboxViewModel {
     private var olderTargets: [(account: MailAccount, folder: String)] {
         switch selection {
         case .allInboxes:
-            return accountStore.accounts.map { ($0, MailFetchService.inboxFolder) }
+            return accountStore.accounts.map { ($0, MailFolder.inboxPath) }
         case .flagged:
             return []
         case .folder(let accountID, let path, _):
@@ -243,19 +243,9 @@ final class InboxViewModel {
         }
     }
 
-    /// Schlüssel für die Menge der ausgeschöpften Ordner.
-    ///
-    /// - Parameters:
-    ///   - accountID: Postfach.
-    ///   - folder: IMAP-Ordner.
-    /// - Returns: Zusammengesetzter Schlüssel.
-    private func exhaustedKey(_ accountID: UUID, _ folder: String) -> String {
-        "\(accountID.uuidString)|\(folder)"
-    }
-
     /// Ordner der Ansicht, für die es noch Älteres geben kann.
     private var openOlderTargets: [(account: MailAccount, folder: String)] {
-        olderTargets.filter { !exhaustedFolders.contains(exhaustedKey($0.account.id, $0.folder)) }
+        olderTargets.filter { !exhaustedFolders.contains(FolderKey(accountID: $0.account.id, folder: $0.folder)) }
     }
 
     /// Zeile „Ältere Nachrichten laden" anzeigen? Nicht in der
@@ -268,7 +258,7 @@ final class InboxViewModel {
     /// Bis zu welchem Tag ein Tipp mindestens lädt – für die Beschriftung.
     /// Bei mehreren Postfächern der späteste der nächsten Zeiträume.
     var nextOlderDate: Date? {
-        let standard = SyncWindow.standardStart(now: Date(), days: MailFetchService.syncDays)
+        let standard = SyncWindow.standardStart()
         #if DEBUG
         viewQueryCount += openOlderTargets.count
         #endif
@@ -276,7 +266,7 @@ final class InboxViewModel {
             .map { target -> Date in
                 let start = MessageStore.shared.windowStart(accountID: target.account.id, folder: target.folder)
                     ?? standard
-                return SyncWindow.nextBlock(before: start, days: MailFetchService.syncDays).since
+                return SyncWindow.nextBlock(before: start).since
             }
             .max()
     }
@@ -302,7 +292,7 @@ final class InboxViewModel {
 
         let targets = openOlderTargets
         let request = FetchRequest.older(
-            targets: targets.map { exhaustedKey($0.account.id, $0.folder) }
+            targets: targets.map { FolderKey(accountID: $0.account.id, folder: $0.folder) }
         )
         await coordinated(request, label: "Ältere laden") {
             await self.performLoadOlder(targets)
@@ -322,7 +312,7 @@ final class InboxViewModel {
     private func performLoadOlder(_ targets: [(account: MailAccount, folder: String)]) async {
         var errors: [String] = []
         for target in targets {
-            let key = exhaustedKey(target.account.id, target.folder)
+            let key = FolderKey(accountID: target.account.id, folder: target.folder)
             do {
                 let credentials = try accountStore.credentials(for: target.account)
                 let result = try await MailFetchService.fetchOlder(

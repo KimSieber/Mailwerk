@@ -2,8 +2,14 @@
 //  FolderNode.swift
 //  Mailwerk
 //
-//  Ein Knoten im Ordnerbaum eines Postfachs, aufbereitet für die Anzeige.
-//  Entsteht in `FolderTreeBuilder` aus der flachen Ordnerliste des Servers.
+//  Zweck: Ein Knoten im Ordnerbaum eines Postfachs, aufbereitet für die
+//  Anzeige, samt Rolle (Posteingang, Gesendet, …), deutschem Anzeigenamen
+//  und Symbol. Dazu die eingerückte Darstellung für die Ordnerleiste.
+//
+//  Abgrenzung: Aufbau aus der flachen Ordnerliste → FolderTreeBuilder;
+//  Darstellung → FolderSidebarView, FolderMoveSheet.
+//
+//  Abhängigkeiten: MailFolder.
 //
 
 import Foundation
@@ -21,10 +27,19 @@ nonisolated enum FolderRole: Int, Comparable, Sendable {
     case all
     case regular
 
+    /// Sortierung nach der Reihenfolge der Fälle.
+    ///
+    /// - Parameters:
+    ///   - lhs: Linke Rolle.
+    ///   - rhs: Rechte Rolle.
+    /// - Returns: `true`, wenn `lhs` vor `rhs` steht.
     static func < (lhs: FolderRole, rhs: FolderRole) -> Bool {
         lhs.rawValue < rhs.rawValue
     }
 
+    /// Rolle zu einer SPECIAL-USE-Angabe des Servers.
+    ///
+    /// - Parameter specialUse: Sonderrolle laut Server.
     init(_ specialUse: MailFolder.SpecialUse) {
         switch specialUse {
         case .drafts:  self = .drafts
@@ -38,18 +53,22 @@ nonisolated enum FolderRole: Int, Comparable, Sendable {
     }
 }
 
+/// Ein Ordner im Ordnerbaum.
 nonisolated struct FolderNode: Identifiable, Hashable, Sendable {
     /// Vollständiger IMAP-Pfad. Bei ergänzten Zwischenebenen der Pfad,
     /// den der Ordner hätte – eindeutig innerhalb des Postfachs.
     let id: String
     /// Anzeigename ohne Namespace-Präfix und ohne übergeordnete Ebenen.
     let name: String
+    /// Rolle des Ordners (Sortierung, Name, Symbol).
     let role: FolderRole
     /// `false` bei `\Noselect` und bei ergänzten Zwischenebenen,
     /// die der Server gar nicht gemeldet hat.
     let isSelectable: Bool
+    /// Unterordner in Anzeigereihenfolge.
     let children: [FolderNode]
 
+    /// `true`, wenn der Ordner Unterordner hat.
     var hasChildren: Bool { !children.isEmpty }
 }
 
@@ -58,22 +77,27 @@ nonisolated struct FolderNode: Identifiable, Hashable, Sendable {
 /// Ein Ordner mit seiner Einrückungstiefe – für eine flache Liste, in der
 /// Unterordner immer sichtbar und nur durch Einrückung erkennbar sind.
 nonisolated struct IndentedFolder: Identifiable, Hashable, Sendable {
+    /// Ordner.
     let node: FolderNode
     /// 0 = oberste Ebene des Postfachs.
     let depth: Int
 
+    /// Kennung für SwiftUI (Pfad des Ordners).
     var id: String { node.id }
 }
 
 nonisolated extension FolderNode {
-    /// Kann eine Mail aus `currentFolder` hierher verschoben werden?
-    /// Nicht in den eigenen Ordner und nicht in reine Container-Ordner
-    /// (`\Noselect`), die keine Mails aufnehmen (v0.1.8c).
+    /// Prüft, ob eine Mail aus `currentFolder` hierher verschoben werden kann.
+    ///
+    /// Verarbeitung: Nicht in den eigenen Ordner und nicht in reine
+    /// Container-Ordner (`\Noselect`), die keine Mails aufnehmen. „INBOX“
+    /// ist laut RFC 3501 unabhängig von der Schreibweise.
+    ///
+    /// - Parameter currentFolder: Bisheriger Ordner der Mail.
+    /// - Returns: `true`, wenn der Ordner ein gültiges Ziel ist.
     func isMoveTarget(from currentFolder: String) -> Bool {
         guard isSelectable else { return false }
-        // „INBOX“ ist laut RFC 3501 unabhängig von der Schreibweise.
-        let bothInbox = id.caseInsensitiveCompare("INBOX") == .orderedSame
-            && currentFolder.caseInsensitiveCompare("INBOX") == .orderedSame
+        let bothInbox = MailFolder.isInbox(id) && MailFolder.isInbox(currentFolder)
         return id != currentFolder && !bothInbox
     }
 }
@@ -81,6 +105,9 @@ nonisolated extension FolderNode {
 nonisolated extension Array where Element == FolderNode {
     /// Baum in Anzeigereihenfolge: jeder Ordner, direkt gefolgt von
     /// seinen Unterordnern (Tiefensuche, Reihenfolge des Baums bleibt).
+    ///
+    /// - Parameter depth: Tiefe der obersten Ebene.
+    /// - Returns: Flache Liste mit Einrückungstiefe.
     func indented(startingAt depth: Int = 0) -> [IndentedFolder] {
         flatMap { node in
             [IndentedFolder(node: node, depth: depth)]
