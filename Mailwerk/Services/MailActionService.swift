@@ -13,16 +13,17 @@
 //  und fehlende Zugangsdaten (`MailCredentialError`) bleiben unverändert,
 //  weil sich ihre Meldung direkt an den Nutzer richtet.
 //
-//  Ordner löschen läuft als einzige Aktion nicht über SwiftMail, sondern
-//  über `FolderDeletion` + `IMAPLineConnection`. Dieser eigene Weg wird
-//  zurückgebaut, seit SwiftMail DELETE öffentlich anbietet (eigener Schritt).
+//  Ordner löschen: Mailwerk löscht nur leere Ordner. SwiftMails
+//  `deleteMailbox` löscht samt Inhalt; deshalb prüft `FolderDeletion`
+//  in derselben Verbindung unmittelbar vorher Ordnerliste und Anzahl der
+//  Mails.
 //
 //  Abgrenzung: Abruf → MailFetchService; Versand → MailSendService;
 //  Spam-Aktionen → SpamFilterService.
 //
 //  Abhängigkeiten: SwiftMail (IMAP), MailSession (Verbindung und
-//  Zugangsdaten), FolderCreationPlanner, FolderDeletion, IMAPLineConnection,
-//  FolderTreeBuilder, MessageStore (Ordnerliste offline).
+//  Zugangsdaten), FolderCreationPlanner, FolderDeletion, FolderTreeBuilder,
+//  MessageStore (Ordnerliste offline).
 //
 
 import Foundation
@@ -262,64 +263,43 @@ enum MailActionService {
 
     // MARK: - Ordner löschen
 
-    /// Port, auf dem der eigene IMAP-Weg zum Löschen arbeitet (TLS ab dem
-    /// ersten Byte). Andere Ports bietet die Seitenleiste nicht an.
-    static let folderDeletionPort = 993
-
-    /// Zeitbudget für den gesamten Lösch-Dialog.
-    private static let folderDeletionTimeout: Duration = .seconds(30)
-
-    /// Löscht einen leeren Ordner über den eigenen IMAP-Weg.
+    /// Löscht einen leeren Ordner.
     ///
-    /// Verarbeitung: Prüfung auf Mails und Unterordner und das Löschen
-    /// laufen in einer Verbindung (siehe `FolderDeletion`). Ein Wächter
-    /// trennt die Verbindung nach Ablauf des Zeitbudgets; das beendet auch
-    /// einen hängenden Lesevorgang.
+    /// Verarbeitung: In einer Verbindung, unmittelbar vor dem Löschen:
+    /// 1. frische Ordnerliste – vorhanden, wählbar, ohne Unterordner?
+    /// 2. STATUS – keine Mails?
+    /// 3. erst dann DELETE.
+    /// Die Prüfung ist nötig, weil DELETE enthaltene Mails ohne Rückfrage
+    /// mitlöscht.
     ///
     /// - Parameters:
     ///   - path: Server-Pfad des Ordners.
     ///   - accountID: Postfach.
     ///   - accountStore: Quelle für die Zugangsdaten.
     /// - Returns: `.deleted` oder den Grund, warum nicht gelöscht wurde.
-    /// - Throws: `MailCredentialError`, `FolderDeletion.DeletionError` oder
-    ///   `ActionError` (auch bei einem anderen Port als 993).
+    /// - Throws: `MailCredentialError` oder `ActionError` (auch, wenn der
+    ///   Server das Löschen ablehnt).
     static func deleteFolder(
         _ path: String,
         accountID: UUID,
         accountStore: AccountStore
     ) async throws -> FolderDeletion.Outcome {
-        let credentials = try accountStore.credentials(for: accountID)
-        let account = credentials.account
-        guard account.imapPort == folderDeletionPort else {
-            throw ActionError.operationFailed(
-                "Ordner lassen sich nur bei einer Verbindung über Port \(folderDeletionPort) löschen."
-            )
-        }
-
-        let connection = try IMAPLineConnection(host: account.imapHost, port: account.imapPort)
-        let watchdog = Task {
-            try await Task.sleep(for: folderDeletionTimeout)
-            connection.close()
-        }
-        defer {
-            watchdog.cancel()
-            connection.close()
-        }
-
-        do {
-            try await connection.open()
-            let outcome = try await FolderDeletion.run(
-                on: connection,
-                username: account.username,
-                password: credentials.password,
-                path: path
-            )
-            print("📁 Ordner \(path) löschen: \(outcome)")
-            return outcome
-        } catch let error as FolderDeletion.DeletionError {
-            throw error
-        } catch {
-            throw ActionError.operationFailed(error.localizedDescription)
+        try await withIMAPConnection(
+            accountID: accountID, accountStore: accountStore
+        ) { server -> FolderDeletion.Outcome in
+            let folders = try await fetchMailboxList(server, includeInbox: true)
+            if let blocked = FolderDeletion.precheck(path: path, folders: folders) {
+                print("📁 Ordner \(path) nicht gelöscht: \(blocked)")
+                return blocked
+            }
+            let status = try await server.mailboxStatus(path)
+            if let blocked = FolderDeletion.outcome(messageCount: status.messageCount) {
+                print("📁 Ordner \(path) nicht gelöscht: \(blocked)")
+                return blocked
+            }
+            try await server.deleteMailbox(path)
+            print("📁 Ordner \(path) gelöscht")
+            return FolderDeletion.Outcome.deleted
         }
     }
 

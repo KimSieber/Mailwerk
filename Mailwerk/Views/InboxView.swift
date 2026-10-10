@@ -447,7 +447,7 @@ struct InboxView: View {
         let outcome = try await MailActionService.deleteFolder(
             node.id, accountID: account.id, accountStore: accountStore
         )
-        if outcome == .deleted || outcome == .notFound {
+        if outcome.removesFolder {
             MessageStore.shared.deleteFolder(accountID: account.id, folder: node.id)
             if case .folder(let accountID, let path, _) = viewModel.selection,
                accountID == account.id, path == node.id {

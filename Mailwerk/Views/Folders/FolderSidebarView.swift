@@ -25,8 +25,7 @@
 //  (`onCreateFolder`, `onDeleteFolder`); den Ordnerbaum liefert der
 //  FolderCatalog.
 //
-//  Abhängigkeiten: SwiftUI, FolderCatalog, FolderNode, FolderLabel,
-//  MailActionService (Port für das Löschen), Dialogs.
+//  Abhängigkeiten: SwiftUI, FolderCatalog, FolderNode, FolderLabel, Dialogs.
 //
 
 import SwiftUI
@@ -96,7 +95,6 @@ struct FolderSidebarView: View {
                             account: account,
                             state: catalog.state(for: account.id),
                             isBusy: busyAccountID == account.id,
-                            canDeleteFolders: account.imapPort == MailActionService.folderDeletionPort,
                             isExpanded: expansionBinding(for: account.id),
                             selection: selection,
                             onSelect: { node in
@@ -261,8 +259,6 @@ private struct AccountFolderSection: View {
     let state: FolderCatalog.State
     /// Eine Aktion im Postfach läuft (etwa: Ordner wird angelegt).
     var isBusy = false
-    /// Der eigene Lösch-Weg arbeitet nur mit Port 993.
-    var canDeleteFolders = true
     /// Abschnitt aufgeklappt.
     @Binding var isExpanded: Bool
     /// Gewählte Ansicht (für die Markierung des Ordners).
@@ -344,7 +340,6 @@ private struct AccountFolderSection: View {
     /// - Returns: Eintrag im Kontextmenü (verborgen, ausgegraut, aktiv).
     private func deletionOption(for node: FolderNode) -> FolderRow.DeletionOption {
         guard node.role == .regular, node.isSelectable else { return .hidden }
-        if !canDeleteFolders { return .disabled("Löschen (nur über Port 993)") }
         if node.hasChildren { return .disabled("Löschen (enthält Unterordner)") }
         return .enabled { onDeleteFolder(node) }
     }
