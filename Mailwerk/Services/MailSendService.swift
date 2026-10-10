@@ -22,8 +22,9 @@
 //  Abgrenzung: Zusammenstellen des Inhalts (Zitat, HTML, Anhänge) erledigt
 //  der ComposeViewModel; hier wird nur geprüft, versendet und nachgearbeitet.
 //
-//  Abhängigkeiten: SwiftMail (SMTP/IMAP), MailServerFactory (TLS-Vorgaben),
-//  AccountStore (Zugangsdaten), MessageStore (Cache-Markierung).
+//  Abhängigkeiten: SwiftMail (SMTP/IMAP), MailServerFactory (TLS-Vorgaben
+//  für SMTP), MailSession (IMAP-Verbindung und Zugangsdaten), AccountStore,
+//  MessageStore (Cache-Markierung).
 //
 
 import Foundation
@@ -128,8 +129,6 @@ enum MailSendService {
 
     /// Fehler, bei denen die Nachricht nicht (sicher) versendet wurde.
     enum SendError: LocalizedError, Equatable {
-        case accountNotFound
-        case noPassword
         case invalidSender(String)
         case noRecipients
         case invalidRecipient(String)
@@ -147,10 +146,6 @@ enum MailSendService {
         /// - Returns: Meldungstext für die Anzeige.
         var errorDescription: String? {
             switch self {
-            case .accountNotFound:
-                return "Das Absende-Postfach wurde nicht gefunden."
-            case .noPassword:
-                return "Für das Absende-Postfach ist kein Passwort gespeichert."
             case .invalidSender(let address):
                 return "Die Absenderadresse „\(address)“ ist ungültig. Bitte den Benutzernamen des Postfachs prüfen."
             case .noRecipients:
@@ -206,10 +201,13 @@ enum MailSendService {
     ///   - mail: Versandfertige Nachricht.
     ///   - accountStore: Quelle für Postfach und Passwort.
     /// - Returns: Ablageort der Gesendet-Kopie und Warnungen.
-    /// - Throws: `SendError`, wenn die Nachricht nicht oder nicht sicher
+    /// - Throws: `MailCredentialError`, wenn Postfach oder Passwort fehlen,
+    ///   sonst `SendError`, wenn die Nachricht nicht oder nicht sicher
     ///   versendet wurde.
     static func send(_ mail: OutgoingMail, accountStore: AccountStore) async throws -> SendReport {
-        let (account, password) = try credentials(for: mail.accountID, in: accountStore)
+        let credentials = try accountStore.credentials(for: mail.accountID)
+        let account = credentials.account
+        let password = credentials.password
 
         // Absender prüfen – der Benutzername des Postfachs ist die Adresse
         let senderAddress = account.username.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -234,7 +232,7 @@ enum MailSendService {
         var report = SendReport()
         do {
             report.sentCopyFolder = try await saveSentCopy(
-                email, bcc: mail.bcc, account: account, password: password
+                email, bcc: mail.bcc, credentials: credentials
             )
         } catch {
             report.warnings.append(
@@ -362,15 +360,13 @@ enum MailSendService {
     /// - Parameters:
     ///   - email: Versendete Nachricht.
     ///   - bcc: Blindkopie-Empfänger für den Bcc-Header der Kopie.
-    ///   - account: Absende-Postfach.
-    ///   - password: Passwort des Postfachs.
+    ///   - credentials: Absende-Postfach und Passwort.
     /// - Returns: Pfad des Gesendet-Ordners.
     /// - Throws: Verbindungsfehler oder `PostSendError.sentFolderNotFound`.
     private static func saveSentCopy(
         _ email: Email,
         bcc: [MailAddress],
-        account: MailAccount,
-        password: String
+        credentials: MailCredentials
     ) async throws -> String {
         var copy = email
         if !bcc.isEmpty {
@@ -379,10 +375,10 @@ enum MailSendService {
             copy.additionalHeaders = headers
         }
 
-        return try await withIMAP(account: account, password: password) { imap in
+        return try await MailSession.withIMAP(credentials) { imap in
             let folder = try await sentFolderPath(imap)
             try await imap.append(email: copy, to: folder, flags: [SwiftMail.Flag.seen])
-            print("📤 [\(account.displayName)] Kopie abgelegt in \(folder)")
+            print("📤 [\(credentials.account.displayName)] Kopie abgelegt in \(folder)")
             return folder
         }
     }
@@ -428,17 +424,17 @@ enum MailSendService {
     /// - Parameters:
     ///   - origin: Bezug auf die Originalnachricht (Postfach, Ordner, UID).
     ///   - accountStore: Quelle für Postfach und Passwort.
-    /// - Throws: `SendError.accountNotFound`/`.noPassword` oder Verbindungsfehler.
+    /// - Throws: `MailCredentialError` oder Verbindungsfehler.
     private static func markOriginal(
         _ origin: OutgoingMail.Origin,
         accountStore: AccountStore
     ) async throws {
-        let (account, password) = try credentials(for: origin.accountID, in: accountStore)
+        let credentials = try accountStore.credentials(for: origin.accountID)
         let flag: SwiftMail.Flag = origin.kind == .replied
             ? .answered
             : .custom(MailFetchService.forwardedKeyword)
 
-        try await withIMAP(account: account, password: password) { imap in
+        try await MailSession.withIMAP(credentials) { imap in
             _ = try await imap.selectMailbox(origin.folder)
             let uidSet = SwiftMail.UIDSet([SwiftMail.UID(origin.uid)])
             try await imap.store(flags: [flag], on: uidSet, operation: .add)
@@ -449,59 +445,6 @@ enum MailSendService {
             MessageStore.shared.updateAnswered(messageID: origin.cachedMessageID, isAnswered: true)
         case .forwarded:
             MessageStore.shared.updateForwarded(messageID: origin.cachedMessageID, isForwarded: true)
-        }
-    }
-
-    // MARK: - Helfer
-
-    /// Liefert Postfach und Passwort zu einer Postfach-ID.
-    ///
-    /// - Parameters:
-    ///   - accountID: ID des Postfachs.
-    ///   - accountStore: Quelle für Postfach und Passwort.
-    /// - Returns: Postfach und Passwort.
-    /// - Throws: `SendError.accountNotFound`, `SendError.noPassword` oder
-    ///   einen Lesefehler des Schlüsselbunds.
-    private static func credentials(
-        for accountID: UUID,
-        in accountStore: AccountStore
-    ) throws -> (MailAccount, String) {
-        guard let account = accountStore.accounts.first(where: { $0.id == accountID }) else {
-            throw SendError.accountNotFound
-        }
-        guard let password = try accountStore.password(for: account) else {
-            throw SendError.noPassword
-        }
-        return (account, password)
-    }
-
-    /// Führt eine Aktion über eine eigene, verschlüsselte IMAP-Verbindung aus.
-    ///
-    /// Verarbeitung: Verbindet, meldet an, führt `body` aus und meldet ab.
-    /// Bei einem Fehler wird die Verbindung getrennt und der Fehler
-    /// weitergegeben.
-    ///
-    /// - Parameters:
-    ///   - account: Postfach (IMAP-Server, Benutzername).
-    ///   - password: Passwort des Postfachs.
-    ///   - body: Aktion auf der angemeldeten Verbindung.
-    /// - Returns: Ergebnis von `body`.
-    /// - Throws: Verbindungsfehler oder Fehler aus `body`.
-    private static func withIMAP<T>(
-        account: MailAccount,
-        password: String,
-        _ body: (IMAPServer) async throws -> T
-    ) async throws -> T {
-        let imap = MailServerFactory.imapServer(for: account)
-        do {
-            try await imap.connect()
-            try await imap.login(username: account.username, password: password)
-            let result = try await body(imap)
-            try await imap.logout()
-            return result
-        } catch {
-            try? await imap.disconnect()
-            throw error
         }
     }
 }

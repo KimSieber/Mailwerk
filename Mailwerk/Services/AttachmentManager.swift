@@ -17,8 +17,8 @@
 //  Abgrenzung: Der automatische Download beim Abruf liegt im
 //  MailFetchService; hier geht es nur um Einzelzugriffe.
 //
-//  Abhängigkeiten: SwiftMail (IMAP), MailServerFactory (TLS-Vorgaben),
-//  AccountStore (Zugangsdaten), MessageStore (Cache),
+//  Abhängigkeiten: SwiftMail (IMAP), MailSession (Verbindung und
+//  Zugangsdaten), AccountStore, MessageStore (Cache),
 //  MessageContentPlan (Einordnung der Teile).
 //
 
@@ -26,14 +26,16 @@ import Foundation
 import SwiftMail
 import NIOIMAPCore
 
+/// Anhänge für Vorschau und Teilen bereitstellen und bei Bedarf nachladen.
 enum AttachmentManager {
 
     /// Fehler beim Bereitstellen oder Nachladen eines Anhangs.
     enum AttachmentError: LocalizedError {
+        /// Die Daten des Anhangs sind noch nicht geladen.
         case noData
-        case accountNotFound
-        case noPassword
+        /// Die Nachricht liegt nicht mehr im Ordner auf dem Server.
         case messageNotFound
+        /// Der Anhang ist in der Nachricht auf dem Server nicht zu finden.
         case partNotFound
 
         /// Liefert die deutsche Meldung für den Nutzer.
@@ -42,8 +44,6 @@ enum AttachmentManager {
         var errorDescription: String? {
             switch self {
             case .noData: return "Keine Daten vorhanden"
-            case .accountNotFound: return "Konto nicht gefunden"
-            case .noPassword: return "Kein Passwort im Keychain"
             case .messageNotFound: return "Nachricht nicht auf dem Server gefunden"
             case .partNotFound: return "Anhang nicht auf dem Server gefunden"
             }
@@ -147,24 +147,17 @@ enum AttachmentManager {
     ///     Ordner und UID).
     ///   - accountStore: Quelle für Postfach und Passwort.
     /// - Returns: Der Anhang mit geladenen Daten.
-    /// - Throws: `AttachmentError` (Postfach, Passwort, Nachricht oder Teil
-    ///   nicht gefunden) sowie Verbindungsfehler.
+    /// - Throws: `MailCredentialError` (Postfach oder Passwort fehlt),
+    ///   `AttachmentError` (Nachricht oder Teil nicht gefunden) sowie
+    ///   Verbindungsfehler.
     static func downloadAttachment(
         _ attachment: CachedAttachment,
         message: CachedMessage,
         accountStore: AccountStore
     ) async throws -> CachedAttachment {
-        guard let account = accountStore.accounts.first(where: { $0.id == message.accountID }) else {
-            throw AttachmentError.accountNotFound
-        }
-        guard let password = try accountStore.password(for: account) else {
-            throw AttachmentError.noPassword
-        }
+        let credentials = try accountStore.credentials(for: message.accountID)
 
-        let server = MailServerFactory.imapServer(for: account)
-        do {
-            try await server.connect()
-            try await server.login(username: account.username, password: password)
+        let data = try await MailSession.withIMAP(credentials) { server -> Data in
             _ = try await server.selectMailbox(message.folder)
 
             // MessageInfo für diese UID holen
@@ -173,7 +166,6 @@ enum AttachmentManager {
                 using: UIDSet([uid]), options: .slim
             )
             guard let info = infos.first else {
-                try await server.logout()
                 throw AttachmentError.messageNotFound
             }
 
@@ -191,31 +183,24 @@ enum AttachmentManager {
                 $0.filename == attachment.filename
                     && $0.contentType == attachment.contentType
             }) else {
-                try await server.logout()
                 throw AttachmentError.partNotFound
             }
 
-            let data = try await server.fetchAndDecodeMessagePartData(
+            return try await server.fetchAndDecodeMessagePartData(
                 messageInfo: info, part: part
             )
-
-            try await server.logout()
-
-            // Im Cache aktualisieren
-            let updated = CachedAttachment(
-                id: attachment.id,
-                messageID: attachment.messageID,
-                filename: attachment.filename,
-                contentType: attachment.contentType,
-                sizeBytes: data.count,
-                data: data
-            )
-            MessageStore.shared.saveAttachment(updated)
-
-            return updated
-        } catch {
-            try? await server.disconnect()
-            throw error
         }
+
+        // Im Cache aktualisieren
+        let updated = CachedAttachment(
+            id: attachment.id,
+            messageID: attachment.messageID,
+            filename: attachment.filename,
+            contentType: attachment.contentType,
+            sizeBytes: data.count,
+            data: data
+        )
+        MessageStore.shared.saveAttachment(updated)
+        return updated
     }
 }

@@ -29,8 +29,8 @@
 //  Ablage im MessageStore.
 //
 //  Abhängigkeiten: AccountStore, SpamSettings, SpamFilterService,
-//  MailFetchService, MessageStore, NetworkMonitor, SyncWindow,
-//  FetchCoordinator.
+//  MailFetchService, MailSession (Zugangsdaten), MessageStore,
+//  NetworkMonitor, SyncWindow, FetchCoordinator.
 //
 
 import Foundation
@@ -128,7 +128,8 @@ final class InboxViewModel {
         let proposal: String
     }
 
-    /// Offene Rückfragen aus dem letzten Abruf.
+    /// Offene Rückfragen zum Anlegen eines Spam-Ordners. Bleiben bestehen,
+    /// bis sie beantwortet sind – auch über weitere Abrufe hinweg.
     var pendingSpamFolders: [PendingSpamFolder] = []
 
     /// Postfächer, für die in dieser Sitzung abgelehnt wurde. Verhindert,
@@ -150,8 +151,7 @@ final class InboxViewModel {
         self.spamSettings = spamSettings
         self.spamFilter = SpamFilterService(
             accountStore: accountStore,
-            filterLists: filterLists,
-            scoreLimit: spamSettings.scoreLimit
+            filterLists: filterLists
         )
         loadFromCache()
     }
@@ -322,9 +322,9 @@ final class InboxViewModel {
         for target in targets {
             let key = exhaustedKey(target.account.id, target.folder)
             do {
-                let password = try readPassword(for: target.account)
+                let credentials = try accountStore.credentials(for: target.account)
                 let result = try await MailFetchService.fetchOlder(
-                    account: target.account, password: password, folder: target.folder
+                    credentials, folder: target.folder
                 )
                 switch result {
                 case .noOlder:
@@ -353,27 +353,6 @@ final class InboxViewModel {
         if !errors.isEmpty {
             errorMessage = errors.joined(separator: "\n")
         }
-    }
-
-    /// Fehlendes Passwort im Schlüsselbund.
-    private struct MissingPasswordError: LocalizedError {
-        /// Meldungstext für die Anzeige.
-        var errorDescription: String? { "kein Passwort gefunden" }
-    }
-
-    /// Liest das Passwort eines Postfachs.
-    ///
-    /// Verarbeitung: Keychain-Fehler und ein fehlendes Passwort werden
-    /// geworfen statt still verschluckt.
-    ///
-    /// - Parameter account: Postfach.
-    /// - Returns: Passwort.
-    /// - Throws: Keychain-Fehler oder `MissingPasswordError`.
-    private func readPassword(for account: MailAccount) throws -> String {
-        guard let password = try accountStore.password(for: account) else {
-            throw MissingPasswordError()
-        }
-        return password
     }
 
     /// Ordnet einen Abruffehler ein.
@@ -462,9 +441,9 @@ final class InboxViewModel {
     @MainActor
     private func performRefreshFolder(accountID: UUID, path: String) async {
         guard let account = accountStore.accounts.first(where: { $0.id == accountID }) else { return }
-        let password: String
+        let credentials: MailCredentials
         do {
-            password = try readPassword(for: account)
+            credentials = try accountStore.credentials(for: account)
         } catch {
             errorMessage = "\(account.displayName): \(error.localizedDescription)"
             return
@@ -482,9 +461,7 @@ final class InboxViewModel {
 
         connectionFailed = false
         do {
-            try await MailFetchService.refreshAndCache(
-                account: account, password: password, folder: path
-            )
+            try await MailFetchService.refreshAndCache(credentials, folder: path)
         } catch {
             if let message = classify(error, context: account.displayName) {
                 errorMessage = message
@@ -530,13 +507,14 @@ final class InboxViewModel {
 
     /// Ruft alle Posteingänge vom Server ab.
     ///
-    /// Verarbeitung: Je Postfach zuerst der Spamfilter, dann Posteingang
-    /// und Spam-Ordner; die Liste wird nach jedem Postfach aktualisiert.
-    /// Kommen während des Abrufs Postfächer hinzu, werden sie in derselben
-    /// Runde mit abgerufen. Ein gewählter Ordner wird hier nicht abgerufen –
-    /// das übernimmt `refreshFolder` beim Wechsel bzw. Herunterziehen in
-    /// dieser Ansicht.
-    /// Verbindungsfehler werden still angezeigt, andere gesammelt gemeldet.
+    /// Verarbeitung: Ruft die Postfächer nacheinander ab
+    /// (`refreshAccount`) und lädt die Liste nach jedem Postfach neu, damit
+    /// sie schrittweise wächst. Kommen während des Abrufs Postfächer hinzu,
+    /// werden sie in derselben Runde mit abgerufen – so geht keines
+    /// verloren, wenn sich ein neuer Abruf diesem anschließt. Geht das Netz
+    /// verloren, bricht die Runde ab, statt die übrigen Postfächer einzeln in
+    /// Zeitüberschreitungen laufen zu lassen. Ein gewählter Ordner wird hier
+    /// nicht abgerufen – das übernimmt `refreshFolder`.
     @MainActor
     private func performRefresh() async {
         // Ohne Netz gar nicht erst versuchen: Cache zeigen, still vermerken.
@@ -554,71 +532,12 @@ final class InboxViewModel {
         print("🔄 Refresh gestartet für \(accountStore.accounts.count) Konten")
 
         var errors: [String] = []
-        pendingSpamFolders = []
-
-        // Postfächer, die während des Abrufs hinzukommen (z. B. beim ersten
-        // Start aus iCloud), werden in derselben Runde mit abgerufen. So
-        // geht keines verloren, wenn sich ein neuer Abruf diesem anschließt.
         var processed: Set<UUID> = []
         while let account = accountStore.accounts.first(where: { !processed.contains($0.id) }) {
             processed.insert(account.id)
-            print("🔄 Starte Abruf: \(account.displayName) (ID: \(account.id.uuidString))")
-            do {
-                guard let password = try accountStore.password(for: account) else {
-                    errors.append("\(account.displayName): kein Passwort gefunden")
-                    print("❌ \(account.displayName): kein Passwort im Keychain")
-                    continue
-                }
-
-                // Erst filtern, dann abrufen: So landet erkannter Spam gar
-                // nicht erst im Posteingang. Ein Fehler im Filter darf den
-                // Abruf nicht verhindern.
-                if spamSettings.isEnabled {
-                    spamFilter.scoreLimit = spamSettings.scoreLimit
-                    do {
-                        if case .needsSpamFolder(let proposal) = try await spamFilter.run(for: account),
-                           !declinedSpamFolders.contains(account.id) {
-                            pendingSpamFolders.append(
-                                PendingSpamFolder(account: account, proposal: proposal)
-                            )
-                        }
-                    } catch {
-                        if let message = classify(error, context: "\(account.displayName): Spamfilter") {
-                            errors.append(message)
-                        }
-                        print("⚠️ \(account.displayName): Spamfilter fehlgeschlagen: \(error.localizedDescription)")
-                    }
-                }
-
-                // Posteingang abrufen
-                try await MailFetchService.refreshAndCache(
-                    account: account, password: password
-                )
-
-                // Spam-Ordner mit abrufen – dort wird am meisten gearbeitet
-                if let spamFolder = account.spamFolder, !spamFolder.isEmpty {
-                    do {
-                        try await MailFetchService.refreshAndCache(
-                            account: account, password: password, folder: spamFolder
-                        )
-                        print("📬 [\(account.displayName)] Spam-Ordner \(spamFolder) abgerufen")
-                    } catch {
-                        print("⚠️ [\(account.displayName)] Spam-Abruf fehlgeschlagen: \(error.localizedDescription)")
-                    }
-                }
-                print("✅ \(account.displayName): Abruf abgeschlossen")
-            } catch {
-                if let message = classify(error, context: account.displayName) {
-                    errors.append(message)
-                }
-                print("❌ \(account.displayName): \(error.localizedDescription)")
-            }
-
-            // Nach jedem Konto Liste aktualisieren → schrittweiser Aufbau
+            errors += await refreshAccount(account)
             loadFromCache()
 
-            // Netz während des Abrufs verloren: die übrigen Postfächer
-            // nicht einzeln in Zeitüberschreitungen laufen lassen.
             if !network.isOnline {
                 connectionFailed = true
                 print("📴 Refresh abgebrochen: Netz verloren")
@@ -626,8 +545,105 @@ final class InboxViewModel {
             }
         }
 
-        // Die Liste ist nach jedem Postfach schon neu geladen worden.
         errorMessage = errors.isEmpty ? nil : errors.joined(separator: "\n")
         print("🔄 Refresh fertig. Fehler: \(errors.count), Nachrichten gesamt: \(messages.count)")
+    }
+
+    /// Ruft ein Postfach ab: Spamfilter, Posteingang, Spam-Ordner.
+    ///
+    /// Verarbeitung: Erst filtern, dann abrufen – so landet erkannter Spam
+    /// gar nicht erst im Posteingang. Ein Fehler des Filters verhindert den
+    /// Abruf nicht. Scheitert der Posteingang, entfällt der Spam-Ordner,
+    /// denn dann liegt meist die Verbindung danieder.
+    ///
+    /// - Parameter account: Postfach.
+    /// - Returns: Meldungstexte der aufgetretenen Fehler (Verbindungsfehler
+    ///   werden still vermerkt und erscheinen hier nicht).
+    @MainActor
+    private func refreshAccount(_ account: MailAccount) async -> [String] {
+        print("🔄 Starte Abruf: \(account.displayName) (ID: \(account.id.uuidString))")
+        let credentials: MailCredentials
+        do {
+            credentials = try accountStore.credentials(for: account)
+        } catch {
+            print("❌ \(account.displayName): \(error.localizedDescription)")
+            return [classify(error, context: account.displayName)].compactMap { $0 }
+        }
+
+        var errors: [String] = []
+        if let message = await runSpamFilter(for: account) {
+            errors.append(message)
+        }
+
+        do {
+            try await MailFetchService.refreshAndCache(credentials)
+        } catch {
+            print("❌ \(account.displayName): \(error.localizedDescription)")
+            if let message = classify(error, context: account.displayName) {
+                errors.append(message)
+            }
+            return errors
+        }
+
+        await refreshSpamFolder(of: account.id, credentials: credentials)
+        print("✅ \(account.displayName): Abruf abgeschlossen")
+        return errors
+    }
+
+    /// Führt den Spamfilter für ein Postfach aus, sofern er eingeschaltet ist.
+    ///
+    /// Verarbeitung: Fehlt dem Postfach ein Spam-Ordner, wird eine Rückfrage
+    /// eingereiht – höchstens eine je Postfach, und nicht, wenn sie in
+    /// dieser Sitzung abgelehnt wurde. Offene Rückfragen bleiben über
+    /// weitere Abrufe hinweg bestehen; hat das Postfach inzwischen einen
+    /// Spam-Ordner, entfällt seine Rückfrage.
+    ///
+    /// - Parameter account: Postfach.
+    /// - Returns: Meldungstext bei einem Fehler, sonst `nil`.
+    @MainActor
+    private func runSpamFilter(for account: MailAccount) async -> String? {
+        guard spamSettings.isEnabled else { return nil }
+        do {
+            let outcome = try await spamFilter.run(
+                for: account, scoreLimit: spamSettings.scoreLimit
+            )
+            if case .needsSpamFolder(let proposal) = outcome {
+                let alreadyAsked = pendingSpamFolders.contains { $0.id == account.id }
+                if !alreadyAsked, !declinedSpamFolders.contains(account.id) {
+                    pendingSpamFolders.append(
+                        PendingSpamFolder(account: account, proposal: proposal)
+                    )
+                }
+            } else {
+                pendingSpamFolders.removeAll { $0.id == account.id }
+            }
+            return nil
+        } catch {
+            print("⚠️ \(account.displayName): Spamfilter fehlgeschlagen: \(error.localizedDescription)")
+            return classify(error, context: "\(account.displayName): Spamfilter")
+        }
+    }
+
+    /// Ruft den Spam-Ordner eines Postfachs mit ab – dort wird am meisten
+    /// gearbeitet.
+    ///
+    /// Verarbeitung: Der Spam-Ordner wird frisch aus dem Postfach gelesen,
+    /// weil der Spamfilter ihn eben erst gefunden und gemerkt haben kann.
+    /// Fehler werden nur protokolliert; der Posteingang ist dann bereits
+    /// aktuell.
+    ///
+    /// - Parameters:
+    ///   - accountID: Postfach.
+    ///   - credentials: Zugangsdaten des Postfachs.
+    @MainActor
+    private func refreshSpamFolder(of accountID: UUID, credentials: MailCredentials) async {
+        guard let account = accountStore.accounts.first(where: { $0.id == accountID }),
+              let spamFolder = account.spamFolder, !spamFolder.isEmpty else { return }
+        do {
+            try await MailFetchService.refreshAndCache(credentials, folder: spamFolder)
+            print("📬 [\(account.displayName)] Spam-Ordner \(spamFolder) abgerufen")
+        } catch {
+            print("⚠️ [\(account.displayName)] Spam-Abruf fehlgeschlagen: \(error.localizedDescription)")
+        }
     }
 }

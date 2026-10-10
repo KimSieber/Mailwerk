@@ -43,7 +43,12 @@ enum FetchRequest: Hashable {
     ///   - new: Neu eintreffende Anforderung.
     ///   - waiting: Bereits wartende Anforderung.
     /// - Returns: `true`, wenn `waiting` entfallen soll.
-    static func supersedes(_ new: FetchRequest, _ waiting: FetchRequest) -> Bool {
+    ///
+    /// `nonisolated`, weil die Regel als Startwert einer Eigenschaft
+    /// (`InboxViewModel.fetches`) übergeben wird – solche Ausdrücke wertet
+    /// Swift außerhalb des Main-Actors aus. Die Regel ist eine reine
+    /// Funktion ohne Zustand.
+    nonisolated static func supersedes(_ new: FetchRequest, _ waiting: FetchRequest) -> Bool {
         if case .folder = new, case .folder = waiting { return true }
         return false
     }

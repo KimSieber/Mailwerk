@@ -2,35 +2,48 @@
 //  MailActionService.swift
 //  Mailwerk
 //
-//  IMAP-Aktionen: Flags setzen/entfernen, Nachrichten löschen/verschieben,
-//  Ordnerliste abrufen. Reine Server-Operationen – der lokale Cache wird
-//  vom Aufrufer (ViewModel/View) nach erfolgreicher Aktion aktualisiert.
+//  Zweck: IMAP-Aktionen an Mails und Ordnern – Gelesen und Kennzeichnung
+//  setzen, Mails löschen und verschieben, Ordner anlegen und löschen,
+//  Ordnerliste und Ordnerbaum abrufen. Reine Server-Operationen: Den
+//  lokalen Cache aktualisiert der Aufrufer nach erfolgreicher Aktion.
 //
-//  v0.1.8a: Ordner anlegen (mit Namensprüfung) und leere Ordner löschen.
-//  Das Löschen läuft als einzige Aktion nicht über SwiftMail, sondern über
-//  `FolderDeletion` + `IMAPLineConnection` (Rückbau, sobald SwiftMail
-//  DELETE öffentlich anbietet).
+//  Jede Aktion öffnet eine eigene Verbindung über `MailSession`. Fehler
+//  der Verbindung oder des Servers werden als `ActionError.operationFailed`
+//  gemeldet; Eingabefehler beim Anlegen (`FolderCreationPlanner.PlanError`)
+//  und fehlende Zugangsdaten (`MailCredentialError`) bleiben unverändert,
+//  weil sich ihre Meldung direkt an den Nutzer richtet.
+//
+//  Ordner löschen läuft als einzige Aktion nicht über SwiftMail, sondern
+//  über `FolderDeletion` + `IMAPLineConnection`. Dieser eigene Weg wird
+//  zurückgebaut, seit SwiftMail DELETE öffentlich anbietet (eigener Schritt).
+//
+//  Abgrenzung: Abruf → MailFetchService; Versand → MailSendService;
+//  Spam-Aktionen → SpamFilterService.
+//
+//  Abhängigkeiten: SwiftMail (IMAP), MailSession (Verbindung und
+//  Zugangsdaten), FolderCreationPlanner, FolderDeletion, IMAPLineConnection,
+//  FolderTreeBuilder, MessageStore (Ordnerliste offline).
 //
 
 import Foundation
 import SwiftMail
 import NIOIMAPCore
 
+/// IMAP-Aktionen an Mails und Ordnern.
 enum MailActionService {
 
     // MARK: - Fehlertypen
 
+    /// Fehler einer Server-Aktion.
     enum ActionError: LocalizedError {
-        case accountNotFound
-        case noPassword
+        /// Verbindung oder Server-Befehl ist gescheitert (mit Detailtext).
         case operationFailed(String)
 
+        /// Liefert die deutsche Meldung für den Nutzer.
+        ///
+        /// - Returns: Meldungstext für die Anzeige.
         var errorDescription: String? {
             switch self {
-            case .accountNotFound:
-                return "Konto nicht gefunden"
-            case .noPassword:
-                return "Kein Passwort im Keychain"
             case .operationFailed(let detail):
                 return "IMAP-Aktion fehlgeschlagen: \(detail)"
             }
@@ -39,7 +52,15 @@ enum MailActionService {
 
     // MARK: - Flags setzen / entfernen
 
-    /// Setzt oder entfernt \Seen auf dem Server.
+    /// Setzt oder entfernt `\Seen` auf dem Server.
+    ///
+    /// - Parameters:
+    ///   - uid: UID der Mail im Ordner.
+    ///   - isRead: `true` = als gelesen markieren, `false` = als ungelesen.
+    ///   - accountID: Postfach der Mail.
+    ///   - accountStore: Quelle für die Zugangsdaten.
+    ///   - folder: Ordner der Mail (UIDs gelten nur je Ordner).
+    /// - Throws: `MailCredentialError` oder `ActionError`.
     static func setRead(
         uid: Int,
         isRead: Bool,
@@ -51,17 +72,23 @@ enum MailActionService {
             accountID: accountID, accountStore: accountStore
         ) { server in
             _ = try await server.selectMailbox(folder)
-            let imapUID = SwiftMail.UID(uid)
-            let uidSet = UIDSet([imapUID])
             try await server.store(
                 flags: [Flag.seen],
-                on: uidSet,
+                on: UIDSet([SwiftMail.UID(uid)]),
                 operation: isRead ? .add : .remove
             )
         }
     }
 
-    /// Setzt oder entfernt \Flagged auf dem Server.
+    /// Setzt oder entfernt `\Flagged` auf dem Server.
+    ///
+    /// - Parameters:
+    ///   - uid: UID der Mail im Ordner.
+    ///   - isFlagged: `true` = kennzeichnen, `false` = Kennzeichnung entfernen.
+    ///   - accountID: Postfach der Mail.
+    ///   - accountStore: Quelle für die Zugangsdaten.
+    ///   - folder: Ordner der Mail (UIDs gelten nur je Ordner).
+    /// - Throws: `MailCredentialError` oder `ActionError`.
     static func setFlagged(
         uid: Int,
         isFlagged: Bool,
@@ -73,11 +100,9 @@ enum MailActionService {
             accountID: accountID, accountStore: accountStore
         ) { server in
             _ = try await server.selectMailbox(folder)
-            let imapUID = SwiftMail.UID(uid)
-            let uidSet = UIDSet([imapUID])
             try await server.store(
                 flags: [Flag.flagged],
-                on: uidSet,
+                on: UIDSet([SwiftMail.UID(uid)]),
                 operation: isFlagged ? .add : .remove
             )
         }
@@ -85,9 +110,19 @@ enum MailActionService {
 
     // MARK: - Löschen
 
-    /// Verschiebt die Nachricht in den Trash-Ordner (bevorzugt)
-    /// oder setzt \Deleted + EXPUNGE als Fallback.
-    /// Gibt den Namen des Trash-Ordners zurück (nil bei EXPUNGE-Fallback).
+    /// Löscht eine Mail.
+    ///
+    /// Verarbeitung: Hat das Postfach einen Papierkorb (SPECIAL-USE
+    /// `\Trash`), wird die Mail dorthin verschoben. Sonst wird sie mit
+    /// `\Deleted` markiert und per EXPUNGE endgültig entfernt.
+    ///
+    /// - Parameters:
+    ///   - uid: UID der Mail im Ordner.
+    ///   - accountID: Postfach der Mail.
+    ///   - accountStore: Quelle für die Zugangsdaten.
+    ///   - folder: Ordner der Mail.
+    /// - Returns: Pfad des Papierkorbs oder `nil`, wenn endgültig gelöscht wurde.
+    /// - Throws: `MailCredentialError` oder `ActionError`.
     @discardableResult
     static func deleteMessage(
         uid: Int,
@@ -98,7 +133,6 @@ enum MailActionService {
         try await withIMAPConnection(
             accountID: accountID, accountStore: accountStore
         ) { server in
-            // Trash-Ordner suchen
             let folders = try await fetchMailboxList(server)
             let trashFolder = folders.first { $0.specialUse == .trash }
 
@@ -106,16 +140,13 @@ enum MailActionService {
             let imapUID = SwiftMail.UID(uid)
 
             if let trash = trashFolder {
-                _ = try await server.move(
-                    message: imapUID, to: trash.id
-                )
+                _ = try await server.move(message: imapUID, to: trash.id)
                 print("🗑️ Mail UID \(uid) nach \(trash.id) verschoben")
                 return trash.id
             } else {
-                let uidSet = UIDSet([imapUID])
                 try await server.store(
                     flags: [Flag.deleted],
-                    on: uidSet,
+                    on: UIDSet([imapUID]),
                     operation: .add
                 )
                 try await server.expunge()
@@ -127,10 +158,18 @@ enum MailActionService {
 
     // MARK: - Verschieben
 
-    /// Verschiebt eine Nachricht in einen anderen Ordner.
-    /// - Returns: die UID im Zielordner, sofern der Server sie meldet
-    ///   (UIDPLUS). Ohne diese Angabe bleibt das Ergebnis nil – der Aufrufer
-    ///   muss die Nachricht dann aus dem Cache entfernen, statt sie umzuziehen.
+    /// Verschiebt eine Mail in einen anderen Ordner desselben Postfachs.
+    ///
+    /// - Parameters:
+    ///   - uid: UID der Mail im bisherigen Ordner.
+    ///   - toFolder: Server-Pfad des Zielordners.
+    ///   - accountID: Postfach der Mail.
+    ///   - accountStore: Quelle für die Zugangsdaten.
+    ///   - folder: Bisheriger Ordner der Mail.
+    /// - Returns: UID im Zielordner, sofern der Server sie meldet (UIDPLUS).
+    ///   Ohne diese Angabe muss der Aufrufer die Mail aus dem Cache
+    ///   entfernen, statt sie umzuziehen.
+    /// - Throws: `MailCredentialError` oder `ActionError`.
     @discardableResult
     static func moveMessage(
         uid: Int,
@@ -143,10 +182,7 @@ enum MailActionService {
             accountID: accountID, accountStore: accountStore
         ) { server in
             _ = try await server.selectMailbox(folder)
-            let imapUID = SwiftMail.UID(uid)
-            let copyUID = try await server.move(
-                message: imapUID, to: toFolder
-            )
+            let copyUID = try await server.move(message: SwiftMail.UID(uid), to: toFolder)
             let newUID = copyUID?.mapping.first?.destination.value
             print("📁 Mail UID \(uid) von \(folder) nach \(toFolder) verschoben (neue UID: \(newUID.map(String.init) ?? "unbekannt"))")
             return newUID
@@ -155,9 +191,19 @@ enum MailActionService {
 
     // MARK: - Ordner anlegen
 
-    /// Legt einen Ordner an. Der Server kann den Pfad um sein Namespace-Präfix
-    /// ergänzen, deshalb liefert die Methode den tatsächlich vorhandenen Pfad
-    /// zurück – ermittelt über eine frische Ordnerliste.
+    /// Legt einen Ordner unter einem fertigen Pfad an (z. B. den
+    /// vorgeschlagenen Spam-Ordner).
+    ///
+    /// Verarbeitung: Der Server kann den Pfad um sein Namespace-Präfix
+    /// ergänzen. Deshalb wird der tatsächlich vorhandene Pfad über eine
+    /// frische Ordnerliste ermittelt.
+    ///
+    /// - Parameters:
+    ///   - path: Gewünschter Server-Pfad.
+    ///   - accountID: Postfach.
+    ///   - accountStore: Quelle für die Zugangsdaten.
+    /// - Returns: Tatsächlicher Server-Pfad des neuen Ordners.
+    /// - Throws: `MailCredentialError` oder `ActionError`.
     static func createFolder(
         _ path: String,
         accountID: UUID,
@@ -177,16 +223,20 @@ enum MailActionService {
     }
 
     /// Legt einen Ordner an, den der Nutzer in der Seitenleiste benannt hat.
-    /// Namensprüfung und Pfad bestimmt `FolderCreationPlanner` anhand einer
-    /// frischen Ordnerliste aus derselben Verbindung – so zählen auch Ordner,
-    /// die gerade erst anderswo angelegt wurden.
+    ///
+    /// Verarbeitung: Namensprüfung und Pfad bestimmt `FolderCreationPlanner`
+    /// anhand einer frischen Ordnerliste aus derselben Verbindung – so
+    /// zählen auch Ordner, die gerade erst anderswo angelegt wurden.
+    ///
     /// - Parameters:
-    ///   - name: lesbarer Name, wie eingegeben.
+    ///   - name: Lesbarer Name, wie eingegeben.
     ///   - parentPath: Server-Pfad des übergeordneten Ordners, `nil` für
     ///     die oberste Ebene.
+    ///   - accountID: Postfach.
+    ///   - accountStore: Quelle für die Zugangsdaten.
     /// - Returns: Server-Pfad des neuen Ordners.
     /// - Throws: `FolderCreationPlanner.PlanError` bei ungültigem oder
-    ///   doppeltem Namen, sonst `ActionError`.
+    ///   doppeltem Namen, `MailCredentialError` oder `ActionError`.
     @discardableResult
     static func createFolder(
         named name: String,
@@ -219,19 +269,27 @@ enum MailActionService {
     /// Zeitbudget für den gesamten Lösch-Dialog.
     private static let folderDeletionTimeout: Duration = .seconds(30)
 
-    /// Löscht einen leeren Ordner – über den eigenen IMAP-Weg, weil
-    /// SwiftMail 1.12.0 kein öffentliches DELETE anbietet (Technical Debt;
-    /// zurückbauen, sobald es das gibt). Prüfung auf Mails und Unterordner
-    /// und das Löschen laufen in einer Verbindung, siehe `FolderDeletion`.
+    /// Löscht einen leeren Ordner über den eigenen IMAP-Weg.
+    ///
+    /// Verarbeitung: Prüfung auf Mails und Unterordner und das Löschen
+    /// laufen in einer Verbindung (siehe `FolderDeletion`). Ein Wächter
+    /// trennt die Verbindung nach Ablauf des Zeitbudgets; das beendet auch
+    /// einen hängenden Lesevorgang.
+    ///
+    /// - Parameters:
+    ///   - path: Server-Pfad des Ordners.
+    ///   - accountID: Postfach.
+    ///   - accountStore: Quelle für die Zugangsdaten.
     /// - Returns: `.deleted` oder den Grund, warum nicht gelöscht wurde.
+    /// - Throws: `MailCredentialError`, `FolderDeletion.DeletionError` oder
+    ///   `ActionError` (auch bei einem anderen Port als 993).
     static func deleteFolder(
         _ path: String,
         accountID: UUID,
         accountStore: AccountStore
     ) async throws -> FolderDeletion.Outcome {
-        let (account, password) = try resolveCredentials(
-            accountID: accountID, accountStore: accountStore
-        )
+        let credentials = try accountStore.credentials(for: accountID)
+        let account = credentials.account
         guard account.imapPort == folderDeletionPort else {
             throw ActionError.operationFailed(
                 "Ordner lassen sich nur bei einer Verbindung über Port \(folderDeletionPort) löschen."
@@ -239,8 +297,6 @@ enum MailActionService {
         }
 
         let connection = try IMAPLineConnection(host: account.imapHost, port: account.imapPort)
-        // Nach Ablauf der Zeit wird die Verbindung getrennt; das beendet
-        // auch einen hängenden Lesevorgang mit einem Fehler.
         let watchdog = Task {
             try await Task.sleep(for: folderDeletionTimeout)
             connection.close()
@@ -255,7 +311,7 @@ enum MailActionService {
             let outcome = try await FolderDeletion.run(
                 on: connection,
                 username: account.username,
-                password: password,
+                password: credentials.password,
                 path: path
             )
             print("📁 Ordner \(path) löschen: \(outcome)")
@@ -270,8 +326,16 @@ enum MailActionService {
     // MARK: - Ordnerliste
 
     /// Ordnerliste inklusive INBOX und Namespace-Präfix – Grundlage des
-    /// Ordnerbaums in der Seitenleiste. Das Präfix hat SwiftMail bereits
-    /// beim Anmelden per NAMESPACE erfragt; es kostet keinen eigenen Befehl.
+    /// Ordnerbaums in der Seitenleiste.
+    ///
+    /// Verarbeitung: Das Präfix hat SwiftMail bereits beim Anmelden per
+    /// NAMESPACE erfragt; es kostet keinen eigenen Befehl.
+    ///
+    /// - Parameters:
+    ///   - accountID: Postfach.
+    ///   - accountStore: Quelle für die Zugangsdaten.
+    /// - Returns: Ordner und Namespace-Präfix.
+    /// - Throws: `MailCredentialError` oder `ActionError`.
     static func fetchFolderListing(
         accountID: UUID,
         accountStore: AccountStore
@@ -285,9 +349,16 @@ enum MailActionService {
         }
     }
 
-    /// Fertiger Ordnerbaum eines Postfachs für die Seitenleiste. Die
-    /// Ordnerliste wird dabei im Cache gespeichert (v0.1.8b), damit die
-    /// Leiste auch offline ihre Ordner zeigt.
+    /// Fertiger Ordnerbaum eines Postfachs für die Seitenleiste.
+    ///
+    /// Verarbeitung: Die Ordnerliste wird dabei im Cache gespeichert, damit
+    /// die Leiste auch offline ihre Ordner zeigt.
+    ///
+    /// - Parameters:
+    ///   - account: Postfach.
+    ///   - accountStore: Quelle für die Zugangsdaten.
+    /// - Returns: Wurzelknoten des Ordnerbaums.
+    /// - Throws: `MailCredentialError` oder `ActionError`.
     static func fetchFolderTree(
         for account: MailAccount,
         accountStore: AccountStore
@@ -299,63 +370,61 @@ enum MailActionService {
         return FolderTreeBuilder.build(listing: listing, configuredSpamFolder: account.spamFolder)
     }
 
-    /// Ordnerliste über eine bereits bestehende Verbindung. Der Filterlauf
-    /// baut seine Verbindung selbst auf und braucht die Liste darin.
+    /// Ordnerliste über eine bereits bestehende Verbindung.
+    ///
+    /// Verarbeitung: Für Abläufe, die ihre Verbindung selbst führen und
+    /// die Liste darin brauchen (Spamfilter).
+    ///
+    /// - Parameter server: Angemeldete IMAP-Verbindung.
+    /// - Returns: Ordner ohne INBOX.
+    /// - Throws: IMAP-Fehler.
     static func mailboxes(on server: SwiftMail.IMAPServer) async throws -> [MailFolder] {
         try await fetchMailboxList(server)
     }
 
     // MARK: - Interne Helfer
 
-    /// Baut eine (verschlüsselte) IMAP-Verbindung auf, führt die übergebene
-    /// Operation aus und räumt die Verbindung anschließend sauber auf.
+    /// Führt eine Aktion über eine eigene Verbindung aus und vereinheitlicht
+    /// die Fehler.
+    ///
+    /// Verarbeitung: Fehlende Zugangsdaten und Eingabefehler beim Anlegen
+    /// werden unverändert weitergegeben; alle anderen Fehler werden zu
+    /// `ActionError.operationFailed`.
+    ///
+    /// - Parameters:
+    ///   - accountID: Postfach.
+    ///   - accountStore: Quelle für die Zugangsdaten.
+    ///   - body: Aktion auf der angemeldeten Verbindung.
+    /// - Returns: Ergebnis von `body`.
+    /// - Throws: `MailCredentialError`, `FolderCreationPlanner.PlanError`
+    ///   oder `ActionError`.
     private static func withIMAPConnection<T>(
         accountID: UUID,
         accountStore: AccountStore,
         body: (SwiftMail.IMAPServer) async throws -> T
     ) async throws -> T {
-        let (account, password) = try resolveCredentials(
-            accountID: accountID, accountStore: accountStore
-        )
-        let server = MailServerFactory.imapServer(for: account)
+        let credentials = try accountStore.credentials(for: accountID)
         do {
-            try await server.connect()
-            try await server.login(
-                username: account.username, password: password
-            )
-            let result = try await body(server)
-            try await server.logout()
-            return result
+            return try await MailSession.withIMAP(credentials, body)
         } catch let error as FolderCreationPlanner.PlanError {
-            // Eingabefehler unverändert weiterreichen: Die Meldung richtet
-            // sich an den Nutzer, nicht an die Verbindung.
-            try? await server.disconnect()
             throw error
         } catch {
-            try? await server.disconnect()
             throw ActionError.operationFailed(error.localizedDescription)
         }
     }
 
-    /// Löst Account + Passwort aus dem AccountStore auf.
-    private static func resolveCredentials(
-        accountID: UUID,
-        accountStore: AccountStore
-    ) throws -> (MailAccount, String) {
-        guard let account = accountStore.accounts.first(
-            where: { $0.id == accountID }
-        ) else {
-            throw ActionError.accountNotFound
-        }
-        guard let password = try accountStore.password(for: account) else {
-            throw ActionError.noPassword
-        }
-        return (account, password)
-    }
-
-    /// Listet alle Mailboxen auf dem Server und mappt SPECIAL-USE-Attribute
-    /// sowie `\Noselect`. INBOX wird herausgefiltert, außer für den
-    /// Ordnerbaum (`includeInbox`).
+    /// Listet alle Ordner des Servers.
+    ///
+    /// Verarbeitung: Anzeigename ist das letzte Pfadsegment. SPECIAL-USE-
+    /// Attribute werden übernommen, ebenso `\Noselect` (nicht auswählbar).
+    /// Sonderordner stehen zuerst, danach alphabetisch.
+    ///
+    /// - Parameters:
+    ///   - server: Angemeldete IMAP-Verbindung.
+    ///   - includeInbox: `true` = INBOX mitliefern (Ordnerbaum); sonst
+    ///     wird sie ausgelassen (Verschiebeziele, Papierkorb-Suche).
+    /// - Returns: Ordner des Postfachs.
+    /// - Throws: IMAP-Fehler.
     private static func fetchMailboxList(
         _ server: SwiftMail.IMAPServer,
         includeInbox: Bool = false
@@ -364,16 +433,11 @@ enum MailActionService {
 
         return mailboxes.compactMap { (mailbox) -> MailFolder? in
             let fullPath = mailbox.name
-            // Letztes Segment als Anzeigename
-            let delimStr = mailbox.hierarchyDelimiter.map { String($0) } ?? "."
-            let displayName = fullPath.components(
-                separatedBy: delimStr
-            ).last ?? fullPath
-            
-            // INBOX nicht als Verschiebeziel anbieten
+            let delimiter = mailbox.hierarchyDelimiter.map { String($0) } ?? "."
+            let displayName = fullPath.components(separatedBy: delimiter).last ?? fullPath
+
             if !includeInbox && fullPath.uppercased() == "INBOX" { return nil }
-            
-            // SPECIAL-USE-Attribute auswerten
+
             let attrs = mailbox.attributes
             let specialUse: MailFolder.SpecialUse? = {
                 if attrs.contains(.drafts)  { return .drafts }
@@ -384,7 +448,7 @@ enum MailActionService {
                 if attrs.contains(.flagged) { return .flagged }
                 return nil
             }()
-            
+
             return MailFolder(
                 id: fullPath,
                 name: displayName,
@@ -393,7 +457,6 @@ enum MailActionService {
                 isSelectable: mailbox.isSelectable
             )
         }
-        // Spezialordner zuerst, dann alphabetisch
         .sorted {
             let a = $0.specialUse != nil ? 0 : 1
             let b = $1.specialUse != nil ? 0 : 1

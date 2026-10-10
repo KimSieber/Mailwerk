@@ -2,33 +2,51 @@
 //  SpamFilterService.swift
 //  Mailwerk
 //
-//  Führt den Filterlauf eines Postfachs aus: ungeprüfte Mails der letzten
-//  30 Tage suchen, Spam-Header lesen, entscheiden, Keywords setzen und
+//  Zweck: Führt den Spamfilter eines Postfachs aus und setzt die
+//  Spam-Aktionen an einzelnen Mails um.
+//
+//  Filterlauf: ungeprüfte Mails der letzten 30 Tage im Posteingang suchen,
+//  Absender und Spam-Header lesen, entscheiden, Keywords setzen und
 //  erkannten Spam in den Spam-Ordner desselben Postfachs verschieben.
+//  Die Reihenfolge ist Absicht: erst die Keywords, dann das Verschieben.
+//  So trägt die Nachricht ihre Kennzeichnung mit in den Zielordner, auch
+//  wenn die Verbindung mittendrin abbricht.
 //
-//  Reihenfolge ist Absicht: erst die Keywords, dann das Verschieben. So
-//  trägt die Nachricht ihre Kennzeichnung mit in den Zielordner, auch wenn
-//  die Verbindung mittendrin abbricht.
+//  Einzelaktionen: Absender oder Domain blockieren (Blacklist, Mail in den
+//  Spam-Ordner) bzw. vertrauen (Whitelist, Mail zurück in den Posteingang).
 //
-//  Die Entscheidung selbst steckt in `SpamFilterPlanner` und ist dort
-//  getestet – hier geht es nur um das Ausführen.
+//  Abgrenzung: Die Entscheidung steckt in `SpamFilterPlanner` und ist dort
+//  getestet – hier geht es nur um das Ausführen. Welcher Ordner der
+//  Spam-Ordner ist, bestimmt `SpamFolderResolver`.
+//
+//  Abhängigkeiten: SwiftMail (IMAP), MailSession (Verbindung und
+//  Zugangsdaten), AccountStore, FilterListRepository, SpamFilterPlanner,
+//  SpamFolderResolver, SpamHeaderParser, MailActionService (Ordnerliste,
+//  Ordner anlegen), MessageStore (Cache nachziehen).
 //
 
 import Foundation
 import SwiftMail
 
+/// Spamfilter und Spam-Aktionen.
 @MainActor
 final class SpamFilterService {
 
     // MARK: - Ergebnistypen
 
+    /// Zahlen eines abgeschlossenen Filterlaufs.
     struct RunSummary: Equatable {
+        /// Spam-Ordner des Postfachs.
         let folder: String
+        /// Anzahl geprüfter Mails.
         let checked: Int
+        /// Anzahl in den Spam-Ordner verschobener Mails.
         let movedToSpam: Int
+        /// Anzahl im Posteingang behaltener Mails.
         let keptInInbox: Int
     }
 
+    /// Ergebnis eines Filterlaufs.
     enum Outcome: Equatable {
         /// Lauf abgeschlossen.
         case completed(RunSummary)
@@ -37,18 +55,18 @@ final class SpamFilterService {
         case needsSpamFolder(proposal: String)
     }
 
+    /// Fehler der Spam-Aktionen.
     enum FilterError: LocalizedError {
-        case noPassword
-        case accountNotFound
+        /// Der Absender der Mail lässt sich nicht als Adresse auswerten.
         case unusableSender
+        /// Das Postfach hat keinen Spam-Ordner (mit Namensvorschlag).
         case noSpamFolder(proposal: String)
 
+        /// Liefert die deutsche Meldung für den Nutzer.
+        ///
+        /// - Returns: Meldungstext für die Anzeige.
         var errorDescription: String? {
             switch self {
-            case .noPassword:
-                return "Kein Passwort im Keychain"
-            case .accountNotFound:
-                return "Postfach nicht gefunden"
             case .unusableSender:
                 return "Der Absender dieser Mail lässt sich nicht auswerten"
             case .noSpamFolder(let proposal):
@@ -59,41 +77,47 @@ final class SpamFilterService {
 
     // MARK: - Abhängigkeiten
 
+    /// Quelle für Postfächer, Zugangsdaten und den gemerkten Spam-Ordner.
     private let accountStore: AccountStore
+    /// Black- und Whitelist.
     private let filterLists: any FilterListRepository
 
-    /// Ab diesem Score rettet auch ein Whitelist-Eintrag eine Mail nicht mehr.
-    var scoreLimit: Double
-
-    init(
-        accountStore: AccountStore,
-        filterLists: any FilterListRepository,
-        scoreLimit: Double = SpamClassifier.defaultScoreLimit
-    ) {
+    /// Legt den Dienst an.
+    ///
+    /// - Parameters:
+    ///   - accountStore: Quelle für Postfächer und Zugangsdaten.
+    ///   - filterLists: Black- und Whitelist.
+    init(accountStore: AccountStore, filterLists: any FilterListRepository) {
         self.accountStore = accountStore
         self.filterLists = filterLists
-        self.scoreLimit = scoreLimit
     }
 
     // MARK: - Filterlauf
 
-    /// Prüft die ungeprüften Mails der INBOX eines Postfachs.
+    /// Prüft die ungeprüften Mails im Posteingang eines Postfachs.
+    ///
+    /// Verarbeitung:
+    /// 1. Spam-Ordner bestimmen; fehlt er, endet der Lauf mit einem Vorschlag.
+    /// 2. Ungeprüfte Mails der letzten 30 Tage suchen (ohne `$MailwerkChecked`).
+    /// 3. Absender und Spam-Header holen – ohne die Mails als gelesen zu markieren.
+    /// 4. Mit `SpamFilterPlanner` entscheiden.
+    /// 5. Keywords setzen, dann Spam verschieben und den Cache nachziehen.
+    ///
+    /// - Parameters:
+    ///   - account: Postfach.
+    ///   - scoreLimit: Ab diesem Score rettet auch ein Whitelist-Eintrag eine
+    ///     Mail nicht mehr.
+    /// - Returns: Zahlen des Laufs oder den Vorschlag für einen Spam-Ordner.
+    /// - Throws: `MailCredentialError`, Fehler der Filterlisten oder IMAP-Fehler.
     @discardableResult
-    func run(for account: MailAccount) async throws -> Outcome {
-        guard let password = try accountStore.password(for: account) else {
-            throw FilterError.noPassword
-        }
+    func run(for account: MailAccount, scoreLimit: Double) async throws -> Outcome {
+        let credentials = try accountStore.credentials(for: account)
         let lists = try await filterLists.lists()
 
-        let server = MailServerFactory.imapServer(for: account)
-        do {
-            try await server.connect()
-            try await server.login(username: account.username, password: password)
-
+        return try await MailSession.withIMAP(credentials) { server -> Outcome in
             // 1. Spam-Ordner des Postfachs bestimmen
             let resolution = try await resolveSpamFolder(for: account, on: server)
             guard case .found(let spamFolder) = resolution else {
-                try await server.logout()
                 guard case .missing(let proposal) = resolution else {
                     return .needsSpamFolder(proposal: SpamFolderResolver.proposedName)
                 }
@@ -118,7 +142,6 @@ final class SpamFilterService {
             print("🛡️ [\(account.displayName)] \(uids.count) ungeprüfte Mails seit \(sinceDate)")
 
             guard !uids.isEmpty else {
-                try await server.logout()
                 return .completed(
                     RunSummary(folder: spamFolder, checked: 0, movedToSpam: 0, keptInInbox: 0)
                 )
@@ -130,7 +153,7 @@ final class SpamFilterService {
                 options: .slim,
                 headerFields: SpamHeaderParser.fieldNames
             )
-            let candidates = infos.compactMap(candidate(from:))
+            let candidates = infos.compactMap { candidate(from: $0) }
 
             // 4. Entscheiden
             let plan = SpamFilterPlanner.plan(
@@ -140,8 +163,6 @@ final class SpamFilterService {
             // 5. Ausführen – Keywords zuerst, dann verschieben
             try await apply(plan, on: server, account: account, spamFolder: spamFolder)
 
-            try await server.logout()
-
             let summary = RunSummary(
                 folder: spamFolder,
                 checked: plan.checked.count,
@@ -150,15 +171,17 @@ final class SpamFilterService {
             )
             print("🛡️ [\(account.displayName)] Fertig: \(summary.checked) geprüft, \(summary.movedToSpam) nach \(spamFolder), \(summary.keptInInbox) behalten")
             return .completed(summary)
-
-        } catch {
-            try? await server.disconnect()
-            throw error
         }
     }
 
-    /// Legt den Spam-Ordner an, nachdem der Nutzer den Vorschlag bestätigt hat,
-    /// und merkt ihn beim Postfach.
+    /// Legt den Spam-Ordner an, nachdem der Nutzer den Vorschlag bestätigt
+    /// hat, und merkt ihn beim Postfach.
+    ///
+    /// - Parameters:
+    ///   - proposal: Vorgeschlagener Ordnername.
+    ///   - account: Postfach.
+    /// - Returns: Tatsächlicher Server-Pfad des neuen Ordners.
+    /// - Throws: `MailCredentialError` oder `MailActionService.ActionError`.
     @discardableResult
     func createSpamFolder(_ proposal: String, for account: MailAccount) async throws -> String {
         let created = try await MailActionService.createFolder(
@@ -172,13 +195,25 @@ final class SpamFilterService {
 
     /// Trägt Absender oder Domain auf die Blacklist ein und verschiebt die
     /// Mail in den Spam-Ordner, falls sie noch nicht dort liegt.
-    /// - Returns: true, wenn die Mail verschoben wurde.
+    ///
+    /// Verarbeitung: Die Mail erhält `$MailwerkChecked` und
+    /// `$MailwerkBlacklisted`, damit ein späterer Filterlauf sie nicht
+    /// erneut prüft. Ohne Spam-Ordner wird nichts verschoben; angelegt wird
+    /// er nur nach Bestätigung.
+    ///
+    /// - Parameters:
+    ///   - message: Betroffene Mail.
+    ///   - kind: Adresse oder Domain eintragen.
+    /// - Returns: `true`, wenn die Mail verschoben wurde.
+    /// - Throws: `MailCredentialError`, `FilterError`, Fehler der Filterlisten
+    ///   oder IMAP-Fehler.
     @discardableResult
     func block(_ message: CachedMessage, kind: FilterEntryKind) async throws -> Bool {
-        let (account, value) = try context(for: message, kind: kind)
+        let (credentials, value) = try context(for: message, kind: kind)
+        let account = credentials.account
         try await filterLists.add(value, kind: kind, to: .black)
 
-        return try await withConnection(for: account) { server in
+        return try await MailSession.withIMAP(credentials) { server -> Bool in
             let spamFolder = try await requireSpamFolder(for: account, on: server)
 
             _ = try await server.selectMailbox(message.folder)
@@ -192,21 +227,30 @@ final class SpamFilterService {
             )
 
             guard message.folder != spamFolder else { return false }
-            return try await move(
-                message, to: spamFolder, on: server, account: account
-            )
+            return try await move(message, to: spamFolder, on: server, account: account)
         }
     }
 
     /// Trägt Absender oder Domain auf die Whitelist ein und holt die Mail
-    /// zurück in die INBOX, falls sie im Spam-Ordner liegt.
-    /// - Returns: true, wenn die Mail verschoben wurde.
+    /// zurück in den Posteingang, falls sie im Spam-Ordner liegt.
+    ///
+    /// Verarbeitung: `$MailwerkBlacklisted` wird entfernt, `$MailwerkChecked`
+    /// bleibt bzw. wird gesetzt – die Mail ist geprüft, und ohne das Keyword
+    /// liefe sie nach dem Verschieben erneut durch den Filter.
+    ///
+    /// - Parameters:
+    ///   - message: Betroffene Mail.
+    ///   - kind: Adresse oder Domain eintragen.
+    /// - Returns: `true`, wenn die Mail verschoben wurde.
+    /// - Throws: `MailCredentialError`, `FilterError`, Fehler der Filterlisten
+    ///   oder IMAP-Fehler.
     @discardableResult
     func trust(_ message: CachedMessage, kind: FilterEntryKind) async throws -> Bool {
-        let (account, value) = try context(for: message, kind: kind)
+        let (credentials, value) = try context(for: message, kind: kind)
+        let account = credentials.account
         try await filterLists.add(value, kind: kind, to: .white)
 
-        return try await withConnection(for: account) { server in
+        return try await MailSession.withIMAP(credentials) { server -> Bool in
             let resolution = try await resolveSpamFolder(for: account, on: server)
             let spamFolder: String? = {
                 if case .found(let folder) = resolution { return folder }
@@ -214,9 +258,6 @@ final class SpamFilterService {
             }()
 
             _ = try await server.selectMailbox(message.folder)
-
-            // `$MailwerkChecked` bleibt: Die Mail ist geprüft, und ohne das
-            // Keyword liefe sie nach dem Verschieben erneut durch den Filter.
             try await server.store(
                 flags: [SwiftMail.Flag.custom(SpamKeyword.blacklisted)],
                 on: uidSet([message.uid]),
@@ -237,15 +278,17 @@ final class SpamFilterService {
 
     // MARK: - Intern
 
-    /// Überführt eine Server-Antwort in einen Kandidaten.
-    /// Ohne UID ist die Nachricht nicht adressierbar und wird übersprungen.
+    /// Überführt eine Server-Antwort in einen Kandidaten für den Filter.
+    ///
+    /// Verarbeitung: `additionalHeaderFields` behält Reihenfolge und
+    /// Wiederholungen. Das Wörterbuch `additionalFields` wäre hier falsch:
+    /// Bei mehreren X-Spam-Status-Zeilen gewänne dort die letzte – ein
+    /// Absender könnte die Einstufung des Servers so überschreiben.
+    ///
+    /// - Parameter info: Kopfdaten einer Mail.
+    /// - Returns: Kandidat oder `nil` ohne UID (nicht adressierbar).
     private func candidate(from info: MessageInfo) -> SpamCandidate? {
         guard let uid = info.uid else { return nil }
-
-        // `additionalHeaderFields` behält Reihenfolge und Wiederholungen.
-        // Das Wörterbuch `additionalFields` wäre hier falsch: Bei mehreren
-        // X-Spam-Status-Zeilen gewinnt dort die letzte – ein Absender könnte
-        // die Einstufung des Servers so überschreiben.
         let lines = (info.additionalHeaderFields ?? []).map {
             SpamHeaderLine(name: $0.name, value: $0.value)
         }
@@ -256,6 +299,17 @@ final class SpamFilterService {
         )
     }
 
+    /// Setzt die Entscheidung des Filters auf dem Server um.
+    ///
+    /// Verarbeitung: Zuerst `$MailwerkBlacklisted` und `$MailwerkChecked`,
+    /// danach das Verschieben in den Spam-Ordner samt Cache.
+    ///
+    /// - Parameters:
+    ///   - plan: Entscheidung des Filters.
+    ///   - server: Angemeldete Verbindung mit ausgewähltem Posteingang.
+    ///   - account: Postfach.
+    ///   - spamFolder: Spam-Ordner des Postfachs.
+    /// - Throws: IMAP-Fehler.
     private func apply(
         _ plan: SpamFilterPlan,
         on server: SwiftMail.IMAPServer,
@@ -292,8 +346,16 @@ final class SpamFilterService {
     }
 
     /// Zieht die verschobenen Mails im lokalen Cache nach.
-    /// Meldet der Server keine Ziel-UIDs (kein UIDPLUS), bleibt nur das
-    /// Entfernen – sonst zeigte der Cache eine Mail, die dort nicht mehr liegt.
+    ///
+    /// Verarbeitung: Meldet der Server die Ziel-UIDs (UIDPLUS), wird die
+    /// Mail umgezogen. Sonst bleibt nur das Entfernen – sonst zeigte der
+    /// Cache eine Mail, die dort nicht mehr liegt.
+    ///
+    /// - Parameters:
+    ///   - movedUIDs: UIDs im Posteingang.
+    ///   - copyUID: Zuordnung alte → neue UID, sofern gemeldet.
+    ///   - account: Postfach.
+    ///   - spamFolder: Spam-Ordner.
     private func updateCache(
         movedUIDs: [UInt32],
         copyUID: CopyUID?,
@@ -319,25 +381,41 @@ final class SpamFilterService {
         }
     }
 
+    /// Wandelt UIDs in eine IMAP-UID-Menge.
+    ///
+    /// - Parameter uids: UIDs.
+    /// - Returns: UID-Menge für IMAP-Befehle.
     private func uidSet(_ uids: [UInt32]) -> UIDSet {
         UIDSet(uids.map { SwiftMail.UID($0) })
     }
 
-    /// Postfach und normalisierter Listenwert zu einer Mail.
+    /// Zugangsdaten und normalisierter Listenwert zu einer Mail.
+    ///
+    /// - Parameters:
+    ///   - message: Betroffene Mail.
+    ///   - kind: Adresse oder Domain.
+    /// - Returns: Zugangsdaten des Postfachs und der einzutragende Wert.
+    /// - Throws: `MailCredentialError` oder `FilterError.unusableSender`.
     private func context(
         for message: CachedMessage,
         kind: FilterEntryKind
-    ) throws -> (account: MailAccount, value: String) {
-        guard let account = accountStore.accounts.first(where: { $0.id == message.accountID }) else {
-            throw FilterError.accountNotFound
-        }
+    ) throws -> (credentials: MailCredentials, value: String) {
+        let credentials = try accountStore.credentials(for: message.accountID)
         guard let sender = FilterAddress.sender(fromHeader: message.from) else {
             throw FilterError.unusableSender
         }
-        return (account, kind == .address ? sender.address : sender.domain)
+        return (credentials, kind == .address ? sender.address : sender.domain)
     }
 
     /// Verschiebt eine einzelne Mail und zieht den Cache nach.
+    ///
+    /// - Parameters:
+    ///   - message: Betroffene Mail.
+    ///   - folder: Zielordner.
+    ///   - server: Angemeldete Verbindung mit ausgewähltem Ordner der Mail.
+    ///   - account: Postfach (für die Konsole).
+    /// - Returns: Immer `true` (verschoben).
+    /// - Throws: IMAP-Fehler.
     private func move(
         _ message: CachedMessage,
         to folder: String,
@@ -358,6 +436,13 @@ final class SpamFilterService {
         return true
     }
 
+    /// Bestimmt den Spam-Ordner eines Postfachs anhand der Ordnerliste.
+    ///
+    /// - Parameters:
+    ///   - account: Postfach (mit ggf. gemerktem Spam-Ordner).
+    ///   - server: Angemeldete Verbindung.
+    /// - Returns: Gefundener Ordner oder Vorschlag.
+    /// - Throws: IMAP-Fehler.
     private func resolveSpamFolder(
         for account: MailAccount,
         on server: SwiftMail.IMAPServer
@@ -372,6 +457,12 @@ final class SpamFilterService {
 
     /// Wie `resolveSpamFolder`, wirft aber, wenn es keinen Ordner gibt –
     /// angelegt wird nur nach ausdrücklicher Bestätigung.
+    ///
+    /// - Parameters:
+    ///   - account: Postfach.
+    ///   - server: Angemeldete Verbindung.
+    /// - Returns: Pfad des Spam-Ordners (wird beim Postfach gemerkt).
+    /// - Throws: `FilterError.noSpamFolder` oder IMAP-Fehler.
     private func requireSpamFolder(
         for account: MailAccount,
         on server: SwiftMail.IMAPServer
@@ -382,27 +473,6 @@ final class SpamFilterService {
             return folder
         case .missing(let proposal):
             throw FilterError.noSpamFolder(proposal: proposal)
-        }
-    }
-
-    /// Baut eine Verbindung auf, führt die Operation aus und meldet sich ab.
-    private func withConnection<T>(
-        for account: MailAccount,
-        _ body: (SwiftMail.IMAPServer) async throws -> T
-    ) async throws -> T {
-        guard let password = try accountStore.password(for: account) else {
-            throw FilterError.noPassword
-        }
-        let server = MailServerFactory.imapServer(for: account)
-        do {
-            try await server.connect()
-            try await server.login(username: account.username, password: password)
-            let result = try await body(server)
-            try await server.logout()
-            return result
-        } catch {
-            try? await server.disconnect()
-            throw error
         }
     }
 }

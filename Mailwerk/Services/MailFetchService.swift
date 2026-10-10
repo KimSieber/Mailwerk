@@ -31,7 +31,9 @@
 //  Abgrenzung: `MailActionService` setzt Flags und verschiebt Mails;
 //  `MailSendService` versendet. Die Darstellung liegt im ViewModel.
 //
-//  Abhängigkeiten: SwiftMail (IMAP), MailServerFactory (TLS-Vorgaben),
+//  Verbindung und Zugangsdaten kommen aus `MailSession`.
+//
+//  Abhängigkeiten: SwiftMail (IMAP), MailSession (Verbindung),
 //  MessageStore (Cache), ServerReconciliation (Abgleichslogik),
 //  SyncStatePlanner (Sync-Zustand), MessageContentPlan (zu ladende Teile).
 //
@@ -100,19 +102,16 @@ enum MailFetchService {
     ///    dem alten Stand.
     ///
     /// - Parameters:
-    ///   - account: Postfach.
-    ///   - password: Passwort des Postfachs.
+    ///   - credentials: Postfach und Passwort.
     ///   - folder: IMAP-Ordner (Standard: INBOX).
     /// - Throws: Verbindungsfehler oder IMAP-Fehler.
     static func refreshAndCache(
-        account: MailAccount,
-        password: String,
+        _ credentials: MailCredentials,
         folder: String = inboxFolder
     ) async throws {
-        let server = MailServerFactory.imapServer(for: account)
-        do {
-            try await server.connect()
-            try await server.login(username: account.username, password: password)
+        let account = credentials.account
+        let outcome = try await MailSession.withIMAP(credentials) {
+            server -> (decision: SyncStatePlanner.Decision, uidValidity: UInt32, uidNext: UInt32) in
             let selection = try await server.selectMailbox(folder)
 
             // 1. Vorgehen anhand des Sync-Zustands
@@ -188,19 +187,15 @@ enum MailFetchService {
                     plan: arrivals, fromUID: fromUID, failedCount: failed
                 )
             }
-
-            try await server.logout()
-
-            // 6. Stand und Zustand vermerken – erst hier, nach vollständigem Abruf.
-            let state: FolderSyncState? = decision == .unsupported
-                ? nil
-                : FolderSyncState(uidValidity: serverValidity, uidNext: nextUIDNext)
-            MessageStore.shared.recordSync(accountID: account.id, folder: folder, state: state)
-
-        } catch {
-            try? await server.disconnect()
-            throw error
+            return (decision: decision, uidValidity: serverValidity, uidNext: nextUIDNext)
         }
+
+        // 6. Stand und Zustand vermerken – erst hier, nach vollständigem
+        //    Abruf einschließlich Abmelden.
+        let state: FolderSyncState? = outcome.decision == .unsupported
+            ? nil
+            : FolderSyncState(uidValidity: outcome.uidValidity, uidNext: outcome.uidNext)
+        MessageStore.shared.recordSync(accountID: account.id, folder: folder, state: state)
     }
 
     // MARK: - Server-Abgleich
@@ -285,22 +280,18 @@ enum MailFetchService {
     /// (siehe `SyncWindow.startAfterLoading`).
     ///
     /// - Parameters:
-    ///   - account: Postfach.
-    ///   - password: Passwort des Postfachs.
+    ///   - credentials: Postfach und Passwort.
     ///   - folder: IMAP-Ordner (Standard: INBOX).
     /// - Returns: Ergebnis mit Anzahl geladener und fehlgeschlagener Mails
     ///   und ob es noch Älteres gibt.
     /// - Throws: Verbindungsfehler oder IMAP-Fehler.
     static func fetchOlder(
-        account: MailAccount,
-        password: String,
+        _ credentials: MailCredentials,
         folder: String = inboxFolder
     ) async throws -> OlderFetchResult {
-        let server = MailServerFactory.imapServer(for: account)
+        let account = credentials.account
         let searchCalendar = Calendar(identifier: .gregorian)
-        do {
-            try await server.connect()
-            try await server.login(username: account.username, password: password)
+        return try await MailSession.withIMAP(credentials) { server -> OlderFetchResult in
             let selection = try await server.selectMailbox(folder)
 
             var start = MessageStore.shared.windowStart(accountID: account.id, folder: folder)
@@ -314,7 +305,6 @@ enum MailFetchService {
             guard try await hasMessages(
                 on: server, before: start, messageCount: messageCount, calendar: searchCalendar
             ) else {
-                try await server.logout()
                 print("📬 [\(account.displayName)/\(folder)] Keine älteren Nachrichten")
                 return .noOlder
             }
@@ -355,11 +345,9 @@ enum MailFetchService {
             let hasMore = try await hasMessages(
                 on: server, before: start, messageCount: messageCount, calendar: searchCalendar
             )
-            try await server.logout()
-            return .loaded(count: loaded, failed: failed, windowStart: start, hasMore: hasMore)
-        } catch {
-            try? await server.disconnect()
-            throw error
+            return OlderFetchResult.loaded(
+                count: loaded, failed: failed, windowStart: start, hasMore: hasMore
+            )
         }
     }
 
