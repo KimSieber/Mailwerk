@@ -41,6 +41,10 @@
 //  Abgrenzung: Der Store kennt weder IMAP noch Oberfläche. Abruf und
 //  Darstellung liegen im MailFetchService bzw. in den ViewModels.
 //
+//  Absenderlogos: Tabelle `sender_icon` hält je Domain das geladene Logo
+//  (oder den erfolglosen Versuch) mit Prüfzeitpunkt. Sie gehört keinem
+//  Postfach und bleibt beim Entfernen eines Postfachs erhalten.
+//
 //  Spam-Angabe: Je Nachricht speichert die Ablage die Einstufung des
 //  Servers (Spalten `spamFlag`, `spamScore`). `spamFlag` NULL heißt
 //  „unbekannt“ – die Nachricht wurde vor Schema-Stufe 4 gespeichert und
@@ -49,7 +53,7 @@
 //  Abhängigkeiten: SQLite3 (System-Framework), CachedMessage,
 //  CachedAttachment, SpamHeaderVerdict, FolderListing, MailFolder (Name des Posteingangs),
 //  ServerReconciliation (Plan-Typ), FolderSyncState, MessageListItem,
-//  Log.
+//  SenderIconRecord, Log.
 //
 
 import Foundation
@@ -123,7 +127,7 @@ final class MessageStore: @unchecked Sendable {
 
     /// Schema-Version, die diese App-Version erwartet. Wird nach den
     /// Migrationen in `PRAGMA user_version` geschrieben.
-    private static let schemaVersion: Int32 = 4
+    private static let schemaVersion: Int32 = 5
 
     /// Explizite Spaltenliste – Reihenfolge entspricht den Indizes in readMessage().
     private static let messageColumns = """
@@ -433,6 +437,9 @@ final class MessageStore: @unchecked Sendable {
         if current < 4 {
             migrateToVersion4()
         }
+        if current < 5 {
+            migrateToVersion5()
+        }
 
         setUserVersion(Self.schemaVersion)
     }
@@ -547,6 +554,20 @@ final class MessageStore: @unchecked Sendable {
     private func migrateToVersion4() {
         addColumnIfMissing("spamFlag", "INTEGER")
         addColumnIfMissing("spamScore", "REAL")
+    }
+
+    /// Stufe 5: Absenderlogos je Domain.
+    ///
+    /// Verarbeitung: Legt die Tabelle `sender_icon` an. `image` NULL heißt
+    /// „kein Logo gefunden“; `checkedAt` steuert, wann erneut geladen wird.
+    private func migrateToVersion5() {
+        exec("""
+            CREATE TABLE IF NOT EXISTS sender_icon (
+                domain TEXT PRIMARY KEY,
+                image BLOB,
+                checkedAt REAL NOT NULL
+            )
+            """)
     }
 
     /// Schreibt die Kennungen von "<account>-<uid>" auf "<account>-INBOX-<uid>" um.
@@ -1293,6 +1314,52 @@ final class MessageStore: @unchecked Sendable {
         bind(stmt, 1, accountID.uuidString)
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
         return try? JSONDecoder().decode(FolderListing.self, from: Data(str(stmt, 0).utf8))
+    }
+
+    // MARK: - Absenderlogos
+
+    /// Speichert das Logo einer Domain bzw. den erfolglosen Versuch und
+    /// ersetzt einen vorhandenen Eintrag.
+    ///
+    /// - Parameter record: Logo mit Prüfzeitpunkt; `imageData` `nil` = kein Logo.
+    func saveSenderIcon(_ record: SenderIconRecord) {
+        let sql = """
+            INSERT INTO sender_icon (domain, image, checkedAt) VALUES (?, ?, ?)
+            ON CONFLICT(domain) DO UPDATE SET image = excluded.image, checkedAt = excluded.checkedAt
+            """
+        logged("saveSenderIcon") {
+            try execute(sql, context: "saveSenderIcon") { stmt in
+                bind(stmt, 1, record.domain)
+                if let data = record.imageData, !data.isEmpty {
+                    _ = data.withUnsafeBytes { ptr in
+                        sqlite3_bind_blob(stmt, 2, ptr.baseAddress, Int32(data.count), SQLITE_TRANSIENT)
+                    }
+                } else {
+                    sqlite3_bind_null(stmt, 2)
+                }
+                sqlite3_bind_double(stmt, 3, record.checkedAt.timeIntervalSince1970)
+            }
+        }
+    }
+
+    /// Gespeichertes Logo einer Domain.
+    ///
+    /// - Parameter domain: Hauptdomain.
+    /// - Returns: Eintrag oder `nil`, wenn die Domain noch nie geprüft wurde.
+    func senderIcon(domain: String) -> SenderIconRecord? {
+        guard let stmt = prepare("SELECT image, checkedAt FROM sender_icon WHERE domain = ?") else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, domain)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        var data: Data?
+        if sqlite3_column_type(stmt, 0) != SQLITE_NULL, let bytes = sqlite3_column_blob(stmt, 0) {
+            data = Data(bytes: bytes, count: Int(sqlite3_column_bytes(stmt, 0)))
+        }
+        return SenderIconRecord(
+            domain: domain,
+            imageData: data,
+            checkedAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 1))
+        )
     }
 
     // MARK: - Löschen

@@ -24,7 +24,7 @@
 //  SpamClassifier.allowsSenderImage; Darstellung → SenderAvatarView.
 //
 //  Abhängigkeiten: Foundation, Contacts, Observation, SwiftUI (Image),
-//  UIKit bzw. AppKit (Bilddaten), ContactSuggestionService, Log.
+//  DecodedImage, ContactSuggestionService, Log.
 //
 
 import Foundation
@@ -32,11 +32,6 @@ import Contacts
 import Observation
 import SwiftUI
 import os
-#if os(macOS)
-import AppKit
-#else
-import UIKit
-#endif
 
 /// Kontaktbilder je E-Mail-Adresse.
 @Observable
@@ -125,7 +120,7 @@ final class ContactImageDirectory {
         guard let address else { return nil }
         let key = Self.normalized(address)
         if let image = images[key] { return image }
-        guard let data = thumbnails[key], let image = Self.makeImage(from: data) else { return nil }
+        guard let data = thumbnails[key], let image = DecodedImage.image(from: data) else { return nil }
         images[key] = image
         return image
     }
@@ -189,19 +184,5 @@ final class ContactImageDirectory {
             return [:]
         }
         return thumbnailMap(from: contacts)
-    }
-
-    /// Erzeugt ein SwiftUI-Bild aus Bilddaten.
-    ///
-    /// - Parameter data: Bilddaten (JPEG/PNG).
-    /// - Returns: Bild oder `nil` bei unlesbaren Daten.
-    private static func makeImage(from data: Data) -> Image? {
-        #if os(macOS)
-        guard let image = NSImage(data: data) else { return nil }
-        return Image(nsImage: image)
-        #else
-        guard let image = UIImage(data: data) else { return nil }
-        return Image(uiImage: image)
-        #endif
     }
 }

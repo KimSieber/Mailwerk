@@ -162,7 +162,7 @@ struct MessageStoreListTests {
         #expect(items.first { $0.uid == 2 }?.preview == nil)
         #expect(sqlite(at: path, "SELECT count(*) FROM sqlite_master WHERE name = 'idx_message_account_folder_date'") == "1")
         #expect(sqlite(at: path, "SELECT count(*) FROM sqlite_master WHERE name = 'idx_message_account_folder'") == "0")
-        #expect(sqlite(at: path, "PRAGMA user_version") == "4")
+        #expect(sqlite(at: path, "PRAGMA user_version") == "5")
     }
 
     /// Testhilfe: versetzt eine Datenbank in den Zustand von Schema-Stufe 2

@@ -29,7 +29,7 @@
 //
 //  Abhängigkeiten: InboxViewModel, MessageStore, MailActionService,
 //  FolderCatalog, NetworkMonitor, MessageRow, MessageRowParty,
-//  ContactImageDirectory, FilterListCloudEvents, MessageDetailView, ComposeView, Dialogs, Log.
+//  ContactImageDirectory, SenderIconCache, FilterListCloudEvents, MessageDetailView, ComposeView, Dialogs, Log.
 //
 
 import SwiftUI
@@ -426,11 +426,18 @@ struct InboxView: View {
             )
         } label: {
             let party = MessageRowParty.make(for: message, showsRecipients: showsRecipients)
+            let showsImage = viewModel.showsSenderImage(for: message)
+            // Nur erlaubte Zeilen fragen nach Bildern – Spam löst so keinen
+            // Logo-Abruf aus. Ein Kontaktbild hat Vorrang vor dem Logo.
+            let contactImage = showsImage ? ContactImageDirectory.shared.image(for: party.address) : nil
             MessageRow(
                 message: message,
                 party: party,
-                showsImage: viewModel.showsSenderImage(for: message),
-                contactImage: ContactImageDirectory.shared.image(for: party.address),
+                showsImage: showsImage,
+                contactImage: contactImage,
+                logoImage: showsImage && contactImage == nil
+                    ? SenderIconCache.shared.image(forAddress: party.address)
+                    : nil,
                 colorHex: colorHex
             )
         }

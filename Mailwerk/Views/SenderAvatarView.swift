@@ -2,17 +2,20 @@
 //  SenderAvatarView.swift
 //  Mailwerk
 //
-//  Zweck: Runder Kreis links in der Listenzeile – Kontaktbild, sonst
-//  Initialen auf einer festen Farbe je Absender, oder ein leerer Kreis,
-//  wenn kein Bild gezeigt werden darf (Spam, Spamverdacht, unbekannte
-//  Einstufung).
+//  Zweck: Runder Kreis links in der Listenzeile – Kontaktbild, sonst Logo
+//  der Absenderdomain auf weißem Grund, sonst Initialen auf einer festen
+//  Farbe je Absender, oder ein leerer Kreis, wenn kein Bild gezeigt werden
+//  darf (Spam, Spamverdacht, unbekannte Einstufung).
+//
+//  Logos stehen immer auf Weiß mit feinem Rand: Viele sind dunkel auf
+//  transparentem Grund und wären im Dunkelmodus sonst unsichtbar.
 //
 //  Der leere Kreis hält den Platz, damit alle Zeilen gleich ausgerichtet
 //  bleiben.
 //
 //  Abgrenzung: Welche Person und welche Initialen → MessageRowParty; ob
 //  ein Bild erlaubt ist → SpamClassifier.allowsSenderImage; Kontaktbilder
-//  → ContactImageDirectory.
+//  → ContactImageDirectory; Logos → SenderIconCache.
 //
 //  Abhängigkeiten: SwiftUI, AccountColor (Farbpalette).
 //
@@ -25,6 +28,8 @@ enum SenderAvatar {
     case empty
     /// Bild (Kontaktbild), rund zugeschnitten.
     case image(Image)
+    /// Logo der Absenderdomain, eingepasst auf weißem Kreis.
+    case logo(Image)
     /// Initialen auf der Farbe mit dem Index in `AccountColor.allCases`.
     case initials(String, colorIndex: Int)
 }
@@ -36,6 +41,8 @@ struct SenderAvatarView: View {
 
     /// Durchmesser in Punkten.
     static let size: CGFloat = 40
+    /// Abstand des Logos zum Kreisrand, damit eckige Logos nicht beschnitten werden.
+    static let logoInset: CGFloat = 6
 
     /// Aufbau des Kreises.
     var body: some View {
@@ -49,6 +56,17 @@ struct SenderAvatarView: View {
                     .resizable()
                     .scaledToFill()
                     .clipShape(Circle())
+            case .logo(let image):
+                Circle()
+                    .fill(Color.white)
+                image
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .padding(Self.logoInset)
+                    .clipShape(Circle())
+                Circle()
+                    .strokeBorder(Color.secondary.opacity(0.25), lineWidth: 0.5)
             case .initials(let text, colorIndex: let colorIndex):
                 Circle()
                     .fill(color(at: colorIndex))
