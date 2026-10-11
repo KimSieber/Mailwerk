@@ -10,8 +10,10 @@
 //  Print-Formatter an das System.
 //
 //  Sicherheit: JavaScript aus der Mail ist blockiert
-//  (`allowsContentJavaScript = false`). Bilder und Stylesheets werden
-//  weiterhin geladen, damit der Ausdruck vollständig ist.
+//  (`allowsContentJavaScript = false`). Externe Inhalte regelt das
+//  übergebene HTML selbst: MailPrintFormatter setzt dieselbe
+//  Content-Security-Policy wie die Anzeige. Externe Bilder erscheinen im
+//  Ausdruck also nur, wenn sie in der Anzeige freigegeben waren.
 //
 //  Die Instanz hält sich selbst über `retainSelf`, bis der Druck
 //  abgeschlossen ist, damit der WebView nicht zu früh freigegeben wird.

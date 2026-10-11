@@ -18,19 +18,32 @@
 //  sie zu klein aus, und das Ende der Mail wird abgeschnitten – bei
 //  schlichten Mails aus Absätzen um 20–30 Punkte.
 //
-//  Der Inhalt wird nur neu geladen, wenn sich das HTML tatsächlich
-//  geändert hat. SwiftUI ruft `update…View` bei jeder Änderung der
-//  Umgebung auf – auch, wenn diese Ansicht selbst ihre Höhe meldet.
+//  Der Inhalt wird nur neu geladen, wenn sich das HTML oder die Freigabe
+//  externer Inhalte tatsächlich geändert hat. SwiftUI ruft `update…View`
+//  bei jeder Änderung der Umgebung auf – auch, wenn diese Ansicht selbst
+//  ihre Höhe meldet.
 //  Ohne die Prüfung würde die Mail dabei jedes Mal neu geladen und
 //  neu vermessen.
 //
 //  Sicherheit: JavaScript aus der Mail ist abgeschaltet; die Mail kann
 //  nicht wegnavigieren. Links öffnen extern bzw. als neue Mail.
+//  Externe Inhalte (Bilder, Stylesheets, Schriften von fremden Servern)
+//  sperrt eine Content-Security-Policy im Kopf des Grundgerüsts, solange
+//  `allowsRemoteContent` nicht gesetzt ist (RemoteContentPolicy). Die
+//  Sperre der Navigation allein reicht dafür nicht: Bilder und Stylesheets
+//  sind keine Navigation und laufen nicht durch den Navigation-Delegate.
+//  Ändert sich die Freigabe, wird der Inhalt mit der anderen Regel neu
+//  geladen.
 //
-//  Abgrenzung: Aufbau der Mailansicht → MessageDetailView; Zitat in der
-//  Antwort → ComposeView; Einordnung von Links → MailLinkAction.
+//  Die App misst die Höhe per `evaluateJavaScript`. Dieses Skript gehört
+//  der App, nicht der Mail; weder `allowsContentJavaScript = false` noch
+//  die CSP der Seite gelten dafür.
 //
-//  Abhängigkeiten: SwiftUI, WebKit, MailLinkAction, Log.
+//  Abgrenzung: Aufbau der Mailansicht und Freigabe → MessageDetailView;
+//  Zitat in der Antwort → ComposeView (immer gesperrt); Einordnung von
+//  Links → MailLinkAction; Regeln für externe Inhalte → RemoteContentPolicy.
+//
+//  Abhängigkeiten: SwiftUI, WebKit, MailLinkAction, RemoteContentPolicy, Log.
 //
 
 import SwiftUI
@@ -44,6 +57,8 @@ struct HTMLMailView: NSViewRepresentable {
     let html: String
     /// Gemessene Höhe des Inhalts.
     @Binding var contentHeight: CGFloat
+    /// `true`, wenn externe Inhalte für diese Anzeige freigegeben sind.
+    var allowsRemoteContent: Bool = false
     /// Getippter mailto:-Link – öffnet eine neue Mail in Mailwerk.
     var onMailto: ((MailtoLink) -> Void)? = nil
 
@@ -60,14 +75,18 @@ struct HTMLMailView: NSViewRepresentable {
         return webView
     }
 
-    /// Übernimmt Änderungen; lädt nur bei geändertem HTML neu.
+    /// Übernimmt Änderungen; lädt nur bei geändertem HTML oder geänderter
+    /// Freigabe neu.
     ///
     /// - Parameters:
     ///   - webView: Angezeigte Web-Ansicht.
     ///   - context: Kontext mit dem Coordinator.
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.parent = self
-        context.coordinator.loadIfChanged(html, in: webView)
+        context.coordinator.loadIfChanged(
+            LoadedContent(html: html, allowsRemoteContent: allowsRemoteContent),
+            in: webView
+        )
     }
 }
 #else
@@ -77,6 +96,8 @@ struct HTMLMailView: UIViewRepresentable {
     let html: String
     /// Gemessene Höhe des Inhalts.
     @Binding var contentHeight: CGFloat
+    /// `true`, wenn externe Inhalte für diese Anzeige freigegeben sind.
+    var allowsRemoteContent: Bool = false
     /// Getippter mailto:-Link – öffnet eine neue Mail in Mailwerk.
     var onMailto: ((MailtoLink) -> Void)? = nil
 
@@ -93,14 +114,18 @@ struct HTMLMailView: UIViewRepresentable {
         return webView
     }
 
-    /// Übernimmt Änderungen; lädt nur bei geändertem HTML neu.
+    /// Übernimmt Änderungen; lädt nur bei geändertem HTML oder geänderter
+    /// Freigabe neu.
     ///
     /// - Parameters:
     ///   - webView: Angezeigte Web-Ansicht.
     ///   - context: Kontext mit dem Coordinator.
     func updateUIView(_ webView: WKWebView, context: Context) {
         context.coordinator.parent = self
-        context.coordinator.loadIfChanged(html, in: webView)
+        context.coordinator.loadIfChanged(
+            LoadedContent(html: html, allowsRemoteContent: allowsRemoteContent),
+            in: webView
+        )
     }
 }
 #endif
@@ -136,18 +161,33 @@ extension HTMLMailView {
         return webView
     }
 
-    /// Lädt das HTML, eingebettet in ein Grundgerüst mit Schrift, Farben
-    /// und Breitenbegrenzung.
+    /// Inhalt einer Anzeige: HTML der Mail und Freigabe externer Inhalte.
+    /// Neu geladen wird, sobald sich einer der beiden Werte ändert.
+    struct LoadedContent: Equatable {
+        /// HTML-Body der Mail.
+        let html: String
+        /// `true`, wenn externe Inhalte freigegeben sind.
+        let allowsRemoteContent: Bool
+    }
+
+    /// Baut das vollständige Dokument: Grundgerüst mit Sicherheitsregeln,
+    /// Schrift, Farben und Breitenbegrenzung, darin das HTML der Mail.
+    ///
+    /// Verarbeitung: Die Meta-Zeilen aus `RemoteContentPolicy` stehen im
+    /// Kopf vor dem Inhalt der Mail, damit sie für alles darin gelten.
     ///
     /// - Parameters:
     ///   - html: HTML-Body der Mail.
-    ///   - webView: Ziel-Ansicht.
-    static func loadHTML(_ html: String, in webView: WKWebView) {
-        let wrapped = """
+    ///   - allowsRemoteContent: `true`, wenn externe Inhalte geladen
+    ///     werden dürfen.
+    /// - Returns: HTML-Dokument zum Laden in die Web-Ansicht.
+    static func document(for html: String, allowsRemoteContent: Bool) -> String {
+        """
             <!DOCTYPE html>
             <html>
             <head>
             <meta charset="utf-8">
+            \(RemoteContentPolicy.headTags(allowsRemoteContent: allowsRemoteContent))
             <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
             <style>
                 body {
@@ -193,15 +233,24 @@ extension HTMLMailView {
             <body>\(html)</body>
             </html>
             """
-        webView.loadHTMLString(wrapped, baseURL: nil)
+    }
+
+    /// Lädt den Inhalt als vollständiges Dokument in die Web-Ansicht.
+    ///
+    /// - Parameters:
+    ///   - content: HTML der Mail und Freigabe externer Inhalte.
+    ///   - webView: Ziel-Ansicht.
+    static func load(_ content: LoadedContent, in webView: WKWebView) {
+        let page = document(for: content.html, allowsRemoteContent: content.allowsRemoteContent)
+        webView.loadHTMLString(page, baseURL: nil)
     }
 
     /// Steuert Navigation und Höhenmessung der Web-Ansicht.
     class Coordinator: NSObject, WKNavigationDelegate {
         /// Aktuelle Fassung der Ansicht (für Binding und Rückrufe).
         var parent: HTMLMailView
-        /// Zuletzt geladenes HTML; `nil` = noch nichts geladen.
-        private var loadedHTML: String?
+        /// Zuletzt geladener Inhalt; `nil` = noch nichts geladen.
+        private var loaded: LoadedContent?
 
         /// Legt den Coordinator an.
         ///
@@ -210,20 +259,20 @@ extension HTMLMailView {
             self.parent = parent
         }
 
-        /// Lädt das HTML nur, wenn es sich vom zuletzt geladenen
-        /// unterscheidet. In Debug-Builds wird jedes tatsächliche Laden
-        /// ausgegeben (`⏱ HTML geladen …`).
+        /// Lädt den Inhalt nur, wenn er sich vom zuletzt geladenen
+        /// unterscheidet (HTML oder Freigabe). In Debug-Builds wird jedes
+        /// tatsächliche Laden ausgegeben (`⏱ HTML geladen …`).
         ///
         /// - Parameters:
-        ///   - html: Anzuzeigendes HTML.
+        ///   - content: Anzuzeigender Inhalt.
         ///   - webView: Ziel-Ansicht.
-        func loadIfChanged(_ html: String, in webView: WKWebView) {
-            guard html != loadedHTML else { return }
-            loadedHTML = html
+        func loadIfChanged(_ content: LoadedContent, in webView: WKWebView) {
+            guard content != loaded else { return }
+            loaded = content
             #if DEBUG
-            Log.view.debug("⏱ HTML geladen: \(html.utf8.count / 1024) KB")
+            Log.view.debug("⏱ HTML geladen: \(content.html.utf8.count / 1024) KB, extern: \(content.allowsRemoteContent, privacy: .public)")
             #endif
-            HTMLMailView.loadHTML(html, in: webView)
+            HTMLMailView.load(content, in: webView)
         }
 
         /// Entscheidet über eine Navigation.

@@ -17,14 +17,22 @@
 //  Abgrenzung: Laden der Mail aus dem Cache → MessageDetailLoader;
 //  HTML-Darstellung → HTMLMailView; Verfassen → ComposeView; Ordnerwahl →
 //  FolderMoveSheet; Anhang-Zeile → AttachmentRow; Druck → MailPrinter;
-//  HTML für Druck und Teilen → MailPrintFormatter.
+//  HTML für Druck und Teilen → MailPrintFormatter; Regeln für externe
+//  Inhalte → RemoteContentPolicy.
+//
+//  Externe Inhalte (Bilder, Stylesheets von fremden Servern) sind
+//  gesperrt. Enthält die Mail solche Inhalte, erscheint über dem Text ein
+//  schmaler Hinweis mit dem Knopf „Laden“. Die Freigabe gilt nur für
+//  diese Anzeige der Mail; beim nächsten Öffnen ist wieder alles
+//  gesperrt. Drucken und Teilen folgen dem Zustand der Anzeige.
 //
 //  Teilen läuft über `ShareLink` im Menü – auf iPhone/iPad das
 //  Teilen-Blatt, auf dem Mac das Teilen-Untermenü des Systems. Die Dateien
 //  (Mail als HTML, geladene Anhänge) liegen dafür schon beim Öffnen bereit.
 //
 //  Abhängigkeiten: SwiftUI, QuickLook, MessageActions, SpamFilterService,
-//  AttachmentManager, MessageStore, MailPrintFormatter, Dialogs, Log.
+//  AttachmentManager, MessageStore, MailPrintFormatter, RemoteContentPolicy,
+//  Dialogs, Log.
 //
 
 import SwiftUI
@@ -47,6 +55,10 @@ struct MessageDetailView: View {
 
     /// Gemessene Höhe des HTML-Inhalts.
     @State private var webViewHeight: CGFloat = 100
+    /// `true`, wenn die Mail externe Inhalte enthält (Hinweis anzeigen).
+    @State private var hasRemoteContent = false
+    /// `true`, wenn externe Inhalte für diese Anzeige freigegeben sind.
+    @State private var allowsRemoteContent = false
     /// Anhänge der Mail aus dem Cache.
     @State private var attachments: [CachedAttachment] = []
     /// Datei für die QuickLook-Vorschau; `nil` = keine Vorschau offen.
@@ -205,13 +217,18 @@ struct MessageDetailView: View {
         }
     }
 
-    /// Inhalt der Mail: HTML bevorzugt, sonst Text.
+    /// Inhalt der Mail: HTML bevorzugt, sonst Text. Über einer HTML-Mail
+    /// mit gesperrten externen Inhalten steht der Hinweis zum Laden.
     @ViewBuilder
     private var messageBody: some View {
         if let html = message.htmlBody {
+            if hasRemoteContent && !allowsRemoteContent {
+                remoteContentNotice
+            }
             HTMLMailView(
                 html: html,
                 contentHeight: $webViewHeight,
+                allowsRemoteContent: allowsRemoteContent,
                 onMailto: { mailtoRequest = $0 }
             )
             .frame(height: max(100, webViewHeight))
@@ -220,6 +237,25 @@ struct MessageDetailView: View {
         } else {
             Text("Kein Inhalt verfügbar").foregroundStyle(.secondary)
         }
+    }
+
+    /// Schmaler Hinweis „Externe Inhalte blockiert“ mit kleinem Knopf zum
+    /// Laden – bewusst zurückhaltend, damit er die Mail nicht verdrängt.
+    private var remoteContentNotice: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "eye.slash")
+                .foregroundStyle(.secondary)
+            Text("Externe Inhalte blockiert")
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            Button("Laden") {
+                allowRemoteContent()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .accessibilityLabel("Externe Inhalte laden")
+        }
+        .font(.footnote)
     }
 
     /// Liste der Anhänge mit Vorschau, Nachladen und Teilen.
@@ -400,22 +436,19 @@ struct MessageDetailView: View {
 
     // MARK: - Beim Öffnen
 
-    /// Lädt die Anhänge, bereitet das Teilen vor und markiert eine
-    /// ungelesene Mail als gelesen.
+    /// Prüft auf externe Inhalte, lädt die Anhänge, bereitet das Teilen vor
+    /// und markiert eine ungelesene Mail als gelesen.
     ///
-    /// Verarbeitung: Lässt sich die HTML-Datei nicht schreiben, fehlt sie
-    /// beim Teilen; das wird protokolliert. Scheitert das Markieren, bleibt
-    /// die Mail ungelesen; eine Meldung erscheint nicht, weil der Nutzer
-    /// nichts ausgelöst hat.
+    /// Verarbeitung: Scheitert das Markieren, bleibt die Mail ungelesen;
+    /// eine Meldung erscheint nicht, weil der Nutzer nichts ausgelöst hat.
     @MainActor
     private func prepareOnOpen() async {
+        if let html = message.htmlBody {
+            hasRemoteContent = RemoteContentPolicy.containsRemoteReferences(html)
+        }
         attachments = MessageStore.shared.attachments(forMessage: message.id)
         prepareShareURLs()
-        do {
-            mailFileURL = try MailPrintFormatter.writeTemporaryFile(for: message, attachments: attachments)
-        } catch {
-            Log.view.error("⚠️ Mail als Datei zum Teilen nicht geschrieben: \(error.localizedDescription, privacy: .public)")
-        }
+        writeMailFile()
 
         guard isUnread else { return }
         do {
@@ -567,11 +600,45 @@ struct MessageDetailView: View {
         }
     }
 
+    // MARK: - Externe Inhalte
+
+    /// Gibt externe Inhalte für diese Anzeige frei.
+    ///
+    /// Verarbeitung: Die Mail wird mit gelockerter Regel neu geladen; die
+    /// Datei zum Teilen wird neu geschrieben, damit sie der Anzeige folgt.
+    private func allowRemoteContent() {
+        allowsRemoteContent = true
+        writeMailFile()
+        Log.view.info("🖼 Externe Inhalte für diese Anzeige freigegeben")
+    }
+
     // MARK: - Teilen & Drucken
 
-    /// Druckt die Mail samt Kopfdaten und Anhangliste.
+    /// Schreibt die Mail als HTML-Datei zum Teilen, passend zur Freigabe
+    /// externer Inhalte in der Anzeige.
+    ///
+    /// Verarbeitung: Lässt sich die Datei nicht schreiben, fehlt sie beim
+    /// Teilen; das wird protokolliert.
+    private func writeMailFile() {
+        do {
+            mailFileURL = try MailPrintFormatter.writeTemporaryFile(
+                for: message,
+                attachments: attachments,
+                allowsRemoteContent: allowsRemoteContent
+            )
+        } catch {
+            Log.view.error("⚠️ Mail als Datei zum Teilen nicht geschrieben: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Druckt die Mail samt Kopfdaten und Anhangliste, mit externen
+    /// Inhalten nur, wenn sie in der Anzeige freigegeben sind.
     private func printMessage() {
-        let html = MailPrintFormatter.html(for: message, attachments: attachments)
+        let html = MailPrintFormatter.html(
+            for: message,
+            attachments: attachments,
+            allowsRemoteContent: allowsRemoteContent
+        )
         MailPrinter().print(html: html)
     }
 

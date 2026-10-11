@@ -12,6 +12,12 @@
 //  (Google, Newsletter) unzuverlässig und scheitert still. Eine .html-Datei
 //  kann jeder Empfänger öffnen, und das System kann sie als PDF rendern.
 //
+//  Externe Inhalte folgen der Anzeige: Sind sie dort nicht freigegeben,
+//  sperrt dieselbe Content-Security-Policy wie in der Anzeige sie auch
+//  beim Drucken und in der geteilten Datei (RemoteContentPolicy). Die
+//  Regel steht in der Datei selbst und gilt damit auch, wenn der
+//  Empfänger sie im Browser öffnet.
+//
 //  Kopfdaten, Dateinamen und Textmails werden für HTML maskiert. Eine
 //  reine Textmail erscheint als vorformatierter Block. Breite Tabellen
 //  und Bilder werden auf die Seitenbreite begrenzt.
@@ -21,7 +27,7 @@
 //  Abgrenzung: Drucken → MailPrinter; Teilen-Menü → MessageDetailView
 //  (`ShareLink`); Anzeige der Mail → HTMLMailView.
 //
-//  Abhängigkeiten: CachedMessage, CachedAttachment.
+//  Abhängigkeiten: CachedMessage, CachedAttachment, RemoteContentPolicy.
 //
 
 import Foundation
@@ -34,19 +40,27 @@ enum MailPrintFormatter {
 
     /// Vollständiges HTML-Dokument der Mail.
     ///
-    /// Verarbeitung: Kopfdaten maskiert; Inhalt als HTML-Teil oder – bei
-    /// reinen Textmails – maskiert in `<pre>`; am Ende die Anhangliste.
+    /// Verarbeitung: Sicherheitsregeln im Kopf; Kopfdaten maskiert; Inhalt
+    /// als HTML-Teil oder – bei reinen Textmails – maskiert in `<pre>`; am
+    /// Ende die Anhangliste.
     ///
     /// - Parameters:
     ///   - message: Mail.
     ///   - attachments: Anhänge für die Liste am Ende.
+    ///   - allowsRemoteContent: `true`, wenn externe Inhalte in der Anzeige
+    ///     freigegeben sind; sonst bleiben sie gesperrt.
     /// - Returns: HTML-Dokument.
-    static func html(for message: CachedMessage, attachments: [CachedAttachment] = []) -> String {
+    static func html(
+        for message: CachedMessage,
+        attachments: [CachedAttachment] = [],
+        allowsRemoteContent: Bool = false
+    ) -> String {
         """
         <!DOCTYPE html>
         <html>
         <head>
         <meta charset="utf-8">
+        \(RemoteContentPolicy.headTags(allowsRemoteContent: allowsRemoteContent))
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>\(style)</style>
         </head>
@@ -67,15 +81,19 @@ enum MailPrintFormatter {
     /// - Parameters:
     ///   - message: Mail.
     ///   - attachments: Anhänge für die Liste am Ende.
+    ///   - allowsRemoteContent: `true`, wenn externe Inhalte in der Anzeige
+    ///     freigegeben sind.
     /// - Returns: URL der Datei.
     /// - Throws: Fehler beim Schreiben.
     static func writeTemporaryFile(
         for message: CachedMessage,
-        attachments: [CachedAttachment] = []
+        attachments: [CachedAttachment] = [],
+        allowsRemoteContent: Bool = false
     ) throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(filename(forSubject: message.subject) + ".html")
-        try Data(html(for: message, attachments: attachments).utf8).write(to: url, options: .atomic)
+        let document = html(for: message, attachments: attachments, allowsRemoteContent: allowsRemoteContent)
+        try Data(document.utf8).write(to: url, options: .atomic)
         return url
     }
 

@@ -3,8 +3,8 @@
 //  MailwerkTests
 //
 //  Zweck: Tests für die HTML-Fassung einer Mail zum Drucken und Teilen –
-//  Maskierung, Textmails, Anhangliste, Dateiname aus dem Betreff und
-//  temporäre Datei zum Teilen.
+//  Maskierung, Textmails, Anhangliste, Dateiname aus dem Betreff,
+//  temporäre Datei zum Teilen und Sperre externer Inhalte.
 //
 
 import Foundation
@@ -58,6 +58,19 @@ struct MailPrintFormatterTests {
     @Test func filenameFromSubject() {
         #expect(MailPrintFormatter.filename(forSubject: " Re: a/b ") == "Re- a-b")
         #expect(MailPrintFormatter.filename(forSubject: "  ") == "Mail")
+    }
+
+    /// Ohne Freigabe sperrt das Dokument externe Inhalte wie die Anzeige.
+    @Test func blocksRemoteContentByDefault() {
+        let html = MailPrintFormatter.html(for: message(subject: "Hallo", text: "Text"))
+        #expect(html.contains(RemoteContentPolicy.blockedPolicy))
+    }
+
+    /// Mit Freigabe gilt im Dokument die gelockerte Regel.
+    @Test func followsRemoteContentRelease() {
+        let html = MailPrintFormatter.html(for: message(subject: "Hallo", text: "Text"), allowsRemoteContent: true)
+        #expect(html.contains(RemoteContentPolicy.allowedPolicy))
+        #expect(!html.contains(RemoteContentPolicy.blockedPolicy))
     }
 
     /// Die Datei zum Teilen trägt den Betreff als Namen und enthält das HTML.
