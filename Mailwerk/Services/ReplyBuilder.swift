@@ -2,35 +2,75 @@
 //  ReplyBuilder.swift
 //  Mailwerk
 //
-//  Reine Logik ohne Netzwerk und UI: erzeugt die Vorbelegung des Composers
-//  für Neue Mail, Antworten, Allen antworten und Weiterleiten.
-//  Vollständig durch ReplyBuilderTests abgedeckt.
+//  Zweck: Erzeugt die Vorbelegung des Composers für Neue Mail, Antworten,
+//  Allen antworten und Weiterleiten – Absende-Postfach, Empfänger, Betreff,
+//  Zitat bzw. weitergeleiteter Inhalt (HTML und Text) und Threading-Header.
+//
+//  Zitat aus HTML-Mails: Übernommen wird der gesamte Inhalt, unverändert.
+//  Nur die Hüllen-Tags selbst (DOCTYPE, `<html>`, `<head>`, `<body>` mit
+//  ihren End-Tags) entfallen, weil ein ganzes Dokument nicht in die eigene
+//  Mail geschachtelt werden darf. Es wird nichts ausgeschnitten: Manche
+//  Mails sind Fragmente mit einem vollständigen Dokument mittendrin
+//  (Inhalt vor `<body>` und nach `</html>`); ein Browser übergeht die
+//  falschen Tags und zeigt alles an – das Zitat tut dasselbe. Stile aus
+//  dem `<head>` bleiben damit erhalten, wie in der Anzeige des Originals.
+//  Eine Bereinigung (Skripte, Event-Handler, Stile) findet bewusst nicht
+//  statt:
+//  - In Mailwerk erscheint das Zitat in der Vorschau beim Verfassen und
+//    später in der Gesendet-Kopie – beide Male über HTMLMailView, mit
+//    abgeschaltetem JavaScript, gesperrter Navigation und gesperrten
+//    externen Inhalten.
+//  - Beim Empfänger schützt dessen Mailprogramm, das Skripte aus Mails
+//    nicht ausführt und externe Inhalte selbst behandelt. Der Inhalt
+//    stammt vom ursprünglichen Absender, nicht von Mailwerk.
+//  Eine Bereinigung per Regex böte keinen verlässlichen Schutz und würde
+//  die Mail verändern.
+//
+//  Reine Logik ohne Netzwerk und UI, vollständig durch ReplyBuilderTests
+//  abgedeckt.
+//
+//  Abgrenzung: Anzeige des Zitats → ComposeView (HTMLMailView);
+//  Zusammenbau der zu sendenden Mail → ComposeViewModel, MailSendService.
+//
+//  Abhängigkeiten: Foundation, CachedMessage, MailAddress.
 //
 
 import Foundation
 
 /// Art der zu verfassenden Nachricht.
 enum ComposeKind: Equatable {
-    case new, reply, replyAll, forward
+    /// Neue Mail ohne Bezug.
+    case new
+    /// Antwort an den Absender.
+    case reply
+    /// Antwort an alle Beteiligten.
+    case replyAll
+    /// Weiterleitung.
+    case forward
 }
 
 /// Vorbelegung des Composers.
 struct ComposePrefill: Equatable {
     /// Absende-Postfach. nil = der Nutzer muss selbst wählen.
     var accountID: UUID?
+    /// Empfänger (An).
     var to: [MailAddress] = []
+    /// Kopie-Empfänger (Cc).
     var cc: [MailAddress] = []
+    /// Betreff.
     var subject: String = ""
     /// Zitat bzw. weitergeleiteter Inhalt. Wird im Composer schreibgeschützt
     /// angezeigt und beim Senden unter den eigenen Text gesetzt.
     var quotedHTML: String?
     /// Nur-Text-Fassung desselben Inhalts (für den Textteil der Mail).
     var quotedText: String?
-    /// Threading-Header der Antwort.
+    /// Threading-Header der Antwort: Message-ID des Originals.
     var inReplyTo: String?
+    /// Threading-Header der Antwort: bisherige Kette plus Original.
     var references: String?
 }
 
+/// Erzeugt die Vorbelegung des Composers.
 enum ReplyBuilder {
 
     /// Platzhalter, den MailFetchService bei fehlendem Betreff speichert.
@@ -39,11 +79,18 @@ enum ReplyBuilder {
     // MARK: - Einstieg
 
     /// Erzeugt die Vorbelegung für den Composer.
+    ///
+    /// Verarbeitung: Neue Mail nutzt das Standard-Postfach; Antworten und
+    /// Weiterleitungen gehen vom Postfach der Originalmail aus. Antworten
+    /// bekommen Zitat und Threading-Header, Weiterleitungen den Kopfblock
+    /// des Originals und keine Empfänger.
+    ///
     /// - Parameters:
-    ///   - kind: Art der Nachricht
-    ///   - original: Bezugsnachricht (bei `.new` ignoriert)
-    ///   - defaultAccountID: Standard-Postfach für neue Mails (darf nil sein)
-    ///   - ownAddresses: alle eigenen Adressen – werden bei „Allen antworten" entfernt
+    ///   - kind: Art der Nachricht.
+    ///   - original: Bezugsnachricht (bei `.new` ignoriert).
+    ///   - defaultAccountID: Standard-Postfach für neue Mails (darf nil sein).
+    ///   - ownAddresses: Alle eigenen Adressen – werden bei „Allen antworten“ entfernt.
+    /// - Returns: Vorbelegung des Composers.
     static func prefill(
         kind: ComposeKind,
         original: CachedMessage?,
@@ -87,25 +134,48 @@ enum ReplyBuilder {
 
     // MARK: - Betreff
 
+    /// Antwort-Präfixe (Re, AW, Antw, SV, VS), auch mehrfach und mit Zähler.
     private static let replyPrefixPattern =
         #"^\s*(?:(?:re|aw|antw|sv|vs)(?:\[\d+\])?\s*:\s*)+"#
+    /// Weiterleitungs-Präfixe (Fwd, Fw, WG), auch mehrfach und mit Zähler.
     private static let forwardPrefixPattern =
         #"^\s*(?:(?:fwd|fw|wg)(?:\[\d+\])?\s*:\s*)+"#
 
-    /// "Hallo", "Re: Hallo", "AW: Re: Hallo" → "Re: Hallo"
+    /// Betreff einer Antwort: alle Antwort-Präfixe zu genau einem „Re: “.
+    ///
+    /// Beispiel: "Hallo", "Re: Hallo", "AW: Re: Hallo" → "Re: Hallo".
+    ///
+    /// - Parameter subject: Betreff des Originals.
+    /// - Returns: Betreff der Antwort.
     static func replySubject(_ subject: String) -> String {
         "Re: " + stripping(replyPrefixPattern, from: baseSubject(subject))
     }
 
-    /// "Hallo", "WG: Hallo" → "Fwd: Hallo"; "Re: Hallo" → "Fwd: Re: Hallo"
+    /// Betreff einer Weiterleitung: Weiterleitungs-Präfixe zu genau einem
+    /// „Fwd: “; Antwort-Präfixe bleiben.
+    ///
+    /// Beispiel: "WG: Hallo" → "Fwd: Hallo"; "Re: Hallo" → "Fwd: Re: Hallo".
+    ///
+    /// - Parameter subject: Betreff des Originals.
+    /// - Returns: Betreff der Weiterleitung.
     static func forwardSubject(_ subject: String) -> String {
         "Fwd: " + stripping(forwardPrefixPattern, from: baseSubject(subject))
     }
 
+    /// Betreff ohne den Platzhalter für einen fehlenden Betreff.
+    ///
+    /// - Parameter subject: Gespeicherter Betreff.
+    /// - Returns: Betreff oder leere Zeichenkette.
     private static func baseSubject(_ subject: String) -> String {
         subject == missingSubjectPlaceholder ? "" : subject
     }
 
+    /// Entfernt ein Präfix-Muster am Anfang und Leerraum an den Rändern.
+    ///
+    /// - Parameters:
+    ///   - pattern: Regulärer Ausdruck für die Präfixe.
+    ///   - text: Betreff.
+    /// - Returns: Betreff ohne Präfixe.
     private static func stripping(_ pattern: String, from text: String) -> String {
         replacing(pattern, in: text, with: "", dotAll: false)
             .trimmingCharacters(in: .whitespaces)
@@ -114,6 +184,9 @@ enum ReplyBuilder {
     // MARK: - Empfänger
 
     /// Antwort an Reply-To, falls vorhanden, sonst an den Absender.
+    ///
+    /// - Parameter message: Originalmail.
+    /// - Returns: Empfänger ohne Doppelte.
     static func replyRecipients(of message: CachedMessage) -> [MailAddress] {
         let source = message.headers.replyToList.isEmpty
             ? [message.from]
@@ -121,8 +194,17 @@ enum ReplyBuilder {
         return unique(source.compactMap { MailAddress(parsing: $0) })
     }
 
-    /// Allen antworten: An = Absender (bzw. Reply-To) + ursprüngliche An-Empfänger,
-    /// Cc = ursprüngliche Cc-Empfänger. Eigene Adressen und Doppelte entfallen.
+    /// Empfänger für „Allen antworten“.
+    ///
+    /// Verarbeitung: An = Absender (bzw. Reply-To) + ursprüngliche
+    /// An-Empfänger, Cc = ursprüngliche Cc-Empfänger. Eigene Adressen und
+    /// Doppelte entfallen. Bleibt An leer, rücken die Cc-Empfänger nach;
+    /// sind nur eigene Adressen beteiligt, geht die Antwort an den Absender.
+    ///
+    /// - Parameters:
+    ///   - message: Originalmail.
+    ///   - ownAddresses: Alle eigenen Adressen.
+    /// - Returns: An- und Cc-Empfänger.
     static func replyAllRecipients(
         of message: CachedMessage,
         ownAddresses: Set<String>
@@ -143,6 +225,10 @@ enum ReplyBuilder {
         }
     }
 
+    /// Entfernt doppelte Adressen, die erste gewinnt.
+    ///
+    /// - Parameter list: Adressen.
+    /// - Returns: Adressen ohne Doppelte.
     private static func unique(_ list: [MailAddress]) -> [MailAddress] {
         var seen = Set<String>()
         return list.filter { seen.insert($0.normalizedAddress).inserted }
@@ -150,8 +236,14 @@ enum ReplyBuilder {
 
     // MARK: - Threading
 
-    /// In-Reply-To = Message-ID des Originals,
-    /// References = bisherige Kette (oder In-Reply-To) + Message-ID des Originals.
+    /// Threading-Header einer Antwort.
+    ///
+    /// Verarbeitung: In-Reply-To = Message-ID des Originals; References =
+    /// bisherige Kette (oder In-Reply-To) + Message-ID des Originals, ohne
+    /// Doppelte.
+    ///
+    /// - Parameter message: Originalmail.
+    /// - Returns: Beide Header; ohne Message-ID des Originals beide `nil`.
     static func threadingHeaders(
         for message: CachedMessage
     ) -> (inReplyTo: String?, references: String?) {
@@ -167,11 +259,20 @@ enum ReplyBuilder {
 
     // MARK: - Zitat (Antworten)
 
+    /// Kopfzeile über dem Zitat, z. B. „Am 14.11.2023 um 22:13 schrieb Anna:“.
+    ///
+    /// - Parameter message: Originalmail.
+    /// - Returns: Kopfzeile; ohne Datum nur „… schrieb:“.
     static func quoteHeader(for message: CachedMessage) -> String {
         guard let date = message.date else { return "\(message.from) schrieb:" }
         return "Am \(formatted(date)) schrieb \(message.from):"
     }
 
+    /// HTML-Zitat einer Antwort: Kopfzeile und Original in einem
+    /// `blockquote` mit Randlinie.
+    ///
+    /// - Parameter message: Originalmail.
+    /// - Returns: HTML-Zitat.
     static func replyQuoteHTML(_ message: CachedMessage) -> String {
         """
         <div>\(escapeHTML(quoteHeader(for: message)))</div>\
@@ -181,6 +282,10 @@ enum ReplyBuilder {
         """
     }
 
+    /// Text-Zitat einer Antwort: Kopfzeile und Original mit „> “ je Zeile.
+    ///
+    /// - Parameter message: Originalmail.
+    /// - Returns: Text-Zitat.
     static func replyQuoteText(_ message: CachedMessage) -> String {
         let quoted = originalBodyText(message)
             .replacingOccurrences(of: "\r\n", with: "\n")
@@ -192,8 +297,13 @@ enum ReplyBuilder {
 
     // MARK: - Weiterleiten
 
+    /// Trennzeile über dem weitergeleiteten Inhalt.
     private static let forwardSeparator = "---------- Weitergeleitete Nachricht ----------"
 
+    /// Zeilen des Kopfblocks einer Weiterleitung (Von, Datum, Betreff, An, Cc).
+    ///
+    /// - Parameter message: Originalmail.
+    /// - Returns: Bezeichnung und Wert je Zeile; leere Angaben entfallen.
     private static func forwardHeaderLines(_ message: CachedMessage) -> [(String, String)] {
         var lines: [(String, String)] = [("Von", message.from)]
         if let date = message.date { lines.append(("Datum", formatted(date))) }
@@ -205,6 +315,10 @@ enum ReplyBuilder {
         return lines
     }
 
+    /// HTML-Inhalt einer Weiterleitung: Trennzeile, Kopfblock, Original.
+    ///
+    /// - Parameter message: Originalmail.
+    /// - Returns: HTML-Inhalt.
     static func forwardHTML(_ message: CachedMessage) -> String {
         let header = forwardHeaderLines(message)
             .map { "<b>\(escapeHTML($0.0)):</b> \(escapeHTML($0.1))" }
@@ -212,6 +326,10 @@ enum ReplyBuilder {
         return "<div>\(forwardSeparator)<br>\(header)</div><br>\(originalBodyHTML(message))"
     }
 
+    /// Text-Inhalt einer Weiterleitung: Trennzeile, Kopfblock, Original.
+    ///
+    /// - Parameter message: Originalmail.
+    /// - Returns: Text-Inhalt.
     static func forwardText(_ message: CachedMessage) -> String {
         let header = forwardHeaderLines(message)
             .map { "\($0.0): \($0.1)" }
@@ -221,17 +339,24 @@ enum ReplyBuilder {
 
     // MARK: - Inhalt der Originalmail
 
-    /// HTML-Inhalt der Originalmail: bevorzugt der bereinigte HTML-Body,
-    /// sonst der maskierte Text mit Zeilenumbrüchen.
+    /// HTML-Inhalt der Originalmail: bevorzugt ihr HTML-Teil ohne
+    /// Dokument-Hülle (siehe `withoutDocumentWrapper(_:)`), sonst der
+    /// maskierte Text mit Zeilenumbrüchen.
+    ///
+    /// - Parameter message: Originalmail.
+    /// - Returns: HTML zum Einfügen in die eigene Mail.
     static func originalBodyHTML(_ message: CachedMessage) -> String {
         if let html = message.htmlBody, !html.isEmpty {
-            return sanitizedBodyContent(html)
+            return withoutDocumentWrapper(html)
         }
         return textToHTML(message.textBody ?? "")
     }
 
-    /// Text-Inhalt der Originalmail: bevorzugt der Textteil,
-    /// sonst aus dem HTML gewonnener Text.
+    /// Text-Inhalt der Originalmail: bevorzugt der Textteil, sonst aus dem
+    /// HTML gewonnener Text.
+    ///
+    /// - Parameter message: Originalmail.
+    /// - Returns: Text des Originals.
     static func originalBodyText(_ message: CachedMessage) -> String {
         if let text = message.textBody, !text.isEmpty { return text }
         if let html = message.htmlBody { return plainText(fromHTML: html) }
@@ -240,6 +365,10 @@ enum ReplyBuilder {
 
     // MARK: - HTML-Helfer
 
+    /// Maskiert `&`, `<`, `>`, `"` und `'` für HTML.
+    ///
+    /// - Parameter text: Rohtext.
+    /// - Returns: Maskierter Text.
     static func escapeHTML(_ text: String) -> String {
         text.replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
@@ -248,29 +377,41 @@ enum ReplyBuilder {
             .replacingOccurrences(of: "'", with: "&#39;")
     }
 
+    /// Wandelt Text in HTML: maskiert, Zeilenumbrüche als `<br>`.
+    ///
+    /// - Parameter text: Rohtext.
+    /// - Returns: HTML.
     static func textToHTML(_ text: String) -> String {
         escapeHTML(text)
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\n", with: "<br>")
     }
 
-    /// Nur der Inhalt von <body>, ohne <head>/Stylesheets, Skripte,
-    /// Event-Handler und javascript:-Links.
-    static func sanitizedBodyContent(_ html: String) -> String {
-        var result = html
-        if let body = firstCapture(#"<body[^>]*>(.*)</body\s*>"#, in: result) {
-            result = body
-        }
-        result = replacing(#"<head\b[^>]*>.*?</head\s*>"#, in: result, with: "")
-        result = replacing(#"<script\b[^>]*>.*?</script\s*>"#, in: result, with: "")
-        result = replacing(#"</?(?:html|body)\b[^>]*>"#, in: result, with: "")
-        result = replacing(#"\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)"#, in: result, with: "")
-        result = replacing(#"(href|src)\s*=\s*(["']?)\s*javascript:[^"'\s>]*\2"#,
-                           in: result, with: "$1=\"#\"")
+    /// Entfernt die Hüllen-Tags eines HTML-Dokuments und behält allen Inhalt.
+    ///
+    /// Verarbeitung: Entfernt werden nur DOCTYPE sowie die Start- und
+    /// End-Tags von `html`, `head` und `body` – an jeder Stelle, auch
+    /// mitten im Text. Inhalt wird nie ausgeschnitten; alles andere, auch
+    /// Stile, Skripte und Attribute, bleibt unverändert und in seiner
+    /// Reihenfolge. Warum das sicher ist, steht im Dateikopf.
+    ///
+    /// - Parameter html: HTML-Teil der Originalmail.
+    /// - Returns: Inhalt zum Einschachteln in die eigene Mail.
+    static func withoutDocumentWrapper(_ html: String) -> String {
+        var result = replacing(#"<!DOCTYPE[^>]*>"#, in: html, with: "")
+        result = replacing(#"</?(?:html|head|body)\b[^>]*>"#, in: result, with: "")
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Einfache Umwandlung von HTML in lesbaren Text (Fallback für den Textteil).
+    /// Einfache Umwandlung von HTML in lesbaren Text (Fallback für den
+    /// Textteil, wenn die Mail keinen hat).
+    ///
+    /// Verarbeitung: Skripte, Stile und Kopf entfallen, Zeilenumbrüche an
+    /// `<br>` und Blockenden, übrige Tags entfernt, häufige Entities
+    /// übersetzt, mehrfache Leerzeilen zusammengefasst.
+    ///
+    /// - Parameter html: HTML.
+    /// - Returns: Lesbarer Text.
     static func plainText(fromHTML html: String) -> String {
         var text = replacing(#"<(script|style|head)\b[^>]*>.*?</\1\s*>"#, in: html, with: "")
         text = replacing(#"<br\s*/?>"#, in: text, with: "\n")
@@ -289,6 +430,10 @@ enum ReplyBuilder {
 
     // MARK: - Allgemeine Helfer
 
+    /// Datum im Format „dd.MM.yyyy um HH:mm“ (deutsch).
+    ///
+    /// - Parameter date: Datum.
+    /// - Returns: Formatiertes Datum.
     private static func formatted(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "de_DE")
@@ -296,6 +441,14 @@ enum ReplyBuilder {
         return formatter.string(from: date)
     }
 
+    /// Ersetzt alle Treffer eines regulären Ausdrucks (ohne Groß-/Kleinschreibung).
+    ///
+    /// - Parameters:
+    ///   - pattern: Regulärer Ausdruck.
+    ///   - text: Eingabe.
+    ///   - template: Ersatz (mit `$1` usw.).
+    ///   - dotAll: `true` = „.“ passt auch auf Zeilenumbrüche.
+    /// - Returns: Text mit Ersetzungen; bei ungültigem Ausdruck unverändert.
     private static func replacing(
         _ pattern: String,
         in text: String,
@@ -309,17 +462,5 @@ enum ReplyBuilder {
         }
         let range = NSRange(text.startIndex..., in: text)
         return regex.stringByReplacingMatches(in: text, range: range, withTemplate: template)
-    }
-
-    private static func firstCapture(_ pattern: String, in text: String) -> String? {
-        guard let regex = try? NSRegularExpression(
-            pattern: pattern,
-            options: [.caseInsensitive, .dotMatchesLineSeparators]
-        ) else { return nil }
-        let range = NSRange(text.startIndex..., in: text)
-        guard let match = regex.firstMatch(in: text, range: range),
-              match.numberOfRanges > 1,
-              let captured = Range(match.range(at: 1), in: text) else { return nil }
-        return String(text[captured])
     }
 }
