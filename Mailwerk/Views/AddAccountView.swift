@@ -11,7 +11,8 @@
 //  Abgrenzung: Eingabeprüfung, Verbindungstest und Aufbau des Postfachs
 //  → AddAccountViewModel; Bearbeiten → EditAccountView.
 //
-//  Abhängigkeiten: SwiftUI, AddAccountViewModel, AccountStore, Dialogs.
+//  Abhängigkeiten: SwiftUI, AddAccountViewModel, AccountStore, Dialogs,
+//  PlatformInputModifiers (Eingabearten der Felder).
 //
 
 import SwiftUI
@@ -47,12 +48,14 @@ struct AddAccountView: View {
                     TextField("Host", text: $viewModel.imapHost)
                         .plainTextInput()
                     TextField("Port", text: $viewModel.imapPort)
+                        .numberInput()
                 }
 
                 Section("SMTP (Versand)") {
                     TextField("Host", text: $viewModel.smtpHost)
                         .plainTextInput()
                     TextField("Port", text: $viewModel.smtpPort)
+                        .numberInput()
                 }
 
                 Section {

@@ -51,7 +51,8 @@ nonisolated enum FolderTreeBuilder {
     ///
     /// Verarbeitung: Rollen bestimmen, jeden Ordner entlang seiner
     /// Pfadsegmente einhängen, einfrieren, gleichlautende Namen auflösen
-    /// und die oberste Ebene nach Rolle sortieren.
+    /// (mit den Servernamen aus derselben Zerlegung) und die oberste Ebene
+    /// nach Rolle sortieren.
     ///
     /// - Parameters:
     ///   - folders: vollständige Ordnerliste des Kontos, INBOX eingeschlossen.
@@ -72,10 +73,14 @@ nonisolated enum FolderTreeBuilder {
         )
 
         // Wurzel des Baums als veränderliche Hilfsstruktur aufbauen.
+        // Nebenbei den Servernamen (letztes Segment, dekodiert) je Ordner
+        // merken – für die Auflösung gleichlautender Namen.
         let root = Draft(id: "", name: "")
+        var serverNames: [String: String] = [:]
         for folder in folders {
             let segments = displaySegments(of: folder, namespacePrefix: namespacePrefix)
-            guard !segments.isEmpty else { continue }
+            guard let last = segments.last else { continue }
+            serverNames[folder.id] = MailboxNameCodec.displayName(last)
             insert(
                 folder,
                 segments: segments,
@@ -86,7 +91,7 @@ nonisolated enum FolderTreeBuilder {
         }
 
         let frozen = root.children.values.map { $0.freeze() }
-        return resolveNameCollisions(frozen)
+        return resolveNameCollisions(frozen, serverNames: serverNames)
             .sorted(by: topLevelOrder)
     }
 
@@ -362,9 +367,19 @@ nonisolated enum FolderTreeBuilder {
     /// gewöhnlichen Ordner gleicht, behalten beide ihren Servernamen.
     /// Das vermeidet zwei identische Einträge in der Liste.
     ///
-    /// - Parameter nodes: Knoten einer Ebene.
+    /// Verarbeitung: Der Servername stammt aus derselben Zerlegung wie der
+    /// Baum (Trennzeichen des Servers, Namespace-Präfix entfernt). Er wird
+    /// nicht aus dem Pfad geraten – bei Servern mit „/“ als Trennzeichen
+    /// wäre „.“ falsch.
+    ///
+    /// - Parameters:
+    ///   - nodes: Knoten einer Ebene.
+    ///   - serverNames: Servername (dekodiert) je Ordnerpfad.
     /// - Returns: Knoten mit eindeutigen Namen.
-    private static func resolveNameCollisions(_ nodes: [FolderNode]) -> [FolderNode] {
+    private static func resolveNameCollisions(
+        _ nodes: [FolderNode],
+        serverNames: [String: String]
+    ) -> [FolderNode] {
         // Alle Anzeigenamen auf dieser Ebene zählen.
         var counts: [String: Int] = [:]
         for node in nodes {
@@ -377,14 +392,9 @@ nonisolated enum FolderTreeBuilder {
         return nodes.map { node in
             guard collisions.contains(node.name.lowercased()),
                   node.role != .regular,
-                  node.role.displayName != nil
+                  node.role.displayName != nil,
+                  let serverName = serverNames[node.id]
             else { return node }
-            // Servernamen aus der ID zurückholen: letztes Pfadsegment, dekodiert.
-            let serverName = MailboxNameCodec.displayName(
-                node.id.components(separatedBy: ".").last
-                    ?? node.id.components(separatedBy: "/").last
-                    ?? node.id
-            )
             return FolderNode(
                 id: node.id,
                 name: serverName,

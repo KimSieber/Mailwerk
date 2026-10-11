@@ -2,7 +2,9 @@
 //  FolderTreeBuilderTests.swift
 //  MailwerkTests
 //
-//  Tests für den Aufbau des Ordnerbaums aus der flachen Ordnerliste.
+//  Zweck: Tests für den Aufbau des Ordnerbaums aus der flachen
+//  Ordnerliste – Namespace und Ebenen, Rollen, Sortierung, gleichlautende
+//  Namen, echte manitu-Liste, Umlaute und Verschiebe-Ziele.
 //
 
 import Foundation
@@ -14,6 +16,7 @@ struct FolderTreeBuilderTests {
 
     // MARK: - Hilfen
 
+    /// Testhilfe: Ordner mit Pfad, Rolle, Trennzeichen und Wählbarkeit.
     private func folder(
         _ path: String,
         specialUse: MailFolder.SpecialUse? = nil,
@@ -30,6 +33,7 @@ struct FolderTreeBuilderTests {
         )
     }
 
+    /// Testhilfe: Baum mit wählbarem Präfix und gemerktem Spam-Ordner.
     private func build(
         _ folders: [MailFolder],
         prefix: String? = "INBOX.",
@@ -57,6 +61,7 @@ struct FolderTreeBuilderTests {
 
     // MARK: - Namespace und Ebenen
 
+    /// Mit Namespace-Präfix stehen die Ordner neben dem Posteingang.
     @Test func namespacePrefixPutsFoldersBesideInbox() {
         let tree = build(manituFolders)
         #expect(tree.count == 7)
@@ -65,12 +70,14 @@ struct FolderTreeBuilderTests {
         #expect(tree.first?.children.isEmpty == true)
     }
 
+    /// Der Posteingang heißt „Posteingang“ und behält seine Server-ID.
     @Test func inboxIsNamedPosteingang() {
         let tree = build(manituFolders)
         #expect(tree.first?.name == "Posteingang")
         #expect(tree.first?.id == "INBOX")
     }
 
+    /// Sonderordner bekommen einheitliche deutsche Namen.
     @Test func specialFoldersGetGermanDisplayNames() {
         let tree = build(manituFolders)
         #expect(tree.first { $0.id == "INBOX.Drafts" }?.name == "Entwürfe")
@@ -80,11 +87,13 @@ struct FolderTreeBuilderTests {
         #expect(tree.first { $0.id == "INBOX.Archiv" }?.name == "Archiv")
     }
 
+    /// Gewöhnliche Ordner behalten ihren Servernamen.
     @Test func regularFoldersKeepServerName() {
         let tree = build(manituFolders)
         #expect(tree.first { $0.id == "INBOX.Rechnungen" }?.name == "Rechnungen")
     }
 
+    /// Unterordner werden verschachtelt und zeigen nur ihr letztes Segment.
     @Test func subfoldersAreNestedWithShortNames() {
         let tree = build(manituFolders)
         let rechnungen = tree.first { $0.id == "INBOX.Rechnungen" }
@@ -93,6 +102,7 @@ struct FolderTreeBuilderTests {
         #expect(rechnungen?.children.first?.name == "2026")
     }
 
+    /// Ohne Präfix bleiben die Ordner unter dem Posteingang.
     @Test func withoutNamespacePrefixFoldersStayUnderInbox() {
         let tree = build(manituFolders, prefix: nil)
         #expect(tree.count == 1)
@@ -100,6 +110,7 @@ struct FolderTreeBuilderTests {
         #expect(tree.first?.children.count == 6)
     }
 
+    /// Bei „/“ als Trennzeichen werden Unterordner des Posteingangs verschachtelt.
     @Test func dovecotStyleSubfoldersOfInboxAreNested() {
         let folders = [
             folder("INBOX", delimiter: "/"),
@@ -111,17 +122,20 @@ struct FolderTreeBuilderTests {
         #expect(tree.first?.children.map(\.id) == ["INBOX/Projekte"])
     }
 
+    /// Ein Ordner „INBOX“ unter dem Präfix verschmilzt nicht mit dem Posteingang.
     @Test func folderNamedInboxBelowPrefixDoesNotMergeWithInbox() {
         let tree = build([folder("INBOX"), folder("INBOX.INBOX")])
         #expect(tree.count == 2)
         #expect(tree.contains { $0.id == "INBOX.INBOX" && $0.role == .regular })
     }
 
+    /// Der Präfix-Vergleich ignoriert die Schreibweise von „INBOX“.
     @Test func prefixMatchIgnoresCaseOfInboxPart() {
         let tree = build([folder("INBOX"), folder("Inbox.Sent", specialUse: .sent)])
         #expect(tree.map(\.name) == ["Posteingang", "Gesendet"])
     }
 
+    /// Eine fehlende Zwischenebene wird als nicht wählbarer Knoten ergänzt.
     @Test func missingIntermediateLevelIsAddedAsNotSelectable() {
         let tree = build([folder("INBOX"), folder("INBOX.Kunden.Meier")])
         let kunden = tree.first { $0.name == "Kunden" }
@@ -131,6 +145,7 @@ struct FolderTreeBuilderTests {
         #expect(kunden?.children.first?.isSelectable == true)
     }
 
+    /// Eine nach dem Unterordner gemeldete Zwischenebene behält ihre eigenen Daten.
     @Test func intermediateListedAfterChildKeepsItsOwnData() {
         let tree = build([
             folder("INBOX"),
@@ -142,11 +157,13 @@ struct FolderTreeBuilderTests {
         #expect(kunden?.children.count == 1)
     }
 
+    /// Ein Ordner mit \Noselect ist nicht wählbar.
     @Test func noselectFolderIsNotSelectable() {
         let tree = build([folder("INBOX"), folder("INBOX.Container", selectable: false)])
         #expect(tree.first { $0.name == "Container" }?.isSelectable == false)
     }
 
+    /// Ohne Trennzeichen wird ein Pfad nicht zerlegt.
     @Test func folderWithoutDelimiterIsNotSplit() {
         let tree = build([folder("INBOX", delimiter: nil), folder("A.B", delimiter: nil)], prefix: nil)
         #expect(tree.map(\.name) == ["Posteingang", "A.B"])
@@ -154,6 +171,7 @@ struct FolderTreeBuilderTests {
 
     // MARK: - Rollen
 
+    /// SPECIAL-USE bestimmt die Rollen.
     @Test func specialUseDeterminesRoles() {
         let tree = build(manituFolders)
         #expect(tree.first { $0.id == "INBOX.Trash" }?.role == .trash)
@@ -161,11 +179,13 @@ struct FolderTreeBuilderTests {
         #expect(tree.first { $0.id == "INBOX.Drafts" }?.role == .drafts)
     }
 
+    /// Den Spam-Ordner bestimmt der SpamFolderResolver.
     @Test func spamFolderComesFromSpamFolderResolver() {
         let tree = build(manituFolders)
         #expect(tree.first { $0.id == "INBOX.Junk" }?.role == .junk)
     }
 
+    /// Ein gemerkter Spam-Ordner hat Vorrang.
     @Test func configuredSpamFolderWins() {
         let folders = [folder("INBOX"), folder("INBOX.Junk"), folder("INBOX.Werbung")]
         let tree = build(folders, spam: "INBOX.Werbung")
@@ -173,6 +193,7 @@ struct FolderTreeBuilderTests {
         #expect(tree.first { $0.id == "INBOX.Junk" }?.role == .regular)
     }
 
+    /// Gebräuchliche Namen werden ohne SPECIAL-USE erkannt.
     @Test func namesAreRecognizedWithoutSpecialUse() {
         let tree = build([
             folder("INBOX"),
@@ -187,6 +208,7 @@ struct FolderTreeBuilderTests {
         #expect(tree.first { $0.role == .trash }?.name == "Papierkorb")
     }
 
+    /// Ein Namenstreffer überstimmt SPECIAL-USE nicht.
     @Test func nameMatchDoesNotOverrideSpecialUse() {
         let tree = build([
             folder("INBOX"),
@@ -199,12 +221,14 @@ struct FolderTreeBuilderTests {
         #expect(tree.first { $0.id == "INBOX.Sent" }?.name == "Sent")
     }
 
+    /// Namen werden nur auf der obersten Ebene erkannt.
     @Test func nameMatchOnlyOnTopLevel() {
         let tree = build([folder("INBOX"), folder("INBOX.Projekte"), folder("INBOX.Projekte.Sent")])
         let sub = tree.first { $0.id == "INBOX.Projekte" }?.children.first
         #expect(sub?.role == .regular)
     }
 
+    /// Jede Rolle wird per Namen nur einmal vergeben.
     @Test func eachRoleIsAssignedByNameOnlyOnce() {
         let tree = build([folder("INBOX"), folder("INBOX.Sent"), folder("INBOX.Gesendet")])
         #expect(tree.filter { $0.role == .sent }.count == 1)
@@ -212,6 +236,7 @@ struct FolderTreeBuilderTests {
 
     // MARK: - Sortierung
 
+    /// Die oberste Ebene ist nach Rolle, dann alphabetisch sortiert.
     @Test func topLevelIsSortedByRoleThenAlphabetically() {
         let tree = build(manituFolders)
         #expect(tree.map(\.name) == [
@@ -219,11 +244,13 @@ struct FolderTreeBuilderTests {
         ])
     }
 
+    /// Gewöhnliche Ordner werden ohne Groß-/Kleinschreibung sortiert.
     @Test func regularFoldersAreSortedCaseInsensitively() {
         let tree = build([folder("INBOX"), folder("INBOX.beta"), folder("INBOX.Alpha"), folder("INBOX.Gamma")])
         #expect(tree.map(\.name) == ["Posteingang", "Alpha", "beta", "Gamma"])
     }
 
+    /// Unterordner werden alphabetisch sortiert.
     @Test func childrenAreSortedAlphabetically() {
         let tree = build([
             folder("INBOX"),
@@ -237,6 +264,7 @@ struct FolderTreeBuilderTests {
 
     // MARK: - Namensgleichheit
 
+    /// Bei gleichlautenden Namen behalten beide Ordner ihren Servernamen.
     @Test func collisionKeepsBothServerNames() {
         // Der Server meldet "Sent" als SPECIAL-USE, daneben liegt ein
         // gewöhnlicher Ordner "Gesendet". Ohne Kollisionsauflösung stünde
@@ -250,6 +278,7 @@ struct FolderTreeBuilderTests {
         #expect(tree.first { $0.id == "INBOX.Gesendet" }?.name == "Gesendet")
     }
 
+    /// Ohne Namensgleichheit bleibt der einheitliche Name.
     @Test func noCollisionWhenNamesAreDifferent() {
         let tree = build([
             folder("INBOX"),
@@ -260,6 +289,18 @@ struct FolderTreeBuilderTests {
         #expect(tree.first { $0.id == "INBOX.Rechnungen" }?.name == "Rechnungen")
     }
 
+    /// Bei „/“ als Trennzeichen wird der Servername richtig zurückgeholt.
+    @Test func collisionUsesServerDelimiter() {
+        let tree = build([
+            folder("INBOX", delimiter: "/"),
+            folder("INBOX/Sent", specialUse: .sent, delimiter: "/"),
+            folder("INBOX/Gesendet", delimiter: "/")
+        ], prefix: "INBOX/")
+        #expect(tree.first { $0.id == "INBOX/Sent" }?.name == "Sent")
+        #expect(tree.first { $0.id == "INBOX/Gesendet" }?.name == "Gesendet")
+    }
+
+    /// Namensgleichheit mit dem Spam-Ordner wird aufgelöst.
     @Test func collisionWithSpamKeepsBothServerNames() {
         let tree = build([
             folder("INBOX"),
@@ -279,16 +320,18 @@ struct FolderTreeBuilderTests {
         }
     }
 
+    /// Eine leere Liste ergibt einen leeren Baum.
     @Test func emptyListGivesEmptyTree() {
         #expect(build([]).isEmpty)
     }
 
+    /// Der Initialisierer ohne Angabe ergibt einen wählbaren Ordner.
     @Test func existingInitializerStillDefaultsToSelectable() {
         let folder = MailFolder(id: "INBOX.A", name: "A", specialUse: nil, hierarchyDelimiter: ".")
         #expect(folder.isSelectable)
     }
 
-    // MARK: - manitu (echte LIST-Ausgabe, v0.1.8a)
+    // MARK: - manitu (echte LIST-Ausgabe)
 
     /// LIST-Ausgabe eines manitu-Postfachs vom 2026-09-30.
     /// NAMESPACE: (("" ".")) – kein Präfix, Trennzeichen „.“.
@@ -306,6 +349,7 @@ struct FolderTreeBuilderTests {
         ]
     }
 
+    /// Echte manitu-Liste ohne Präfix ergibt die erwartete Seitenleiste.
     @Test func manituWithoutPrefixMatchesSidebar() {
         let tree = build(realManituFolders, prefix: "")
         #expect(tree.map(\.name) == ["Posteingang", "Entwürfe", "Gesendet", "Archiv",
@@ -314,8 +358,9 @@ struct FolderTreeBuilderTests {
         #expect(tree.first { $0.id == "Test" }?.children.map(\.id) == ["Test.Untertest2"])
     }
 
-    // MARK: - Umlaute (modified UTF-7, v0.1.8a)
+    // MARK: - Umlaute (modified UTF-7)
 
+    /// Namen in modified UTF-7 werden für die Anzeige dekodiert.
     @Test func encodedNamesAreDecodedForDisplay() {
         let tree = build([
             folder("INBOX"),
@@ -331,6 +376,7 @@ struct FolderTreeBuilderTests {
         #expect(tree.first?.children.first?.id == "INBOX.Gesch&AOQ-ft")
     }
 
+    /// Ein kodierter gebräuchlicher Name wird erkannt.
     @Test func encodedCandidateNameIsRecognized() {
         let tree = build([folder("INBOX"), folder("Entw&APw-rfe")], prefix: "")
         let drafts = tree.first { $0.id == "Entw&APw-rfe" }
@@ -338,13 +384,15 @@ struct FolderTreeBuilderTests {
         #expect(drafts?.name == "Entwürfe")
     }
 
+    /// Eine ungültige Kodierung behält den Servernamen.
     @Test func invalidEncodingKeepsServerName() {
         let tree = build([folder("INBOX"), folder("Kaputt&AP")], prefix: "")
         #expect(tree.contains { $0.id == "Kaputt&AP" && $0.name == "Kaputt&AP" })
     }
 
-    // MARK: - Verschieben-Ziel (v0.1.8c)
+    // MARK: - Verschieben-Ziel
 
+    /// Als Verschiebe-Ziel entfallen der aktuelle Ordner und Container.
     @Test func moveTargetExcludesCurrentFolderAndContainers() {
         let test = FolderNode(id: "Test", name: "Test", role: .regular, isSelectable: true, children: [])
         let container = FolderNode(id: "Ablage", name: "Ablage", role: .regular, isSelectable: false, children: [])
@@ -356,6 +404,7 @@ struct FolderTreeBuilderTests {
         #expect(spam.isMoveTarget(from: "INBOX"))
     }
 
+    /// Der Posteingang ist Ziel, außer aus ihm selbst in jeder Schreibweise.
     @Test func inboxIsTargetExceptFromInboxInAnySpelling() {
         let inbox = FolderNode(id: "INBOX", name: "Posteingang", role: .inbox, isSelectable: true, children: [])
         #expect(inbox.isMoveTarget(from: "Archive"))
