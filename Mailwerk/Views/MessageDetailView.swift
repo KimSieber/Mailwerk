@@ -21,10 +21,14 @@
 //  Inhalte → RemoteContentPolicy.
 //
 //  Externe Inhalte (Bilder, Stylesheets von fremden Servern) sind
-//  gesperrt. Enthält die Mail solche Inhalte, erscheint über dem Text ein
-//  schmaler Hinweis mit dem Knopf „Laden“. Die Freigabe gilt nur für
-//  diese Anzeige der Mail; beim nächsten Öffnen ist wieder alles
-//  gesperrt. Drucken und Teilen folgen dem Zustand der Anzeige.
+//  gesperrt. Ausnahme: Ist der Absender vertrauenswürdig (Whitelist und
+//  Score unter der Obergrenze, siehe SpamClassifier.trustsSender), werden
+//  sie sofort geladen. Sonst erscheint über dem Text ein schmaler Hinweis
+//  mit dem Knopf „Laden“. Die Freigabe per Knopf gilt nur für diese
+//  Anzeige der Mail; beim nächsten Öffnen ist wieder alles gesperrt.
+//  Entschieden wird, bevor der HTML-Inhalt zum ersten Mal erscheint – so
+//  wird nichts doppelt geladen. Drucken und Teilen folgen dem Zustand der
+//  Anzeige.
 //
 //  Teilen läuft über `ShareLink` im Menü – auf iPhone/iPad das
 //  Teilen-Blatt, auf dem Mac das Teilen-Untermenü des Systems. Die Dateien
@@ -46,8 +50,11 @@ struct MessageDetailView: View {
     let message: CachedMessage
     /// Quelle für Postfächer und Zugangsdaten.
     let accountStore: AccountStore
-    /// Spamfilter für Blockieren und Vertrauen.
+    /// Spamfilter für Blockieren und Vertrauen sowie für die Prüfung
+    /// vertrauenswürdiger Absender.
     let spamFilter: SpamFilterService
+    /// Score-Obergrenze für vertrauenswürdige Absender.
+    let scoreLimit: Double
     /// Wird nach jeder Änderung aufgerufen (Liste neu laden).
     let onChange: (() -> Void)?
 
@@ -59,6 +66,9 @@ struct MessageDetailView: View {
     @State private var hasRemoteContent = false
     /// `true`, wenn externe Inhalte für diese Anzeige freigegeben sind.
     @State private var allowsRemoteContent = false
+    /// `true`, sobald über externe Inhalte entschieden ist; vorher wird
+    /// der HTML-Inhalt nicht angezeigt.
+    @State private var isRemoteContentDecided = false
     /// Anhänge der Mail aus dem Cache.
     @State private var attachments: [CachedAttachment] = []
     /// Datei für die QuickLook-Vorschau; `nil` = keine Vorschau offen.
@@ -106,16 +116,19 @@ struct MessageDetailView: View {
     ///   - message: Angezeigte Mail.
     ///   - accountStore: Quelle für Postfächer und Zugangsdaten.
     ///   - spamFilter: Spamfilter für Blockieren und Vertrauen.
+    ///   - scoreLimit: Score-Obergrenze für vertrauenswürdige Absender.
     ///   - onChange: Wird nach jeder Änderung aufgerufen.
     init(
         message: CachedMessage,
         accountStore: AccountStore,
         spamFilter: SpamFilterService,
+        scoreLimit: Double,
         onChange: (() -> Void)? = nil
     ) {
         self.message = message
         self.accountStore = accountStore
         self.spamFilter = spamFilter
+        self.scoreLimit = scoreLimit
         self.onChange = onChange
         _isUnread = State(initialValue: message.isUnread)
         _isFlagged = State(initialValue: message.isFlagged)
@@ -218,10 +231,13 @@ struct MessageDetailView: View {
     }
 
     /// Inhalt der Mail: HTML bevorzugt, sonst Text. Über einer HTML-Mail
-    /// mit gesperrten externen Inhalten steht der Hinweis zum Laden.
+    /// mit gesperrten externen Inhalten steht der Hinweis zum Laden. Bis
+    /// über externe Inhalte entschieden ist, bleibt nur der Platz frei.
     @ViewBuilder
     private var messageBody: some View {
-        if let html = message.htmlBody {
+        if message.htmlBody != nil && !isRemoteContentDecided {
+            Color.clear.frame(height: 100)
+        } else if let html = message.htmlBody {
             if hasRemoteContent && !allowsRemoteContent {
                 remoteContentNotice
             }
@@ -436,15 +452,18 @@ struct MessageDetailView: View {
 
     // MARK: - Beim Öffnen
 
-    /// Prüft auf externe Inhalte, lädt die Anhänge, bereitet das Teilen vor
-    /// und markiert eine ungelesene Mail als gelesen.
+    /// Entscheidet über externe Inhalte, lädt die Anhänge, bereitet das
+    /// Teilen vor und markiert eine ungelesene Mail als gelesen.
     ///
-    /// Verarbeitung: Scheitert das Markieren, bleibt die Mail ungelesen;
-    /// eine Meldung erscheint nicht, weil der Nutzer nichts ausgelöst hat.
+    /// Verarbeitung: Die Entscheidung über externe Inhalte fällt nur
+    /// einmal je Anzeige – läuft die Aufgabe erneut (z. B. nach einer
+    /// Vorschau), bleibt eine Freigabe per Knopf erhalten. Scheitert das
+    /// Markieren, bleibt die Mail ungelesen; eine Meldung erscheint nicht,
+    /// weil der Nutzer nichts ausgelöst hat.
     @MainActor
     private func prepareOnOpen() async {
-        if let html = message.htmlBody {
-            hasRemoteContent = RemoteContentPolicy.containsRemoteReferences(html)
+        if !isRemoteContentDecided {
+            await decideRemoteContent()
         }
         attachments = MessageStore.shared.attachments(forMessage: message.id)
         prepareShareURLs()
@@ -601,6 +620,24 @@ struct MessageDetailView: View {
     }
 
     // MARK: - Externe Inhalte
+
+    /// Prüft, ob die Mail externe Inhalte enthält, und gibt sie bei einem
+    /// vertrauenswürdigen Absender sofort frei.
+    ///
+    /// Verarbeitung: Nur Mails mit externen Verweisen werden gegen die
+    /// Listen geprüft. Danach erscheint der HTML-Inhalt.
+    @MainActor
+    private func decideRemoteContent() async {
+        if let html = message.htmlBody,
+           RemoteContentPolicy.containsRemoteReferences(html) {
+            hasRemoteContent = true
+            if await spamFilter.trustsRemoteContent(of: message, scoreLimit: scoreLimit) {
+                allowsRemoteContent = true
+                Log.view.info("🖼 Externe Inhalte sofort geladen (vertrauenswürdiger Absender)")
+            }
+        }
+        isRemoteContentDecided = true
+    }
 
     /// Gibt externe Inhalte für diese Anzeige frei.
     ///

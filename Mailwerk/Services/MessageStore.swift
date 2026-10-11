@@ -41,8 +41,13 @@
 //  Abgrenzung: Der Store kennt weder IMAP noch Oberfläche. Abruf und
 //  Darstellung liegen im MailFetchService bzw. in den ViewModels.
 //
+//  Spam-Angabe: Je Nachricht speichert die Ablage die Einstufung des
+//  Servers (Spalten `spamFlag`, `spamScore`). `spamFlag` NULL heißt
+//  „unbekannt“ – die Nachricht wurde vor Schema-Stufe 4 gespeichert und
+//  noch nicht nachgefüllt. Unbekannt ist etwas anderes als „kein Spam“.
+//
 //  Abhängigkeiten: SQLite3 (System-Framework), CachedMessage,
-//  CachedAttachment, FolderListing, MailFolder (Name des Posteingangs),
+//  CachedAttachment, SpamHeaderVerdict, FolderListing, MailFolder (Name des Posteingangs),
 //  ServerReconciliation (Plan-Typ), FolderSyncState, MessageListItem,
 //  Log.
 //
@@ -111,13 +116,14 @@ final class MessageStore: @unchecked Sendable {
     /// Gemeinsame Ablage der App.
     static let shared = MessageStore()
 
-    /// Version der gespeicherten Adress-/Threading-Header. Nachrichten mit
-    /// kleinerer Version werden beim nächsten Refresh nachgefüllt.
-    static let currentHeadersVersion = 1
+    /// Version der gespeicherten Kopfdaten (Adressen, Threading,
+    /// Spam-Angabe). Nachrichten mit kleinerer Version werden beim nächsten
+    /// Abruf ihres Ordners nachgefüllt, ohne sie neu zu laden.
+    static let currentHeadersVersion = 2
 
     /// Schema-Version, die diese App-Version erwartet. Wird nach den
     /// Migrationen in `PRAGMA user_version` geschrieben.
-    private static let schemaVersion: Int32 = 3
+    private static let schemaVersion: Int32 = 4
 
     /// Explizite Spaltenliste – Reihenfolge entspricht den Indizes in readMessage().
     private static let messageColumns = """
@@ -125,7 +131,7 @@ final class MessageStore: @unchecked Sendable {
         isUnread, isFlagged, isAnswered, isForwarded, totalSizeBytes, hasAttachments, \
         textBody, htmlBody, fetchedAt, \
         toJSON, ccJSON, replyToJSON, rfcMessageID, rfcInReplyTo, rfcReferences, \
-        folder
+        folder, spamFlag, spamScore
         """
 
     /// Spaltenliste der Listeneinträge – ohne Text und HTML.
@@ -423,6 +429,9 @@ final class MessageStore: @unchecked Sendable {
         if current < 3 {
             migrateToVersion3()
         }
+        if current < 4 {
+            migrateToVersion4()
+        }
 
         setUserVersion(Self.schemaVersion)
     }
@@ -527,6 +536,16 @@ final class MessageStore: @unchecked Sendable {
             ON message(accountID, folder, date DESC)
             """)
         exec("DROP INDEX IF EXISTS idx_message_account_folder")
+    }
+
+    /// Stufe 4: Spam-Angabe des Servers je Nachricht.
+    ///
+    /// Verarbeitung: Ergänzt `spamFlag` und `spamScore`. Bestehende Zeilen
+    /// erhalten NULL („unbekannt“); der nächste Abruf ihres Ordners füllt
+    /// sie über die Header-Version nach.
+    private func migrateToVersion4() {
+        addColumnIfMissing("spamFlag", "INTEGER")
+        addColumnIfMissing("spamScore", "REAL")
     }
 
     /// Schreibt die Kennungen von "<account>-<uid>" auf "<account>-INBOX-<uid>" um.
@@ -644,6 +663,8 @@ final class MessageStore: @unchecked Sendable {
     /// ON DELETE CASCADE die Anhänge löschen würde. Die Vorschau bildet
     /// SQLite aus dem Textteil (`substr(?15, …)` verweist auf denselben
     /// Wert wie Platzhalter 15, `textBody`) – dieselbe Regel wie in der Migration.
+    /// Platzhalter: 1–24 Spalten bis `folder`, 25–26 Spam-Angabe,
+    /// 27 Header-Version.
     ///
     /// - Parameter m: Zu speichernde Nachricht.
     /// - Throws: `StoreError`, wenn das Schreiben fehlschlägt.
@@ -651,7 +672,7 @@ final class MessageStore: @unchecked Sendable {
         let sql = """
             INSERT INTO message
             (\(Self.messageColumns), headersVersion, preview)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
                     substr(?15, 1, \(Self.previewLength)))
             ON CONFLICT(id) DO UPDATE SET
                 isUnread = excluded.isUnread,
@@ -669,6 +690,8 @@ final class MessageStore: @unchecked Sendable {
                 rfcMessageID = excluded.rfcMessageID,
                 rfcInReplyTo = excluded.rfcInReplyTo,
                 rfcReferences = excluded.rfcReferences,
+                spamFlag = excluded.spamFlag,
+                spamScore = excluded.spamScore,
                 headersVersion = excluded.headersVersion,
                 preview = excluded.preview
             """
@@ -693,7 +716,8 @@ final class MessageStore: @unchecked Sendable {
             sqlite3_bind_double(stmt, 17, m.fetchedAt.timeIntervalSince1970)
             bindHeaders(stmt, startingAt: 18, m.headers)          // 18–23
             bind(stmt, 24, m.folder)
-            sqlite3_bind_int(stmt, 25, Int32(Self.currentHeadersVersion))
+            bindSpamVerdict(stmt, startingAt: 25, m.headers.spamVerdict)  // 25–26
+            sqlite3_bind_int(stmt, 27, Int32(Self.currentHeadersVersion))
         }
     }
 
@@ -890,7 +914,8 @@ final class MessageStore: @unchecked Sendable {
         return ids
     }
 
-    /// Schreibt Adress-/Threading-Header und setzt die Header-Version.
+    /// Schreibt Adress-, Threading- und Spam-Kopfdaten und setzt die
+    /// Header-Version.
     ///
     /// - Parameters:
     ///   - messageID: Cache-ID der Nachricht.
@@ -900,14 +925,16 @@ final class MessageStore: @unchecked Sendable {
             UPDATE message SET
                 toJSON = ?, ccJSON = ?, replyToJSON = ?,
                 rfcMessageID = ?, rfcInReplyTo = ?, rfcReferences = ?,
+                spamFlag = ?, spamScore = ?,
                 headersVersion = ?
             WHERE id = ?
             """
         logged("updateHeaders \(messageID)") {
             try execute(sql, context: "updateHeaders \(messageID)") { stmt in
-                bindHeaders(stmt, startingAt: 1, headers)             // 1–6
-                sqlite3_bind_int(stmt, 7, Int32(Self.currentHeadersVersion))
-                bind(stmt, 8, messageID)
+                bindHeaders(stmt, startingAt: 1, headers)                    // 1–6
+                bindSpamVerdict(stmt, startingAt: 7, headers.spamVerdict)  // 7–8
+                sqlite3_bind_int(stmt, 9, Int32(Self.currentHeadersVersion))
+                bind(stmt, 10, messageID)
             }
         }
     }
@@ -1504,7 +1531,7 @@ final class MessageStore: @unchecked Sendable {
 
     // MARK: - Interne Helfer
 
-    /// Liest eine Zeile gemäß `messageColumns` (Indizes 0–23).
+    /// Liest eine Zeile gemäß `messageColumns` (Indizes 0–25).
     ///
     /// - Parameter s: Statement, das auf einer Ergebniszeile steht.
     /// - Returns: Die gelesene Nachricht.
@@ -1517,7 +1544,8 @@ final class MessageStore: @unchecked Sendable {
             replyToList: decodeList(optStr(s, 19)),
             rfcMessageID: optStr(s, 20),
             rfcInReplyTo: optStr(s, 21),
-            rfcReferences: optStr(s, 22)
+            rfcReferences: optStr(s, 22),
+            spamVerdict: readSpamVerdict(s, startingAt: 24)
         )
         return CachedMessage(
             id: str(s, 0),
@@ -1603,6 +1631,39 @@ final class MessageStore: @unchecked Sendable {
         bind(s, i + 3, h.rfcMessageID)
         bind(s, i + 4, h.rfcInReplyTo)
         bind(s, i + 5, h.rfcReferences)
+    }
+
+    /// Bindet die Spam-Angabe an zwei Platzhalter (`spamFlag`, `spamScore`).
+    ///
+    /// Verarbeitung: Ohne Angabe („unbekannt“) bleiben beide NULL; sonst
+    /// steht im ersten 1 oder 0, im zweiten der Score oder NULL.
+    ///
+    /// - Parameters:
+    ///   - s: Vorbereitetes Statement.
+    ///   - i: Position des ersten Platzhalters.
+    ///   - verdict: Spam-Angabe oder `nil`.
+    private func bindSpamVerdict(_ s: OpaquePointer?, startingAt i: Int32, _ verdict: SpamHeaderVerdict?) {
+        guard let verdict else {
+            sqlite3_bind_null(s, i)
+            sqlite3_bind_null(s, i + 1)
+            return
+        }
+        sqlite3_bind_int(s, i, verdict.isSpam ? 1 : 0)
+        if let score = verdict.score { sqlite3_bind_double(s, i + 1, score) }
+        else { sqlite3_bind_null(s, i + 1) }
+    }
+
+    /// Liest die Spam-Angabe aus zwei Spalten (`spamFlag`, `spamScore`).
+    ///
+    /// - Parameters:
+    ///   - s: Statement, das auf einer Ergebniszeile steht.
+    ///   - i: Index der Spalte `spamFlag`.
+    /// - Returns: Spam-Angabe oder `nil`, wenn sie unbekannt ist.
+    private func readSpamVerdict(_ s: OpaquePointer?, startingAt i: Int32) -> SpamHeaderVerdict? {
+        guard sqlite3_column_type(s, i) != SQLITE_NULL else { return nil }
+        let score = sqlite3_column_type(s, i + 1) != SQLITE_NULL
+            ? sqlite3_column_double(s, i + 1) : nil
+        return SpamHeaderVerdict(isSpam: sqlite3_column_int(s, i) != 0, score: score)
     }
 
     /// Setzt eine boolesche Spalte einer Nachricht.

@@ -15,15 +15,20 @@
 //  Einzelaktionen: Absender oder Domain blockieren (Blacklist, Mail in den
 //  Spam-Ordner) bzw. vertrauen (Whitelist, Mail zurück in den Posteingang).
 //
+//  Externe Inhalte: Für die Mailansicht beantwortet der Dienst, ob der
+//  Absender einer Mail vertrauenswürdig genug ist, um externe Inhalte
+//  sofort zu laden. Die Regel steht im `SpamClassifier`; hier werden nur
+//  die aktuellen Listen dazugegeben.
+//
 //  Abgrenzung: Die Entscheidung steckt in `SpamFilterPlanner` und ist dort
 //  getestet – hier geht es nur um das Ausführen. Welcher Ordner der
 //  Spam-Ordner ist, bestimmt `SpamFolderResolver`.
 //
 //  Abhängigkeiten: SwiftMail (IMAP), MailSession (Verbindung und
 //  Zugangsdaten), AccountStore, FilterListRepository, SpamFilterPlanner,
-//  SpamFolderResolver, SpamHeaderParser, MailActionService (Ordnerliste,
-//  Ordner anlegen), MessageStore (Cache nachziehen), SyncWindow (Zeitraum),
-//  MailFolder (Posteingang), Log.
+//  SpamFolderResolver, SpamHeaderParser, SpamClassifier, FilterAddress,
+//  MailActionService (Ordnerliste, Ordner anlegen), MessageStore (Cache
+//  nachziehen), SyncWindow (Zeitraum), MailFolder (Posteingang), Log.
 //
 
 import Foundation
@@ -255,6 +260,34 @@ final class SpamFilterService {
             return try await move(
                 message, to: MailFolder.inboxPath, on: server, account: account
             )
+        }
+    }
+
+    // MARK: - Externe Inhalte
+
+    /// Prüft, ob externe Inhalte einer Mail sofort geladen werden dürfen.
+    ///
+    /// Verarbeitung: Liest die aktuellen Listen und wendet
+    /// `SpamClassifier.trustsSender` auf Absender und gespeicherte
+    /// Spam-Angabe der Mail an. Lassen sich die Listen nicht lesen, wird
+    /// nicht vertraut – der Nutzer kann die Inhalte dann per Knopf laden.
+    ///
+    /// - Parameters:
+    ///   - message: Angezeigte Mail.
+    ///   - scoreLimit: Score-Obergrenze aus den Spam-Einstellungen.
+    /// - Returns: `true`, wenn der Absender vertrauenswürdig ist.
+    func trustsRemoteContent(of message: CachedMessage, scoreLimit: Double) async -> Bool {
+        do {
+            let lists = try await filterLists.lists()
+            return SpamClassifier.trustsSender(
+                sender: FilterAddress.sender(fromHeader: message.from),
+                verdict: message.headers.spamVerdict,
+                lists: lists,
+                scoreLimit: scoreLimit
+            )
+        } catch {
+            Log.spam.error("⚠️ Filterlisten für externe Inhalte nicht lesbar: \(error.localizedDescription, privacy: .public)")
+            return false
         }
     }
 

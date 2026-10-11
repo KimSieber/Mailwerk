@@ -388,6 +388,7 @@ struct InboxView: View {
                 messageID: message.id,
                 accountStore: accountStore,
                 spamFilter: viewModel.spamFilter,
+                scoreLimit: spamSettings.scoreLimit,
                 onChange: { viewModel.loadFromCache() }
             )
         } label: {
@@ -795,6 +796,8 @@ private struct MessageDetailLoader: View {
     let accountStore: AccountStore
     /// Spamfilter für Blockieren und Vertrauen.
     let spamFilter: SpamFilterService
+    /// Score-Obergrenze für vertrauenswürdige Absender (externe Inhalte).
+    let scoreLimit: Double
     /// Wird nach Änderungen an der Mail aufgerufen (Liste neu laden).
     let onChange: () -> Void
 
@@ -811,6 +814,7 @@ private struct MessageDetailLoader: View {
                     message: message,
                     accountStore: accountStore,
                     spamFilter: spamFilter,
+                    scoreLimit: scoreLimit,
                     onChange: onChange
                 )
             } else if isMissing {

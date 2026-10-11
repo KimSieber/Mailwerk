@@ -2,13 +2,27 @@
 //  CachedMessage.swift
 //  Mailwerk
 //
-//  Created by Kim Sieber on 18.09.26.
+//  Zweck: Datenmodell einer im lokalen Cache gespeicherten Nachricht samt
+//  ihrer Kopfdaten (Adressen, Threading, Spam-Angabe des Servers) und
+//  ihrer Anhänge.
+//
+//  Die Spam-Angabe ist optional: `nil` heißt „unbekannt“ (die Nachricht
+//  wurde gespeichert, bevor Mailwerk die Angabe mitgeführt hat). Das ist
+//  bewusst etwas anderes als „kein Spam“ – wer auf die Angabe vertraut
+//  (z. B. das sofortige Laden externer Inhalte), muss „unbekannt“ wie
+//  „nicht vertrauenswürdig“ behandeln.
+//
+//  Abgrenzung: Speichern und Lesen → MessageStore; Befüllen beim Abruf →
+//  MailFetchService; Listeneinträge ohne Inhalt → MessageListItem.
+//
+//  Abhängigkeiten: Foundation, SpamHeaderVerdict.
 //
 
 import Foundation
 
-/// Adress- und Threading-Header einer Nachricht.
-/// Grundlage für Antworten, Allen antworten und Weiterleiten.
+/// Adress-, Threading- und Spam-Kopfdaten einer Nachricht.
+/// Grundlage für Antworten, Allen antworten, Weiterleiten und für die
+/// Entscheidung, ob externe Inhalte sofort geladen werden.
 struct CachedMessageHeaders: Equatable {
     /// Empfänger (To) – je Eintrag eine formatierte Adresse, z. B. "Kim Sieber <kim@example.org>"
     var toList: [String] = []
@@ -22,37 +36,63 @@ struct CachedMessageHeaders: Equatable {
     var rfcInReplyTo: String?
     /// References-Kette, durch Leerzeichen getrennt
     var rfcReferences: String?
+    /// Spam-Einstufung des Servers (X-Spam, X-Spam-Status); `nil` = unbekannt.
+    var spamVerdict: SpamHeaderVerdict?
 }
 
 /// Lokal zwischengespeicherte Nachricht inkl. Body.
 /// Anhänge werden separat in CachedAttachment gehalten.
 struct CachedMessage: Identifiable {
-    let id: String              // "<accountUUID>-<folder>-<uid>"
+    /// Cache-Kennung "<accountUUID>-<folder>-<uid>" (siehe `makeID`).
+    let id: String
+    /// Postfach, zu dem die Nachricht gehört.
     let accountID: UUID
+    /// Anzeigename des Postfachs zum Zeitpunkt des Speicherns.
     let accountDisplayName: String
     /// IMAP-Ordner, in dem die Nachricht liegt (z. B. "INBOX", "Junk").
     /// UIDs sind nur innerhalb eines Ordners eindeutig, deshalb gehört der
     /// Ordner zur Identität einer gecachten Nachricht.
     let folder: String
+    /// IMAP-UID innerhalb des Ordners.
     let uid: UInt32
+    /// Betreff.
     let subject: String
+    /// Absender als formatierte Adresse.
     let from: String
-    let to: String              // Anzeige-String; für Logik headers.toList verwenden
+    /// Anzeige-String der Empfänger; für Logik `headers.toList` verwenden.
+    let to: String
+    /// Datum der Nachricht; `nil`, wenn der Server keines liefert.
     let date: Date?
+    /// Ungelesen (IMAP \Seen nicht gesetzt).
     var isUnread: Bool
+    /// Gekennzeichnet (IMAP \Flagged).
     var isFlagged: Bool
-    var isAnswered: Bool        // IMAP \Answered
-    var isForwarded: Bool       // IMAP-Keyword $Forwarded
-    let totalSizeBytes: Int     // RFC822.SIZE – entscheidet, ob Anhänge automatisch geladen werden
-    let hasAttachments: Bool    // true wenn die Mail mindestens einen Anhang hat
+    /// Beantwortet (IMAP \Answered).
+    var isAnswered: Bool
+    /// Weitergeleitet (IMAP-Keyword $Forwarded).
+    var isForwarded: Bool
+    /// RFC822.SIZE – entscheidet, ob Anhänge automatisch geladen werden.
+    let totalSizeBytes: Int
+    /// `true`, wenn die Mail mindestens einen Anhang hat.
+    let hasAttachments: Bool
+    /// Textteil der Mail.
     let textBody: String?
+    /// HTML-Teil der Mail.
     let htmlBody: String?
+    /// Zeitpunkt des Speicherns im Cache.
     let fetchedAt: Date
+    /// Adress-, Threading- und Spam-Kopfdaten.
     let headers: CachedMessageHeaders
 
     /// Bildet die Cache-Kennung. Einzige Stelle, an der das Format entsteht –
     /// die Kennung wird nirgends wieder zerlegt, weil Ordnernamen selbst
     /// Bindestriche enthalten dürfen.
+    ///
+    /// - Parameters:
+    ///   - accountID: Postfach.
+    ///   - folder: IMAP-Ordner.
+    ///   - uid: UID im Ordner.
+    /// - Returns: Cache-Kennung.
     static func makeID(accountID: UUID, folder: String, uid: UInt32) -> String {
         "\(accountID.uuidString)-\(folder)-\(uid)"
     }
@@ -60,10 +100,16 @@ struct CachedMessage: Identifiable {
 
 /// Ein einzelner gecachter Anhang, referenziert über die messageID.
 struct CachedAttachment: Identifiable {
-    let id: String              // "<messageID>-<partSection>"
-    let messageID: String       // Fremdschlüssel auf CachedMessage.id
+    /// Kennung "<messageID>-<partSection>".
+    let id: String
+    /// Fremdschlüssel auf `CachedMessage.id`.
+    let messageID: String
+    /// Dateiname.
     let filename: String
+    /// MIME-Typ.
     let contentType: String
+    /// Größe in Bytes laut Server.
     let sizeBytes: Int
-    let data: Data?             // nil = noch nicht heruntergeladen (Mail > 5 MB)
+    /// Inhalt; `nil` = noch nicht heruntergeladen oder lokal gelöscht.
+    let data: Data?
 }

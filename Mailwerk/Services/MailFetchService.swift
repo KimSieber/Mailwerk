@@ -28,6 +28,12 @@
 //  Bilder und weitergeleitete Mails werden nicht übertragen (siehe
 //  MessageContentPlan). So fließt jeder Teil höchstens einmal.
 //
+//  Spam-Angabe: Die Kopfdaten-Abfrage holt die Spam-Kopfzeilen des
+//  Servers (X-Spam, X-Spam-Status) gleich mit; ihre Einstufung wird mit
+//  der Mail gespeichert. Mails im Cache mit älterer Header-Version
+//  bekommen sie beim nächsten Abruf ihres Ordners nachgefüllt – ohne
+//  zusätzliche Server-Abfrage, weil die Kopfdaten ohnehin geholt werden.
+//
 //  Abgrenzung: `MailActionService` setzt Flags und verschiebt Mails;
 //  `MailSendService` versendet. Die Darstellung liegt im ViewModel.
 //
@@ -37,7 +43,7 @@
 //  MessageStore (Cache), ServerReconciliation (Abgleichslogik),
 //  SyncStatePlanner (Sync-Zustand), SyncWindow (Zeitfenster),
 //  MessageContentPlan (zu ladende Teile), FlagState (Flags), MailFolder,
-//  Log.
+//  SpamHeaderParser (Spam-Angabe), Log.
 //
 
 import Foundation
@@ -52,9 +58,10 @@ enum MailFetchService {
     /// Anhänge automatisch mitgeladen werden. Darüber: erst bei Tap.
     static let autoDownloadThreshold = 5 * 1024 * 1024  // 5 MB
 
-    /// Zusätzlich zum ENVELOPE angeforderte Header. References ist nicht
-    /// Teil des ENVELOPE, wird aber für korrektes Threading gebraucht.
-    private static let extraHeaderFields = ["References"]
+    /// Zusätzlich zum ENVELOPE angeforderte Header: References (nicht Teil
+    /// des ENVELOPE, für korrektes Threading) und die Spam-Kopfzeilen des
+    /// Servers (für die gespeicherte Spam-Angabe).
+    private static let extraHeaderFields = ["References"] + SpamHeaderParser.fieldNames
 
     /// Höchstzahl der Mails je Kopfdaten-Abfrage. Größere Mengen werden in
     /// mehreren Anfragen geholt, damit keine einzelne Antwort in einen
@@ -672,22 +679,32 @@ enum MailFetchService {
 
     // MARK: - Helfer
 
-    /// Überführt Adress- und Threading-Header aus dem MessageInfo ins
-    /// Cache-Modell.
+    /// Überführt Adress-, Threading- und Spam-Kopfdaten aus dem MessageInfo
+    /// ins Cache-Modell.
     ///
-    /// - Parameter info: IMAP-Antwort mit Envelope-Daten.
-    /// - Returns: Aufbereitete Header für den Cache.
+    /// Verarbeitung: Die Spam-Kopfzeilen kommen aus
+    /// `additionalHeaderFields`, das Reihenfolge und Wiederholungen behält.
+    /// Das Wörterbuch `additionalFields` wäre falsch: Bei mehreren
+    /// X-Spam-Status-Zeilen gewänne dort die letzte – ein Absender könnte
+    /// die Einstufung des Servers so überschreiben (wie im Spamfilter).
+    ///
+    /// - Parameter info: IMAP-Antwort mit Envelope-Daten und Zusatz-Headern.
+    /// - Returns: Aufbereitete Kopfdaten für den Cache.
     private static func headers(from info: MessageInfo) -> CachedMessageHeaders {
         let references = info.references?
             .map(\.description)
             .joined(separator: " ")
+        let spamLines = (info.additionalHeaderFields ?? []).map {
+            SpamHeaderLine(name: $0.name, value: $0.value)
+        }
         return CachedMessageHeaders(
             toList: info.to,
             ccList: info.cc,
             replyToList: info.replyTo,
             rfcMessageID: info.messageId?.description,
             rfcInReplyTo: info.inReplyTo?.description,
-            rfcReferences: (references?.isEmpty ?? true) ? nil : references
+            rfcReferences: (references?.isEmpty ?? true) ? nil : references,
+            spamVerdict: SpamHeaderParser.parse(spamLines)
         )
     }
 }
