@@ -1,18 +1,11 @@
 //
 //  MessageStoreFolderTests.swift
-//  Mailwerk
-//
-//  Created by Kim Sieber on 24.09.26.
-//
-
-
-//
-//  MessageStoreFolderTests.swift
 //  MailwerkTests
 //
-//  Tests für die ordnerfähige Ablage: Trennung gleicher UIDs in
-//  verschiedenen Ordnern, Umzug einer Nachricht und die einmalige
-//  Migration der Kennungen von v0.1.4 auf v0.1.5.
+//  Zweck: Tests für die ordnerfähige Ablage: Trennung gleicher UIDs in
+//  verschiedenen Ordnern, Ordnerliste, Entfernen eines Postfachs, Umzug
+//  einer Nachricht und die einmalige Migration der Kennungen auf das
+//  Ordner-Schema.
 //
 //  Jeder Test arbeitet auf einer eigenen Datei im Temp-Verzeichnis,
 //  damit die Ablage der App unberührt bleibt.
@@ -23,6 +16,7 @@ import SQLite3
 import Testing
 @testable import Mailwerk
 
+/// Tests für die ordnerfähige Ablage im MessageStore.
 @MainActor
 struct MessageStoreFolderTests {
 
@@ -30,12 +24,14 @@ struct MessageStoreFolderTests {
 
     private static let account = UUID(uuidString: "3F2504E0-4F89-11D3-9A0C-0305E82C3301")!
 
+    /// Testhilfe: Pfad einer neuen Datenbankdatei im Temp-Verzeichnis.
     private func temporaryPath() -> String {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("MailwerkTests-\(UUID().uuidString).sqlite")
             .path
     }
 
+    /// Testhilfe: Nachricht in einem Ordner.
     private func message(
         folder: String,
         uid: UInt32,
@@ -67,12 +63,14 @@ struct MessageStoreFolderTests {
 
     // MARK: - Kennung
 
+    /// Die Kennung enthält Konto, Ordner und UID.
     @Test("Die Kennung enthält Konto, Ordner und UID")
     func idContainsFolder() {
         let id = CachedMessage.makeID(accountID: Self.account, folder: "INBOX", uid: 42)
         #expect(id == "\(Self.account.uuidString)-INBOX-42")
     }
 
+    /// Ordner mit Bindestrich oder Pfadtrenner ergeben eigene Kennungen.
     @Test("Ordner mit Bindestrich oder Pfadtrenner ergeben eigene Kennungen")
     func idStaysUniqueForUnusualFolders() {
         let a = CachedMessage.makeID(accountID: Self.account, folder: "Junk-E-Mail", uid: 1)
@@ -82,6 +80,7 @@ struct MessageStoreFolderTests {
 
     // MARK: - Trennung der Ordner
 
+    /// Gleiche UID in zwei Ordnern sind zwei Nachrichten.
     @Test("Gleiche UID in zwei Ordnern sind zwei Nachrichten")
     func sameUIDInTwoFolders() {
         let store = MessageStore(path: temporaryPath())
@@ -96,6 +95,7 @@ struct MessageStoreFolderTests {
         #expect(inbox.first?.folder == "INBOX")
     }
 
+    /// Die bekannten Kennungen kommen je Ordner zurück.
     @Test("Die bekannten Kennungen kommen je Ordner zurück")
     func cachedIDsPerFolder() {
         let store = MessageStore(path: temporaryPath())
@@ -107,6 +107,7 @@ struct MessageStoreFolderTests {
         #expect(store.cachedMessageIDs(forAccount: Self.account, folder: "Junk").count == 1)
     }
 
+    /// Das Löschen eines Ordners räumt Nachrichten, Anhänge und Stand nur dieses Ordners ab.
     @Test("Das Löschen eines Ordners räumt Nachrichten, Anhänge und Stand nur dieses Ordners ab")
     func deleteFolderClearsOnlyThatFolder() {
         let store = MessageStore(path: temporaryPath())
@@ -131,8 +132,9 @@ struct MessageStoreFolderTests {
         #expect(store.lastSync(accountID: Self.account, folder: "Test") != nil)
     }
 
-    // MARK: - Ordnerliste (v0.1.8b)
+    // MARK: - Ordnerliste
 
+    /// Die Ordnerliste eines Postfachs wird gespeichert, ersetzt und bleibt je Postfach getrennt.
     @Test("Die Ordnerliste eines Postfachs wird gespeichert, ersetzt und bleibt je Postfach getrennt")
     func folderListingRoundTrip() {
         let path = temporaryPath()
@@ -156,8 +158,9 @@ struct MessageStoreFolderTests {
         #expect(reopened.folderListing(accountID: Self.account) == changed)
     }
 
-    // MARK: - Postfach entfernen (v0.1.8d)
+    // MARK: - Postfach entfernen
 
+    /// Das Entfernen eines Postfachs räumt dessen Cache vollständig ab, andere bleiben unberührt.
     @Test("Das Entfernen eines Postfachs räumt dessen Cache vollständig ab, andere bleiben unberührt")
     func deleteAccountClearsEverythingForThatAccountOnly() {
         let path = temporaryPath()
@@ -199,6 +202,7 @@ struct MessageStoreFolderTests {
 
     // MARK: - Umzug
 
+    /// Eine Nachricht zieht mitsamt Anhang in einen anderen Ordner um.
     @Test("Eine Nachricht zieht mitsamt Anhang in einen anderen Ordner um")
     func relocateMovesAttachments() throws {
         let store = MessageStore(path: temporaryPath())
@@ -232,6 +236,7 @@ struct MessageStoreFolderTests {
         #expect(store.attachments(forMessage: original.id).isEmpty)
     }
 
+    /// Eine unbekannte Kennung lässt die Ablage unverändert.
     @Test("Eine unbekannte Kennung lässt die Ablage unverändert")
     func relocateUnknownMessage() {
         let store = MessageStore(path: temporaryPath())
@@ -240,8 +245,9 @@ struct MessageStoreFolderTests {
         #expect(store.allMessages(accountIDs: [Self.account], folder: "INBOX").count == 1)
     }
 
-    // MARK: - Migration von v0.1.4
+    // MARK: - Migration auf das Ordner-Schema
 
+    /// Bestandsdaten werden auf das Ordner-Schema umgeschrieben.
     @Test("Bestandsdaten werden auf das Ordner-Schema umgeschrieben")
     func migratesOldDatabase() throws {
         let path = temporaryPath()
@@ -267,6 +273,7 @@ struct MessageStoreFolderTests {
         #expect(attachments.first?.filename == "Alt.pdf")
     }
 
+    /// Eine zweite Öffnung ändert die Kennungen nicht erneut.
     @Test("Eine zweite Öffnung ändert die Kennungen nicht erneut")
     func migrationRunsOnlyOnce() throws {
         let path = temporaryPath()
@@ -282,7 +289,7 @@ struct MessageStoreFolderTests {
         #expect(store.allMessages(accountIDs: [Self.account], folder: "INBOX").count == 1)
     }
 
-    /// Legt eine Datenbank im Zustand von v0.1.4 an: Kennung ohne Ordner,
+    /// Legt eine Datenbank im Zustand vor dem Ordner-Schema an: Kennung ohne Ordner,
     /// keine Spalte `folder`.
     private func createLegacyDatabase(at path: String, messageID: String) throws {
         var db: OpaquePointer?

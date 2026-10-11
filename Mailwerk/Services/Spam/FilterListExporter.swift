@@ -2,19 +2,27 @@
 //  FilterListExporter.swift
 //  Mailwerk
 //
-//  Gibt eine Liste als Text aus – eine Angabe je Zeile, Domains in der
-//  Schreibweise `*@firma.de`. Genau dieses Format erwartet das
+//  Zweck: Gibt eine Liste als Text aus – eine Angabe je Zeile, Domains in
+//  der Schreibweise `*@firma.de`. Genau dieses Format erwartet das
 //  manitu-Portal, sodass sich eine Liste dort übernehmen lässt.
 //
 //  Reine Logik, deshalb `nonisolated`.
 //
+//  Abgrenzung: Teilen der Datei → FilterListView.
+//
+//  Abhängigkeiten: Foundation, FilterEntryItem.
+//
 
 import Foundation
 
+/// Textausgabe der Filterlisten.
 nonisolated enum FilterListExporter {
 
     /// Eine Zeile je Eintrag, Adressen zuerst, dann Domains – innerhalb
     /// beider Gruppen alphabetisch.
+    ///
+    /// - Parameter entries: Einträge einer Liste.
+    /// - Returns: Text mit einer Angabe je Zeile.
     static func text(for entries: [FilterEntryItem]) -> String {
         entries
             .sorted { lhs, rhs in
@@ -27,13 +35,24 @@ nonisolated enum FilterListExporter {
     }
 
     /// Dateiname für den Export, z. B. "Mailwerk-Blacklist.txt".
+    ///
+    /// - Parameter list: Liste.
+    /// - Returns: Dateiname.
     static func filename(for list: FilterList) -> String {
         list == .white ? "Mailwerk-Whitelist.txt" : "Mailwerk-Blacklist.txt"
     }
 
-    /// Schreibt die Liste als Textdatei ins Temp-Verzeichnis und liefert die
-    /// Adresse. Nur mit einer Datei bietet das Teilen-Menü das Versenden per
-    /// Mail mit Anhang an – ein reiner Text landet dort nur im Nachrichtentext.
+    /// Schreibt die Liste als Textdatei ins Temp-Verzeichnis.
+    ///
+    /// Verarbeitung: Nur mit einer Datei bietet das Teilen-Menü das Versenden
+    /// per Mail mit Anhang an – ein reiner Text landet dort nur im
+    /// Nachrichtentext. Eine vorhandene Datei wird ersetzt.
+    ///
+    /// - Parameters:
+    ///   - entries: Einträge der Liste.
+    ///   - list: Liste (bestimmt den Dateinamen).
+    /// - Returns: Adresse der Datei.
+    /// - Throws: Fehler beim Anlegen oder Schreiben.
     static func writeTemporaryFile(
         for entries: [FilterEntryItem],
         list: FilterList
@@ -50,6 +69,10 @@ nonisolated enum FilterListExporter {
         return fileURL
     }
 
+    /// Zeile eines Eintrags; Domains als `*@domain`.
+    ///
+    /// - Parameter entry: Eintrag.
+    /// - Returns: Zeile.
     private static func line(for entry: FilterEntryItem) -> String {
         switch entry.kind {
         case .address: entry.value

@@ -2,22 +2,29 @@
 //  SpamFilterPlanner.swift
 //  Mailwerk
 //
-//  Fasst die Einzelentscheidungen eines Filterlaufs zu einem Arbeitsplan
-//  zusammen: welche Nachrichten bekommen welches Keyword, welche wandern
-//  in den Spam-Ordner.
+//  Zweck: Fasst die Einzelentscheidungen eines Filterlaufs zu einem
+//  Arbeitsplan zusammen: welche Nachrichten bekommen welches Keyword,
+//  welche wandern in den Spam-Ordner.
 //
 //  Der Plan bündelt gleichartige Schritte, damit der Server pro Lauf nur
 //  wenige Befehle sieht statt einen je Nachricht. Reine Logik ohne IMAP,
 //  deshalb `nonisolated` und vollständig per Unit-Test abgedeckt.
+//
+//  Abgrenzung: Einzelentscheidung → SpamClassifier; Ausführen →
+//  SpamFilterService.
+//
+//  Abhängigkeiten: Foundation, SpamClassifier, FilterAddress, SpamHeaderVerdict.
 //
 
 import Foundation
 
 /// Eine zu prüfende Nachricht, reduziert auf das, was die Entscheidung braucht.
 nonisolated struct SpamCandidate: Equatable {
+    /// UID im Posteingang.
     let uid: UInt32
     /// Absender laut `From`-Header; nil, wenn er unbrauchbar ist.
     let sender: FilterAddress?
+    /// Einstufung des Servers.
     let verdict: SpamHeaderVerdict
 }
 
@@ -34,15 +41,26 @@ nonisolated struct SpamFilterPlan: Equatable {
     /// Bleiben im Posteingang.
     var keep: [UInt32] = []
 
+    /// Leerer Plan.
     static let empty = SpamFilterPlan()
 
+    /// `true`, wenn nichts zu tun ist.
     var isEmpty: Bool { checked.isEmpty }
 }
 
+/// Erstellt den Arbeitsplan eines Filterlaufs.
 nonisolated enum SpamFilterPlanner {
 
     /// Wendet den Classifier auf alle Kandidaten an und bündelt das Ergebnis.
-    /// Kommt dieselbe UID mehrfach vor, zählt sie nur einmal.
+    ///
+    /// Verarbeitung: Kommt dieselbe UID mehrfach vor, zählt sie nur einmal;
+    /// alle Listen werden aufsteigend sortiert.
+    ///
+    /// - Parameters:
+    ///   - candidates: Zu prüfende Nachrichten.
+    ///   - lists: Black- und Whitelist.
+    ///   - scoreLimit: Score-Obergrenze für Whitelist-Treffer.
+    /// - Returns: Arbeitsplan.
     static func plan(
         for candidates: [SpamCandidate],
         lists: FilterLists,

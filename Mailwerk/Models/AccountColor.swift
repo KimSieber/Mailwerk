@@ -2,6 +2,17 @@
 //  AccountColor.swift
 //  Mailwerk
 //
+//  Zweck: Feste Farbpalette, mit der ein Postfach in der Liste markiert
+//  wird (farbiger Streifen am Zeilenrand), samt deutschem Anzeigenamen
+//  und Umwandlung des gespeicherten Hex-Werts in eine SwiftUI-Farbe.
+//
+//  Gespeichert wird der Hex-Wert (`rawValue`) im Postfach (`MailAccount.colorHex`).
+//  Die Farbe ist opt-in: ohne gewählte Farbe kein Streifen.
+//
+//  Abgrenzung: Farbwahl in der Oberfläche → ColorPickerGrid.
+//
+//  Abhängigkeiten: SwiftUI.
+//
 
 import SwiftUI
 
@@ -21,6 +32,7 @@ enum AccountColor: String, CaseIterable, Identifiable, Codable {
     case navy      = "#185FA5"
     case magenta   = "#993556"
 
+    /// Kennung für SwiftUI-Listen: der Hex-Wert.
     var id: String { rawValue }
 
     /// Deutscher Anzeigename für den Farbwähler.
@@ -41,13 +53,16 @@ enum AccountColor: String, CaseIterable, Identifiable, Codable {
         }
     }
 
-    /// SwiftUI-Color aus dem Hex-Wert.
+    /// SwiftUI-Farbe aus dem Hex-Wert.
     var color: Color {
         Color(hex: rawValue)
     }
 
     /// Erzeugt eine `AccountColor` aus einem gespeicherten Hex-String.
-    /// Gibt `nil` zurück, wenn der Hex-Wert keiner bekannten Farbe entspricht.
+    ///
+    /// - Parameter hex: gespeicherter Hex-Wert, z. B. "#378ADD".
+    /// - Returns: Passende Farbe oder `nil`, wenn der Wert fehlt oder keiner
+    ///   bekannten Farbe entspricht.
     static func from(hex: String?) -> AccountColor? {
         guard let hex else { return nil }
         return AccountColor(rawValue: hex)
@@ -57,7 +72,12 @@ enum AccountColor: String, CaseIterable, Identifiable, Codable {
 // MARK: - Color+Hex
 
 extension Color {
-    /// Initialisiert eine Color aus einem Hex-String (z. B. "#378ADD").
+    /// Erzeugt eine Farbe aus einem Hex-String.
+    ///
+    /// Verarbeitung: „#“ wird entfernt, die sechs Stellen als RGB gelesen.
+    /// Ein ungültiger Wert ergibt Schwarz.
+    ///
+    /// - Parameter hex: Hex-Wert, z. B. "#378ADD".
     init(hex: String) {
         let cleaned = hex.trimmingCharacters(in: .init(charactersIn: "#"))
         let scanner = Scanner(string: cleaned)

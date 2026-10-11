@@ -1,16 +1,9 @@
 //
 //  RichTextHTMLTests.swift
-//  Mailwerk
-//
-//  Created by Kim Sieber on 22.09.26.
-//
-
-
-//
-//  RichTextHTMLTests.swift
 //  MailwerkTests
 //
-//  Tests für die Umwandlung des formatierten Texts in HTML und Nur-Text.
+//  Zweck: Tests für die Umwandlung des formatierten Texts in HTML und
+//  Nur-Text (RichTextHTML).
 //
 
 import Foundation
@@ -23,11 +16,13 @@ import UIKit
 import AppKit
 #endif
 
+/// Tests für RichTextHTML.
 @MainActor
 struct RichTextHTMLTests {
 
     // MARK: - Hilfen
 
+    /// Testhilfe: Text mit Standardformat.
     private func attributed(_ text: String) -> NSMutableAttributedString {
         NSMutableAttributedString(
             string: text,
@@ -35,6 +30,7 @@ struct RichTextHTMLTests {
         )
     }
 
+    /// Testhilfe: Absatzstil einer Liste.
     private func listParagraphStyle(_ style: RichTextListStyle) -> NSParagraphStyle {
         let paragraph = NSMutableParagraphStyle()
         paragraph.textLists = [NSTextList(markerFormat: style.markerFormat, options: 0)]
@@ -44,18 +40,21 @@ struct RichTextHTMLTests {
 
     // MARK: - Absätze
 
+    /// Absätze werden zu <p>.
     @Test("Absätze werden zu <p>")
     func paragraphs() {
         let html = RichTextHTML.html(from: attributed("Hallo\nWelt"))
         #expect(html == "<p>Hallo</p><p>Welt</p>")
     }
 
+    /// Leerzeile bleibt als Abstand erhalten.
     @Test("Leerzeile bleibt als Abstand erhalten")
     func emptyLine() {
         let html = RichTextHTML.html(from: attributed("Hallo\n\nWelt"))
         #expect(html == "<p>Hallo</p><p><br></p><p>Welt</p>")
     }
 
+    /// Sonderzeichen werden maskiert.
     @Test("Sonderzeichen werden maskiert")
     func escaping() {
         let html = RichTextHTML.html(from: attributed("5 < 7 & <b>fett</b>"))
@@ -64,6 +63,7 @@ struct RichTextHTMLTests {
 
     // MARK: - Zeichenformate
 
+    /// Fett und kursiv werden zu Inline-Styles.
     @Test("Fett und kursiv werden zu Inline-Styles")
     func boldAndItalic() {
         let text = attributed("Hallo Welt")
@@ -73,6 +73,7 @@ struct RichTextHTMLTests {
         #expect(html == "<p>Hallo <span style=\"font-weight:bold\">Welt</span></p>")
     }
 
+    /// Unterstreichung wird übernommen.
     @Test("Unterstreichung wird übernommen")
     func underline() {
         let text = attributed("Hallo")
@@ -84,6 +85,7 @@ struct RichTextHTMLTests {
         #expect(RichTextHTML.html(from: text).contains("text-decoration:underline"))
     }
 
+    /// Normalgröße erzeugt keine Angabe, abweichende Größen schon.
     @Test("Normalgröße erzeugt keine Angabe, abweichende Größen schon")
     func fontSizes() {
         #expect(!RichTextHTML.html(from: attributed("Hallo")).contains("font-size"))
@@ -94,6 +96,7 @@ struct RichTextHTMLTests {
         #expect(RichTextHTML.html(from: text).contains("font-size:20px"))
     }
 
+    /// Standardfarbe erzeugt keine Angabe, andere Farben schon.
     @Test("Standardfarbe erzeugt keine Angabe, andere Farben schon")
     func colors() {
         #expect(!RichTextHTML.html(from: attributed("Hallo")).contains("color:"))
@@ -107,6 +110,7 @@ struct RichTextHTMLTests {
         #expect(RichTextHTML.html(from: text).contains("color:#ff0000"))
     }
 
+    /// Links werden zu <a href>.
     @Test("Links werden zu <a href>")
     func links() {
         let text = attributed("Mailwerk")
@@ -121,6 +125,7 @@ struct RichTextHTMLTests {
 
     // MARK: - Listen
 
+    /// Aufzählung wird zu <ul>, nummerierte Liste zu <ol>.
     @Test("Aufzählung wird zu <ul>, nummerierte Liste zu <ol>")
     func lists() {
         let text = attributed("Eins\nZwei\nText")
@@ -142,6 +147,7 @@ struct RichTextHTMLTests {
 
     // MARK: - Nur-Text
 
+    /// Nur-Text: Aufzählungszeichen und Nummerierung werden ausgeschrieben.
     @Test("Nur-Text: Aufzählungszeichen und Nummerierung werden ausgeschrieben")
     func plainTextLists() {
         let text = attributed("Eins\nZwei\nText")
@@ -153,6 +159,7 @@ struct RichTextHTMLTests {
         #expect(RichTextHTML.plainText(from: text) == "1. Eins\n2. Zwei\nText")
     }
 
+    /// Nur-Text behält Absätze und maskiert nichts.
     @Test("Nur-Text behält Absätze und maskiert nichts")
     func plainTextParagraphs() {
         let text = attributed("5 < 7\n\nEnde")

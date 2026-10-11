@@ -2,18 +2,28 @@
 //  SpamSettingsView.swift
 //  Mailwerk
 //
-//  Einstellungen des Spamfilters: Schalter, Score-Obergrenze und Zugang
-//  zur Pflege der beiden Listen.
+//  Zweck: Einstellungen des Spamfilters: Schalter, Score-Obergrenze und
+//  Zugang zur Pflege der beiden Listen.
+//
+//  Abgrenzung: Speichern der Einstellungen → SpamSettings; Listenpflege →
+//  FilterListView.
+//
+//  Abhängigkeiten: SwiftUI, SpamSettings, FilterListRepository,
+//  FilterListView, PlatformSheetSize.
 //
 
 import SwiftUI
 
+/// Sheet „Spamfilter“.
 struct SpamSettingsView: View {
+    /// Einstellungen des Filters.
     let settings: SpamSettings
+    /// Zugriff auf die Listen.
     let filterLists: any FilterListRepository
 
     @Environment(\.dismiss) private var dismiss
 
+    /// Formular mit Schalter, Listen und Score-Obergrenze.
     var body: some View {
         NavigationStack {
             Form {
@@ -69,6 +79,7 @@ struct SpamSettingsView: View {
         .macSheetFrame(.list)
     }
 
+    /// Score-Obergrenze ohne Nachkommastellen.
     private var scoreText: String {
         settings.scoreLimit.formatted(.number.precision(.fractionLength(0)))
     }

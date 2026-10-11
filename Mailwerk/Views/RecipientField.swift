@@ -2,23 +2,33 @@
 //  RecipientField.swift
 //  Mailwerk
 //
-//  Eingabefeld für An/Cc/Bcc: bereits erfasste Adressen erscheinen als Chips,
-//  während der Eingabe werden passende Kontakte vorgeschlagen.
+//  Zweck: Eingabefeld für An/Cc/Bcc: bereits erfasste Adressen erscheinen
+//  als Chips, während der Eingabe werden passende Kontakte vorgeschlagen.
 //  Ungültige Adressen werden rot dargestellt, statt sie zu verwerfen.
 //
-//  Tastatur: Enter übernimmt den hervorgehobenen Vorschlag (außer die Eingabe
-//  ist bereits eine vollständige Adresse), Pfeiltasten wechseln den Vorschlag,
-//  Escape blendet die Vorschlagsliste aus. Nach dem Anlegen eines Chips bleibt
-//  der Fokus im Feld, sodass direkt die nächste Adresse getippt werden kann.
+//  Tastatur: Enter übernimmt den hervorgehobenen Vorschlag (außer die
+//  Eingabe ist bereits eine vollständige Adresse), Pfeiltasten wechseln
+//  den Vorschlag, Escape blendet die Vorschlagsliste aus. Nach dem Anlegen
+//  eines Chips bleibt der Fokus im Feld, sodass direkt die nächste Adresse
+//  getippt werden kann.
 //
-//  Ein Tap auf einen Chip zeigt die E-Mail-Adresse, ein weiterer wieder den
-//  Namen. Zu lange Adressen werden in der Mitte gekürzt.
+//  Ein Tap auf einen Chip zeigt die E-Mail-Adresse, ein weiterer wieder
+//  den Namen. Zu lange Adressen werden in der Mitte gekürzt.
+//
+//  Abgrenzung: Zerlegen der Eingabe → RecipientInput; Kontakte →
+//  ContactSuggestionService; Verfassen → ComposeView.
+//
+//  Abhängigkeiten: SwiftUI, MailAddress, RecipientInput,
+//  ContactSuggestionService, FlowLayout.
 //
 
 import SwiftUI
 
+/// Adressfeld mit Chips und Kontaktvorschlägen.
 struct RecipientField: View {
+    /// Bezeichnung links („An“, „Cc“, „Bcc“).
     let label: String
+    /// Erfasste Adressen.
     @Binding var addresses: [MailAddress]
 
     /// Vorschlagsquelle – im Test/Preview austauschbar.
@@ -30,18 +40,25 @@ struct RecipientField: View {
         _ = await ContactSuggestionService.shared.requestAccessIfNeeded()
     }
 
+    /// Noch offene Eingabe.
+    /// Aktuelle Vorschläge.
+    /// Index des hervorgehobenen Vorschlags.
+    /// Laufende, verzögerte Suche.
+    /// `true`, sobald die Kontakte-Berechtigung angefragt wurde.
     @State private var input = ""
     @State private var suggestions: [ContactSuggestion] = []
     @State private var selectedSuggestion = 0
     @State private var searchTask: Task<Void, Never>?
     @State private var hasRequestedAccess = false
     /// Chips, die gerade die vollständige Adresse zeigen
+    /// Fokus des Textfelds.
     @State private var expandedChips: Set<String> = []
     @FocusState private var isFocused: Bool
 
     /// Wartezeit, bevor nach einer Eingabe gesucht wird.
     private let searchDelay = Duration.milliseconds(250)
 
+    /// Bezeichnung, Chips mit Eingabefeld und darunter die Vorschläge.
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 8) {
@@ -145,6 +162,10 @@ struct RecipientField: View {
         }
     }
 
+    /// Verschiebt die Hervorhebung in der Vorschlagsliste.
+    ///
+    /// - Parameter offset: +1 nach unten, -1 nach oben.
+    /// - Returns: `.handled`, wenn Vorschläge da sind, sonst `.ignored`.
     private func moveSelection(by offset: Int) -> KeyPress.Result {
         guard !suggestions.isEmpty else { return .ignored }
         let next = selectedSuggestion + offset
@@ -154,7 +175,10 @@ struct RecipientField: View {
 
     // MARK: - Eingabe
 
-    /// Trennzeichen schließen eine Adresse ab, der Rest bleibt stehen.
+    /// Trennzeichen schließen eine Adresse ab, der Rest bleibt stehen; sonst
+    /// wird nach Vorschlägen gesucht.
+    ///
+    /// - Parameter text: Aktuelle Eingabe.
     private func handleInput(_ text: String) {
         let result = RecipientInput.split(text)
         if !result.addresses.isEmpty {
@@ -175,6 +199,9 @@ struct RecipientField: View {
         input = ""
     }
 
+    /// Übernimmt eine Adresse als Chip und behält den Fokus im Feld.
+    ///
+    /// - Parameter address: Adresse.
     private func add(_ address: MailAddress) {
         searchTask?.cancel()
         addresses = RecipientInput.appending([address], to: addresses)
@@ -195,12 +222,17 @@ struct RecipientField: View {
         }
     }
 
+    /// Entfernt einen Chip.
+    ///
+    /// - Parameter address: Adresse.
     private func remove(_ address: MailAddress) {
         addresses.removeAll { $0.normalizedAddress == address.normalizedAddress }
         expandedChips.remove(address.normalizedAddress)
     }
 
     /// Zeigt auf Tippen die vollständige Adresse – und wieder zurück.
+    ///
+    /// - Parameter address: Angetippte Adresse.
     private func toggleChip(_ address: MailAddress) {
         let key = address.normalizedAddress
         if expandedChips.contains(key) {
@@ -212,6 +244,10 @@ struct RecipientField: View {
 
     // MARK: - Vorschläge
 
+    /// Sucht nach kurzer Wartezeit Vorschläge; eine neue Eingabe bricht die
+    /// vorige Suche ab. Bereits erfasste Adressen werden nicht vorgeschlagen.
+    ///
+    /// - Parameter query: Aktuelle Eingabe.
     private func scheduleSearch(for query: String) {
         searchTask?.cancel()
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -234,12 +270,18 @@ struct RecipientField: View {
 
 // MARK: - Chip
 
+/// Chip einer erfassten Adresse mit Entfernen-Knopf.
 private struct RecipientChip: View {
+    /// Adresse des Chips.
     let address: MailAddress
+    /// `true`: zeigt die Adresse statt des Namens.
     let isExpanded: Bool
+    /// Antippen: Name/Adresse umschalten.
     let onTap: () -> Void
+    /// Chip entfernen.
     let onDelete: () -> Void
 
+    /// Name bzw. Adresse und Entfernen-Knopf; rot bei ungültiger Adresse.
     var body: some View {
         HStack(spacing: 4) {
             Button(action: onTap) {

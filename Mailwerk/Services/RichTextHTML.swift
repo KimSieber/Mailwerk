@@ -2,15 +2,7 @@
 //  RichTextHTML.swift
 //  Mailwerk
 //
-//  Created by Kim Sieber on 22.09.26.
-//
-
-
-//
-//  RichTextHTML.swift
-//  Mailwerk
-//
-//  Wandelt den formatierten Text des Editors in HTML und in eine
+//  Zweck: Wandelt den formatierten Text des Editors in HTML und in eine
 //  Nur-Text-Fassung um. Beide Teile gehen als multipart/alternative raus.
 //
 //  Erzeugt bewusst schlankes HTML mit Inline-Styles – das stellen alle
@@ -19,6 +11,12 @@
 //
 //  Unterstützt genau die Formate des Editors: Fett, Kursiv, Unterstrichen,
 //  Schriftgröße, Textfarbe, Aufzählung, nummerierte Liste und Links.
+//
+//  Abgrenzung: Editor und Formatierung → RichTextEditor, RichTextController;
+//  Zusammenbau der Mail → ComposeViewModel.
+//
+//  Abhängigkeiten: Foundation, UIKit bzw. AppKit, RichTextListStyle,
+//  RichTextSize, RichTextController, ReplyBuilder (Maskierung).
 //
 
 import Foundation
@@ -29,10 +27,19 @@ import UIKit
 import AppKit
 #endif
 
+/// Umwandlung des Editor-Inhalts in HTML und Text.
 enum RichTextHTML {
 
     // MARK: - HTML
 
+    /// HTML-Fassung des Editor-Inhalts.
+    ///
+    /// Verarbeitung: Jede Zeile ist ein Absatz; aufeinanderfolgende
+    /// Listenzeilen gleicher Art werden zu `<ul>` bzw. `<ol>` zusammengefasst,
+    /// leere Absätze als `<br>` erhalten.
+    ///
+    /// - Parameter attributed: Formatierter Text des Editors.
+    /// - Returns: HTML-Inhalt ohne Dokument-Hülle.
     static func html(from attributed: NSAttributedString) -> String {
         let blocks = blocks(of: attributed)
         var result = ""
@@ -58,6 +65,13 @@ enum RichTextHTML {
 
     // MARK: - Nur-Text
 
+    /// Nur-Text-Fassung des Editor-Inhalts.
+    ///
+    /// Verarbeitung: Aufzählungen mit „•“, nummerierte Listen mit
+    /// fortlaufender Nummer je Liste.
+    ///
+    /// - Parameter attributed: Formatierter Text des Editors.
+    /// - Returns: Text für den Textteil der Mail.
     static func plainText(from attributed: NSAttributedString) -> String {
         let text = attributed.string as NSString
         var lines: [String] = []
@@ -83,11 +97,18 @@ enum RichTextHTML {
 
     // MARK: - Absätze
 
+    /// Ein Absatz: Bereich im Text und Listenart.
     private struct Block {
+        /// Bereich der Zeile ohne Zeilenumbruch.
         let range: NSRange
+        /// Listenart; `nil` für gewöhnliche Absätze.
         let listStyle: RichTextListStyle?
     }
 
+    /// Zerlegt den Text an Zeilenumbrüchen in Absätze.
+    ///
+    /// - Parameter attributed: Formatierter Text.
+    /// - Returns: Absätze in ihrer Reihenfolge.
     private static func blocks(of attributed: NSAttributedString) -> [Block] {
         var blocks: [Block] = []
         var location = 0
@@ -101,6 +122,12 @@ enum RichTextHTML {
         return blocks
     }
 
+    /// Listenart eines Absatzes aus seinem Absatzstil.
+    ///
+    /// - Parameters:
+    ///   - attributed: Formatierter Text.
+    ///   - range: Bereich des Absatzes.
+    /// - Returns: Listenart oder `nil`.
     private static func listStyle(
         of attributed: NSAttributedString,
         at range: NSRange
@@ -114,6 +141,17 @@ enum RichTextHTML {
 
     // MARK: - Zeichenformate
 
+    /// HTML der Zeichenformate eines Bereichs.
+    ///
+    /// Verarbeitung: Je Abschnitt gleicher Formatierung ein maskierter Text,
+    /// bei Bedarf in `<span style>` (fett, kursiv, Größe, Unterstreichung,
+    /// Farbe) und `<a href>`. Standardgröße und Standardfarbe erzeugen keinen
+    /// Stil.
+    ///
+    /// - Parameters:
+    ///   - attributed: Formatierter Text.
+    ///   - range: Bereich eines Absatzes.
+    /// - Returns: HTML des Bereichs.
     private static func inlineHTML(of attributed: NSAttributedString, in range: NSRange) -> String {
         guard range.length > 0 else { return "" }
         let text = attributed.string as NSString
@@ -158,6 +196,10 @@ enum RichTextHTML {
         return result
     }
 
+    /// Link-Ziel aus dem Attribut `.link`.
+    ///
+    /// - Parameter value: Wert des Attributs (URL oder Zeichenkette).
+    /// - Returns: Link als Text oder `nil`.
     private static func linkURL(_ value: Any?) -> String? {
         switch value {
         case let url as URL:       return url.absoluteString

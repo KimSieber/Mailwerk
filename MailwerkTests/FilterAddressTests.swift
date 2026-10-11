@@ -1,27 +1,22 @@
 //
 //  FilterAddressTests.swift
-//  Mailwerk
-//
-//  Created by Kim Sieber on 23.09.26.
-//
-
-
-//
-//  FilterAddressTests.swift
 //  MailwerkTests
 //
-//  Tests für die Normalisierung von Absendern und Listeneinträgen.
+//  Zweck: Tests für die Normalisierung von Absendern und Listeneinträgen
+//  (FilterAddress).
 //
 
 import Foundation
 import Testing
 @testable import Mailwerk
 
+/// Tests für FilterAddress.
 @MainActor
 struct FilterAddressTests {
 
     // MARK: - Absender aus dem From-Header
 
+    /// Absender ohne Anzeigename.
     @Test("Absender ohne Anzeigename")
     func plainSender() throws {
         let sender = try #require(FilterAddress.sender(fromHeader: "anna@example.org"))
@@ -29,6 +24,7 @@ struct FilterAddressTests {
         #expect(sender.domain == "example.org")
     }
 
+    /// Anzeigename, Anführungszeichen, spitze Klammern und Großbuchstaben.
     @Test("Anzeigename, Anführungszeichen, spitze Klammern und Großbuchstaben",
           arguments: [
             "Anna Muster <Anna@Example.ORG>",
@@ -43,6 +39,7 @@ struct FilterAddressTests {
         #expect(sender.domain == "example.org")
     }
 
+    /// Bei mehreren Absendern zählt der erste.
     @Test("Bei mehreren Absendern zählt der erste")
     func firstOfSeveral() throws {
         let sender = try #require(
@@ -51,12 +48,14 @@ struct FilterAddressTests {
         #expect(sender.address == "anna@example.org")
     }
 
+    /// Die Domain ist exakt der Teil nach dem @.
     @Test("Die Domain ist exakt der Teil nach dem @")
     func subdomainStaysExact() throws {
         let sender = try #require(FilterAddress.sender(fromHeader: "News <x@mail.firma.de>"))
         #expect(sender.domain == "mail.firma.de")
     }
 
+    /// Ungewöhnliche, aber zulässige Absender bleiben filterbar.
     @Test("Ungewöhnliche, aber zulässige Absender bleiben filterbar",
           arguments: ["bounce=123@news.example.org", "_info@example.org", "a@example.org"])
     func unusualSenders(raw: String) throws {
@@ -64,6 +63,7 @@ struct FilterAddressTests {
         #expect(sender.address == raw)
     }
 
+    /// Unbrauchbare From-Angaben liefern nil.
     @Test("Unbrauchbare From-Angaben liefern nil",
           arguments: ["", "   ", "Undisclosed recipients:;", "kein-at-zeichen",
                       "Anna <>", "@example.org", "anna@", "anna@example"])
@@ -73,6 +73,7 @@ struct FilterAddressTests {
 
     // MARK: - Listeneingabe: Adresse
 
+    /// Adresseingabe wird normalisiert.
     @Test("Adresseingabe wird normalisiert")
     func normalizesAddress() throws {
         let entry = try #require(FilterAddress(normalizing: "  Rechnung@Firma.DE "))
@@ -80,6 +81,7 @@ struct FilterAddressTests {
         #expect(entry.domain == "firma.de")
     }
 
+    /// Unbrauchbare Adresseingaben liefern nil.
     @Test("Unbrauchbare Adresseingaben liefern nil",
           arguments: ["", "   ", "firma.de", "a b@firma.de", "Anna <anna@firma.de>",
                       "anna@firma", "anna@@firma.de", "anna@firma..de", "@firma.de", "anna@"])
@@ -89,6 +91,7 @@ struct FilterAddressTests {
 
     // MARK: - Listeneingabe: Domain
 
+    /// Domain-Eingaben werden normalisiert.
     @Test("Domain-Eingaben werden normalisiert",
           arguments: [
             ("firma.de", "firma.de"),
@@ -102,6 +105,7 @@ struct FilterAddressTests {
         #expect(FilterAddress.normalizedDomain(input) == expected)
     }
 
+    /// Unbrauchbare Domain-Eingaben liefern nil.
     @Test("Unbrauchbare Domain-Eingaben liefern nil",
           arguments: ["", "  ", "firma", "anna@firma.de", "fir ma.de",
                       "*.firma.de", "firma..de", ".firma.de", "*@"])

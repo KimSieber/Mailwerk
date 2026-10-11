@@ -2,17 +2,31 @@
 //  AttachmentRow.swift
 //  Mailwerk
 //
+//  Zweck: Zeile eines Anhangs in der Mailansicht – Typ-Symbol, Dateiname,
+//  Größe, Teilen-Knopf (wenn die Daten geladen sind) und Ladezustand.
+//  Antippen öffnet die Vorschau bzw. lädt den Anhang nach.
+//
+//  Abgrenzung: Laden, Vorschau und Teilen-Dateien → MessageDetailView,
+//  AttachmentManager.
+//
+//  Abhängigkeiten: SwiftUI, CachedAttachment.
+//
 
 import SwiftUI
 
 /// Zeigt einen einzelnen Anhang als Zeile: Typ-Icon, Dateiname, Größe,
 /// Share-Button (wenn Daten vorhanden) und Download-Status.
 struct AttachmentRow: View {
+    /// Angezeigter Anhang.
     let attachment: CachedAttachment
+    /// `true`, solange der Anhang nachgeladen wird.
     let isDownloading: Bool
+    /// Antippen: Vorschau öffnen bzw. nachladen.
     let onTap: () -> Void
+    /// Temporäre Datei zum Teilen; `nil`, solange keine vorliegt.
     let shareURL: URL?
 
+    /// Zeile mit Symbol, Name, Größe und Teilen- bzw. Ladeanzeige.
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 12) {
@@ -59,6 +73,10 @@ struct AttachmentRow: View {
 
     // MARK: - Helfer
 
+    /// SF-Symbol passend zum MIME-Typ.
+    ///
+    /// - Parameter contentType: MIME-Typ.
+    /// - Returns: Name des Symbols; unbekannte Typen ergeben die Büroklammer.
     private func iconName(for contentType: String) -> String {
         let ct = contentType.lowercased()
         if ct.hasPrefix("image/") { return "photo" }
@@ -81,6 +99,10 @@ struct AttachmentRow: View {
         return "paperclip"
     }
 
+    /// Größe in B, KB oder MB.
+    ///
+    /// - Parameter bytes: Größe in Bytes.
+    /// - Returns: Formatierte Größe.
     private func formattedSize(_ bytes: Int) -> String {
         if bytes < 1024 { return "\(bytes) B" }
         if bytes < 1024 * 1024 {

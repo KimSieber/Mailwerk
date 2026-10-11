@@ -2,12 +2,19 @@
 //  MailboxSelection.swift
 //  Mailwerk
 //
-//  Welche Ansicht die Mail-Liste zeigt. Steuert den Titel, die Abfrage
-//  an den Cache und die Darstellung in der Seitenleiste.
+//  Zweck: Welche Ansicht die Mail-Liste zeigt – alle Posteingänge, die
+//  gekennzeichneten Mails oder ein einzelner Ordner. Steuert Titel,
+//  Symbol, Abfrage an den Cache und die Markierung in der Seitenleiste.
+//
+//  Abgrenzung: Laden der Liste → InboxViewModel; Seitenleiste →
+//  FolderSidebarView.
+//
+//  Abhängigkeiten: Foundation.
 //
 
 import Foundation
 
+/// Gewählte Ansicht der Mail-Liste.
 enum MailboxSelection: Hashable {
     /// Alle Posteingänge aller Konten.
     case allInboxes
@@ -16,6 +23,7 @@ enum MailboxSelection: Hashable {
     /// Ein bestimmter Ordner eines Postfachs.
     case folder(accountID: UUID, path: String, displayName: String)
 
+    /// Titel der Liste.
     var title: String {
         switch self {
         case .allInboxes:                    return "Alle Eingänge"
@@ -24,6 +32,7 @@ enum MailboxSelection: Hashable {
         }
     }
 
+    /// SF-Symbol der Ansicht.
     var systemImage: String {
         switch self {
         case .allInboxes: return "tray.2"

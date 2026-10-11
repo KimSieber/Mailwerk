@@ -2,7 +2,7 @@
 //  PlatformSheetSize.swift
 //  Mailwerk
 //
-//  Mindestgröße für Sheets auf macOS.
+//  Zweck: Mindestgröße für Sheets auf macOS.
 //
 //  Unter macOS richtet sich ein Sheet nach der Größe seines Inhalts.
 //  `List` und `Form` melden keine eigene Höhe – das Sheet schrumpft dann
@@ -13,6 +13,8 @@
 //  Jede View, die als Sheet angezeigt wird, setzt diesen Modifier an ihre
 //  äußerste Ebene (direkt an den `NavigationStack`). Die Maße stehen nur
 //  hier, damit alle Sheets einheitlich wirken.
+//
+//  Abhängigkeiten: SwiftUI.
 //
 
 import SwiftUI
@@ -26,6 +28,7 @@ enum MacSheetSize {
     /// Mail verfassen.
     case composer
 
+    /// Mindestbreite in Punkten.
     var width: CGFloat {
         switch self {
         case .form:     return 460
@@ -34,6 +37,7 @@ enum MacSheetSize {
         }
     }
 
+    /// Mindesthöhe in Punkten.
     var height: CGFloat {
         switch self {
         case .form:     return 560
@@ -45,8 +49,11 @@ enum MacSheetSize {
 
 extension View {
 
-    /// Gibt dem Sheet auf macOS eine feste Mindestgröße.
-    /// Auf allen anderen Plattformen wirkungslos.
+    /// Gibt dem Sheet auf macOS eine feste Mindestgröße; auf allen anderen
+    /// Plattformen wirkungslos.
+    ///
+    /// - Parameter size: Größenklasse.
+    /// - Returns: Ansicht mit Mindestgröße.
     func macSheetFrame(_ size: MacSheetSize) -> some View {
         #if os(macOS)
         return self.frame(

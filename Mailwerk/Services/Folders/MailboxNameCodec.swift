@@ -2,7 +2,7 @@
 //  MailboxNameCodec.swift
 //  Mailwerk
 //
-//  Wandelt IMAP-Ordnernamen zwischen der Server-Form „modified UTF-7“
+//  Zweck: Wandelt IMAP-Ordnernamen zwischen der Server-Form „modified UTF-7“
 //  (RFC 3501, Abschnitt 5.1.3) und lesbarem Text um:
 //  „Rechnungen M&APw-ller“ ⇄ „Rechnungen Müller“.
 //
@@ -19,15 +19,24 @@
 //
 //  Reine Logik ohne IMAP-Bezug, deshalb `nonisolated`.
 //
+//  Abgrenzung: Anzeige des Baums → FolderTreeBuilder; Anlegen eines
+//  Ordners → FolderCreationPlanner.
+//
+//  Abhängigkeiten: Foundation.
+//
 
 import Foundation
 
+/// Umwandlung zwischen modified UTF-7 und lesbarem Text.
 nonisolated enum MailboxNameCodec {
 
     // MARK: - Anzeige
 
     /// Lesbarer Name für die Anzeige. Ist die Kodierung ungültig, bleibt
     /// der Servername stehen – lieber ein seltsamer Name als ein falscher.
+    ///
+    /// - Parameter encoded: Name in Server-Form.
+    /// - Returns: Lesbarer Name.
     static func displayName(_ encoded: String) -> String {
         decode(encoded) ?? encoded
     }
@@ -35,10 +44,17 @@ nonisolated enum MailboxNameCodec {
     // MARK: - Kodieren
 
     /// Kodiert einen lesbaren Namen in die Server-Form.
+    ///
+    /// Verarbeitung: Druckbares ASCII bleibt, „&“ wird „&-“, alles andere
+    /// wird abschnittsweise als UTF-16 in Base64 eingefasst.
+    ///
+    /// - Parameter name: Lesbarer Name.
+    /// - Returns: Name in Server-Form.
     static func encode(_ name: String) -> String {
         var result = ""
         var pending: [UInt16] = []
 
+        /// Schreibt die gesammelten Sonderzeichen als Base64-Abschnitt.
         func flush() {
             guard !pending.isEmpty else { return }
             result += "&" + base64(pending) + "-"
@@ -62,9 +78,12 @@ nonisolated enum MailboxNameCodec {
 
     // MARK: - Dekodieren
 
-    /// Dekodiert die Server-Form. `nil`, wenn der Text keine gültige
-    /// Kodierung ist (etwa rohe Nicht-ASCII-Zeichen, unvollständige oder
-    /// fehlerhafte Base64-Abschnitte).
+    /// Dekodiert die Server-Form.
+    ///
+    /// - Parameter encoded: Name in Server-Form.
+    /// - Returns: Lesbarer Name oder `nil`, wenn der Text keine gültige
+    ///   Kodierung ist (etwa rohe Nicht-ASCII-Zeichen, unvollständige oder
+    ///   fehlerhafte Base64-Abschnitte).
     static func decode(_ encoded: String) -> String? {
         var result = ""
         let scalars = Array(encoded.unicodeScalars)
@@ -97,15 +116,23 @@ nonisolated enum MailboxNameCodec {
 
     // MARK: - Intern
 
+    /// Base64-Alphabet der Kodierung („,“ statt „/“).
     private static let alphabet = Array(
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+,".unicodeScalars
     )
 
+    /// Prüft auf druckbares ASCII (0x20–0x7E).
+    ///
+    /// - Parameter scalar: Zeichen.
+    /// - Returns: `true` für druckbares ASCII.
     private static func isPrintableASCII(_ scalar: Unicode.Scalar) -> Bool {
         (0x20...0x7E).contains(scalar.value)
     }
 
     /// UTF-16-Einheiten als Base64 mit „,“ statt „/“ und ohne „=“.
+    ///
+    /// - Parameter units: UTF-16-Einheiten.
+    /// - Returns: Base64-Text.
     private static func base64(_ units: [UInt16]) -> String {
         var bytes: [UInt8] = []
         bytes.reserveCapacity(units.count * 2)
@@ -132,6 +159,13 @@ nonisolated enum MailboxNameCodec {
     }
 
     /// Dekodiert einen Base64-Abschnitt (ohne „&“ und „-“) zu Text.
+    ///
+    /// Verarbeitung: Übrige Bits müssen reine Auffüllung sein, die Bytes
+    /// ganze UTF-16-Einheiten ergeben; kodiert sein dürfen nur echte
+    /// Sonderzeichen, einzelne Surrogate werden abgelehnt.
+    ///
+    /// - Parameter body: Inhalt des Abschnitts.
+    /// - Returns: Text oder `nil` bei ungültiger Kodierung.
     private static func decodeBase64Section(_ body: String) -> String? {
         var bytes: [UInt8] = []
         var buffer: UInt32 = 0
@@ -167,7 +201,10 @@ nonisolated enum MailboxNameCodec {
         return text
     }
 
-    /// UTF-16-Einheiten zu Unicode-Scalars; `nil` für ungültige Folgen.
+    /// UTF-16-Einheiten zu Unicode-Scalars.
+    ///
+    /// - Parameter units: UTF-16-Einheiten.
+    /// - Returns: Scalars; `nil` für ungültige Folgen.
     private static func scalars(fromUTF16 units: [UInt16]) -> [Unicode.Scalar?] {
         var iterator = units.makeIterator()
         var decoder = UTF16()

@@ -2,18 +2,20 @@
 //  SpamFilterPlannerTests.swift
 //  MailwerkTests
 //
-//  Tests für den Arbeitsplan eines Filterlaufs.
+//  Zweck: Tests für den Arbeitsplan eines Filterlaufs (SpamFilterPlanner).
 //
 
 import Foundation
 import Testing
 @testable import Mailwerk
 
+/// Tests für SpamFilterPlanner.
 @MainActor
 struct SpamFilterPlannerTests {
 
     // MARK: - Hilfen
 
+    /// Testhilfe: Kandidat mit UID, Absender und Einstufung.
     private func candidate(
         _ uid: UInt32,
         from address: String?,
@@ -27,6 +29,7 @@ struct SpamFilterPlannerTests {
         )
     }
 
+    /// Testhilfe: Plan für Kandidaten und Listen.
     private func plan(
         _ candidates: [SpamCandidate],
         lists: FilterLists = .empty,
@@ -37,6 +40,7 @@ struct SpamFilterPlannerTests {
 
     // MARK: - Grundfälle
 
+    /// Ohne Kandidaten bleibt der Plan leer.
     @Test("Ohne Kandidaten bleibt der Plan leer")
     func emptyPlan() {
         let result = plan([])
@@ -44,6 +48,7 @@ struct SpamFilterPlannerTests {
         #expect(result.isEmpty)
     }
 
+    /// Saubere Mails bleiben im Posteingang, werden aber als geprüft vermerkt.
     @Test("Saubere Mails bleiben im Posteingang, werden aber als geprüft vermerkt")
     func cleanMailsStay() {
         let result = plan([
@@ -57,6 +62,7 @@ struct SpamFilterPlannerTests {
         #expect(!result.isEmpty)
     }
 
+    /// Vom Server erkannter Spam wandert, ohne Blacklist-Keyword.
     @Test("Vom Server erkannter Spam wandert, ohne Blacklist-Keyword")
     func serverSpamMoves() {
         let result = plan([candidate(5, from: "werbung@firma.de", spam: true, score: 9)])
@@ -66,6 +72,7 @@ struct SpamFilterPlannerTests {
         #expect(result.keep.isEmpty)
     }
 
+    /// Ein Blacklist-Treffer wandert und wird als solcher gekennzeichnet.
     @Test("Ein Blacklist-Treffer wandert und wird als solcher gekennzeichnet")
     func blacklistMovesAndMarks() {
         let lists = FilterLists(blackDomains: ["firma.de"])
@@ -75,6 +82,7 @@ struct SpamFilterPlannerTests {
         #expect(result.checked == [7])
     }
 
+    /// Ein Whitelist-Treffer unterhalb der Obergrenze bleibt trotz Server-Spam.
     @Test("Ein Whitelist-Treffer unterhalb der Obergrenze bleibt trotz Server-Spam")
     func whitelistKeeps() {
         let lists = FilterLists(whiteAddresses: ["anna@firma.de"])
@@ -84,6 +92,7 @@ struct SpamFilterPlannerTests {
         #expect(result.checked == [9])
     }
 
+    /// Die Score-Obergrenze wird durchgereicht.
     @Test("Die Score-Obergrenze wird durchgereicht")
     func scoreLimitIsPassedThrough() {
         let lists = FilterLists(whiteAddresses: ["anna@firma.de"])
@@ -92,6 +101,7 @@ struct SpamFilterPlannerTests {
         #expect(plan(candidates, lists: lists, scoreLimit: 7).keep == [9])
     }
 
+    /// Ohne verwertbaren Absender entscheidet allein der Server.
     @Test("Ohne verwertbaren Absender entscheidet allein der Server")
     func withoutSender() {
         let lists = FilterLists(blackDomains: ["firma.de"])
@@ -106,6 +116,7 @@ struct SpamFilterPlannerTests {
 
     // MARK: - Bündelung
 
+    /// Gemischter Lauf: jede Nachricht landet in genau einer Gruppe.
     @Test("Gemischter Lauf: jede Nachricht landet in genau einer Gruppe")
     func mixedRun() {
         let lists = FilterLists(
@@ -125,6 +136,7 @@ struct SpamFilterPlannerTests {
         #expect(result.checked == [10, 11, 12, 13])
     }
 
+    /// Die Listen sind aufsteigend sortiert, unabhängig von der Eingabereihenfolge.
     @Test("Die Listen sind aufsteigend sortiert, unabhängig von der Eingabereihenfolge")
     func sortedOutput() {
         let lists = FilterLists(blackDomains: ["firma.de"])
@@ -140,6 +152,7 @@ struct SpamFilterPlannerTests {
         #expect(result.keep == [20])
     }
 
+    /// Eine doppelt gelieferte UID erscheint nur einmal.
     @Test("Eine doppelt gelieferte UID erscheint nur einmal")
     func deduplicatesUIDs() {
         let result = plan([

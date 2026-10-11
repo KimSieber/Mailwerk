@@ -2,14 +2,22 @@
 //  MailLink.swift
 //  Mailwerk
 //
-//  Entscheidet, was ein getippter Link in einer HTML-Mail auslöst, und
-//  zerlegt mailto:-Links (RFC 6068) für eine neue Mail in Mailwerk.
+//  Zweck: Entscheidet, was ein getippter Link in einer HTML-Mail auslöst,
+//  und zerlegt mailto:-Links (RFC 6068) für eine neue Mail in Mailwerk.
+//
+//  Nur http, https und tel gehen an das System; javascript:, file:,
+//  data: und Ähnliches werden nicht geöffnet.
 //
 //  Reine Logik ohne UI, damit sie ohne Mail-Bibliothek testbar ist.
+//
+//  Abgrenzung: Auslösen der Aktion → HTMLMailView.
+//
+//  Abhängigkeiten: Foundation.
 //
 
 import Foundation
 
+/// Aktion für einen getippten Link.
 nonisolated enum MailLinkAction: Equatable, Sendable {
     /// Im Standardbrowser bzw. in der zuständigen System-App öffnen.
     case openExternally(URL)
@@ -21,6 +29,9 @@ nonisolated enum MailLinkAction: Equatable, Sendable {
     /// Nur diese Schemata werden an das System weitergegeben.
     static let externalSchemes: Set<String> = ["http", "https", "tel"]
 
+    /// Ordnet einen Link einer Aktion zu.
+    ///
+    /// - Parameter url: Getippter Link.
     init(url: URL) {
         switch url.scheme?.lowercased() {
         case "mailto":
@@ -42,12 +53,25 @@ nonisolated enum MailLinkAction: Equatable, Sendable {
 nonisolated struct MailtoLink: Equatable, Identifiable, Sendable {
     /// Der ursprüngliche Link – zugleich Kennung für das Sheet.
     let id: String
+    /// Empfänger (An).
     let to: [String]
+    /// Kopie-Empfänger (Cc).
     let cc: [String]
+    /// Blindkopie-Empfänger (Bcc).
     let bcc: [String]
+    /// Betreff; `nil`, wenn leer.
     let subject: String?
+    /// Text; `nil`, wenn leer.
     let body: String?
 
+    /// Zerlegt einen mailto:-Link.
+    ///
+    /// Verarbeitung: Adressen vor „?“ und aus `to` gehen nach An; `cc`,
+    /// `bcc`, `subject` und `body` werden übernommen, unbekannte Felder
+    /// übergangen.
+    ///
+    /// - Parameter url: Link mit Schema mailto.
+    /// - Returns: Inhalt oder `nil`, wenn der Link nichts enthält.
     init?(url: URL) {
         guard url.scheme?.lowercased() == "mailto" else { return nil }
         let raw = url.absoluteString
@@ -87,7 +111,12 @@ nonisolated struct MailtoLink: Equatable, Identifiable, Sendable {
         self.body = body
     }
 
-    /// Kommagetrennte Adressliste; leere Einträge fallen weg.
+    /// Zerlegt eine kommagetrennte Adressliste; leere Einträge fallen weg.
+    ///
+    /// - Parameters:
+    ///   - text: Adressliste.
+    ///   - decoded: `true`, wenn der Text schon dekodiert ist.
+    /// - Returns: Adressen.
     private static func addresses(_ text: String, decoded: Bool = false) -> [String] {
         let source = decoded ? text : decode(text)
         return source
@@ -96,8 +125,11 @@ nonisolated struct MailtoLink: Equatable, Identifiable, Sendable {
             .filter { !$0.isEmpty }
     }
 
-    /// Prozent-Kodierung auflösen. `+` bleibt ein Pluszeichen (RFC 6068),
+    /// Löst die Prozent-Kodierung auf. `+` bleibt ein Pluszeichen (RFC 6068),
     /// Leerzeichen kommen als %20.
+    ///
+    /// - Parameter text: Kodierter Text.
+    /// - Returns: Dekodierter Text, bei Fehlern unverändert.
     private static func decode(_ text: String) -> String {
         text.removingPercentEncoding ?? text
     }

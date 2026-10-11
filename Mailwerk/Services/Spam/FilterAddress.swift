@@ -2,7 +2,7 @@
 //  FilterAddress.swift
 //  Mailwerk
 //
-//  Normalisierte Absenderadresse für den Spamfilter: kleingeschrieben,
+//  Zweck: Normalisierte Absenderadresse für den Spamfilter: kleingeschrieben,
 //  ohne Anzeigename, mit exakter Domain. Bewusst toleranter als die
 //  Adressprüfung beim Versand – auch ungewöhnliche Absender
 //  (z. B. `bounce=123@…`) müssen sich blockieren lassen. Geprüft wird
@@ -10,10 +10,16 @@
 //
 //  `nonisolated`, weil der Filterlauf außerhalb des Main-Actors arbeitet.
 //
+//  Abgrenzung: Empfängeradressen beim Verfassen → MailAddress; Prüfung der
+//  Listeneingabe → FilterListInput.
+//
+//  Abhängigkeiten: Foundation, SwiftMail (EmailAddress), RecipientInput.
+//
 
 import Foundation
 import SwiftMail
 
+/// Normalisierte Adresse mit Domain für die Filterlisten.
 nonisolated struct FilterAddress: Hashable {
 
     /// Vollständige Adresse, kleingeschrieben.
@@ -28,7 +34,9 @@ nonisolated struct FilterAddress: Hashable {
     private static let forbiddenInLocalPart: Set<Character> = ["<", ">", ",", ";", "\"", "\\", "@"]
 
     /// Normalisiert eine einzelne Adresse (Listeneingabe, ohne Anzeigename).
-    /// Liefert nil bei unbrauchbarer Eingabe.
+    ///
+    /// - Parameter raw: Eingabe.
+    /// - Returns: Adresse oder `nil` bei unbrauchbarer Eingabe.
     init?(normalizing raw: String) {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !trimmed.isEmpty,
@@ -49,7 +57,13 @@ nonisolated struct FilterAddress: Hashable {
     }
 
     /// Ermittelt den Absender aus einem `From`-Header.
-    /// Bei mehreren Adressen zählt die erste.
+    ///
+    /// Verarbeitung: Bei mehreren Adressen zählt die erste; Anzeigename und
+    /// Klammern entfernt der Adressparser von SwiftMail, scheitert er, zählt
+    /// der Abschnitt selbst.
+    ///
+    /// - Parameter raw: Wert des `From`-Headers.
+    /// - Returns: Absender oder `nil`, wenn keiner auswertbar ist.
     static func sender(fromHeader raw: String) -> FilterAddress? {
         // Der Header endet nicht mit einem Trennzeichen: Steht nur eine
         // Adresse darin, liefert `tokens` sie als offenen Rest.
@@ -63,7 +77,10 @@ nonisolated struct FilterAddress: Hashable {
     }
 
     /// Normalisiert eine Domain-Eingabe. Akzeptiert auch die Portal-Schreibweise
-    /// `*@firma.de`. Liefert nil bei unbrauchbarer Eingabe.
+    /// `*@firma.de` und einen abschließenden Punkt.
+    ///
+    /// - Parameter raw: Eingabe.
+    /// - Returns: Domain oder `nil` bei unbrauchbarer Eingabe.
     static func normalizedDomain(_ raw: String) -> String? {
         var value = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
@@ -80,8 +97,11 @@ nonisolated struct FilterAddress: Hashable {
         return value
     }
 
-    /// Mindestens zwei Abschnitte, jeder aus Buchstaben, Ziffern und Bindestrichen,
-    /// der letzte nur aus Buchstaben.
+    /// Prüft die Form einer Domain: mindestens zwei Abschnitte aus
+    /// Buchstaben, Ziffern und Bindestrichen, der letzte nur aus Buchstaben.
+    ///
+    /// - Parameter value: Domain in Kleinschreibung.
+    /// - Returns: `true` bei gültiger Form.
     private static func isValidDomain(_ value: String) -> Bool {
         guard !value.isEmpty, value.count <= 253 else { return false }
 

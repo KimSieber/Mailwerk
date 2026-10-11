@@ -2,17 +2,27 @@
 //  SideDrawer.swift
 //  Mailwerk
 //
-//  Leiste, die von links über den Inhalt fährt. Der Inhalt dahinter wird
-//  abgedunkelt; ein Tipp darauf oder die Escape-Taste schließt die Leiste.
+//  Zweck: Leiste, die von links über den Inhalt fährt. Der Inhalt dahinter
+//  wird abgedunkelt; ein Tipp darauf oder die Escape-Taste schließt die
+//  Leiste.
 //
-//  Bewusst schlicht gehalten (v0.1.7a, Fokus iPhone). Auf dem Mac und
-//  dem iPad im Querformat soll später eine feste Seitenleiste folgen.
+//  Bewusst schlicht gehalten, Fokus iPhone. Auf dem Mac und dem iPad im
+//  Querformat soll später eine feste Seitenleiste folgen.
+//
+//  Abgrenzung: Inhalt der Leiste → FolderSidebarView.
+//
+//  Abhängigkeiten: SwiftUI.
 //
 
 import SwiftUI
 
 extension View {
     /// Blendet `drawer` als Leiste von links ein, solange `isPresented` gilt.
+    ///
+    /// - Parameters:
+    ///   - isPresented: Sichtbarkeit der Leiste.
+    ///   - drawer: Inhalt der Leiste.
+    /// - Returns: Ansicht mit Leiste.
     func sideDrawer<Drawer: View>(
         isPresented: Binding<Bool>,
         @ViewBuilder drawer: @escaping () -> Drawer
@@ -21,18 +31,28 @@ extension View {
     }
 }
 
+/// Legt Hintergrund und Leiste über den Inhalt.
 private struct SideDrawerModifier<Drawer: View>: ViewModifier {
+    /// Sichtbarkeit der Leiste.
+    /// Inhalt der Leiste.
     @Binding var isPresented: Bool
     let drawer: () -> Drawer
 
+    /// Bewegung reduzieren (Bedienungshilfen): dann nur Überblenden.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Höchstbreite der Leiste; auf schmalen Geräten ein Anteil der Breite,
     /// damit rechts immer ein Streifen der Mail-Liste sichtbar bleibt.
     private static var maxWidth: CGFloat { 320 }
+    /// Anteil der Bildschirmbreite auf schmalen Geräten.
     private static var widthRatio: CGFloat { 0.84 }
+    /// Deckkraft der Abdunkelung.
     private static var dimOpacity: Double { 0.3 }
 
+    /// Inhalt mit eingeblendeter Leiste.
+    ///
+    /// - Parameter content: Ursprüngliche Ansicht.
+    /// - Returns: Ansicht mit Hintergrund und Leiste, animiert.
     func body(content: Content) -> some View {
         content
             .overlay {

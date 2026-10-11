@@ -2,13 +2,22 @@
 //  FormattingToolbar.swift
 //  Mailwerk
 //
-//  Formatierungsleiste für den RichTextEditor. Zeigt an, welche Formate
-//  an der Cursorposition aktiv sind, und schaltet sie um.
+//  Zweck: Formatierungsleiste für den RichTextEditor. Zeigt an, welche
+//  Formate an der Cursorposition aktiv sind, und schaltet sie um: Fett,
+//  Kursiv, Unterstrichen, Schriftgröße, Farbe, Aufzählung und
+//  nummerierte Liste.
+//
+//  Abgrenzung: Formatieren des Texts → RichTextController; Editor →
+//  RichTextEditor.
+//
+//  Abhängigkeiten: SwiftUI, RichTextController, RichTextSize.
 //
 
 import SwiftUI
 
+/// Leiste mit den Formatierungs-Knöpfen.
 struct FormattingToolbar: View {
+    /// Steuerung des Editors; liefert die aktiven Formate.
     let controller: RichTextController
 
     /// Auswahlfarben – bewusst wenige, damit die Leiste schmal bleibt.
@@ -23,6 +32,7 @@ struct FormattingToolbar: View {
         ("Violett",  "🟣", .purple)
     ]
 
+    /// Waagerecht scrollbare Leiste mit Knöpfen und Menüs.
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 4) {
@@ -79,6 +89,14 @@ struct FormattingToolbar: View {
 
     // MARK: - Bausteine
 
+    /// Umschalt-Knopf mit Symbol, hinterlegt, wenn das Format aktiv ist.
+    ///
+    /// - Parameters:
+    ///   - title: Bezeichnung für Hilfe und VoiceOver.
+    ///   - symbol: SF-Symbol.
+    ///   - isOn: `true`, wenn das Format aktiv ist.
+    ///   - action: Umschalten.
+    /// - Returns: Knopf.
     private func toggle(
         _ title: String,
         _ symbol: String,
@@ -98,6 +116,7 @@ struct FormattingToolbar: View {
         .accessibilityLabel(title)
     }
 
+    /// Bindung der Schriftgröße an den Controller.
     private var sizeBinding: Binding<RichTextSize> {
         Binding(
             get: { controller.size },
@@ -105,6 +124,11 @@ struct FormattingToolbar: View {
         )
     }
 
+    /// Plattformfarbe zu einer Auswahlfarbe; „Standard“ ergibt die
+    /// Standard-Textfarbe des Editors.
+    ///
+    /// - Parameter color: Auswahlfarbe.
+    /// - Returns: Farbe für den Editor.
     private func platformColor(_ color: Color) -> PlatformColor {
         color == .primary
             ? RichTextController.defaultTextColor

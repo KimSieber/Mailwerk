@@ -2,27 +2,29 @@
 //  FilterListRules.swift
 //  Mailwerk
 //
-//  Created by Kim Sieber on 24.09.26.
-//
-
-
-//
-//  FilterListRules.swift
-//  Mailwerk
-//
-//  Gemeinsame Regeln beider Repository-Varianten: Normalisieren der
+//  Zweck: Gemeinsame Regeln beider Repository-Varianten: Normalisieren der
 //  Eingabe, Zusammenführen doppelter Datensätze aus der Synchronisierung
 //  und Aufbereiten der Momentaufnahme für den Classifier.
 //
 //  Reine Logik, deshalb `nonisolated`.
 //
+//  Abgrenzung: Speicherzugriff → FilterListRepository,
+//  SwiftDataFilterListRepository.
+//
+//  Abhängigkeiten: Foundation, FilterAddress, FilterEntryItem, FilterLists.
+//
 
 import Foundation
 
+/// Gemeinsame Regeln für die Filterlisten.
 nonisolated enum FilterListRules {
 
     /// Normalisiert eine Eingabe passend zur Art des Eintrags.
-    /// Liefert nil, wenn die Eingabe unbrauchbar ist.
+    ///
+    /// - Parameters:
+    ///   - raw: Eingabe.
+    ///   - kind: Adresse oder Domain.
+    /// - Returns: Normalisierter Wert oder `nil`, wenn die Eingabe unbrauchbar ist.
     static func normalize(_ raw: String, kind: FilterEntryKind) -> String? {
         switch kind {
         case .address: FilterAddress(normalizing: raw)?.address
@@ -33,13 +35,16 @@ nonisolated enum FilterListRules {
     /// Führt Datensätze zusammen, die denselben Eintrag beschreiben, und
     /// sortiert das Ergebnis nach Liste (Whitelist zuerst) und Wert.
     ///
-    /// Doppelte entstehen, wenn zwei Geräte denselben Eintrag anlegen,
-    /// bevor sie sich abgeglichen haben – CloudKit kennt in SwiftData keine
-    /// eindeutigen Attribute. Es gewinnt:
+    /// Verarbeitung: Doppelte entstehen, wenn zwei Geräte denselben Eintrag
+    /// anlegen, bevor sie sich abgeglichen haben – CloudKit kennt in SwiftData
+    /// keine eindeutigen Attribute. Es gewinnt:
     /// 1. die Whitelist, falls derselbe Eintrag auf beiden Listen steht
     ///    (behalten ist die weniger folgenschwere Entscheidung),
     /// 2. darin der älteste Datensatz, bei gleichem Zeitpunkt die kleinere
     ///    Kennung – so wählt jedes Gerät denselben Gewinner.
+    ///
+    /// - Parameter items: Alle Datensätze.
+    /// - Returns: Ein Eintrag je Wert und Art, sortiert.
     static func merged(_ items: [FilterEntryItem]) -> [FilterEntryItem] {
         let grouped = Dictionary(grouping: items) { Key(kind: $0.kind, value: $0.value) }
 
@@ -59,6 +64,9 @@ nonisolated enum FilterListRules {
     }
 
     /// Baut die Momentaufnahme für den Classifier auf.
+    ///
+    /// - Parameter items: Alle Datensätze.
+    /// - Returns: Listen als Mengen je Liste und Art.
     static func lists(from items: [FilterEntryItem]) -> FilterLists {
         var lists = FilterLists.empty
         for item in merged(items) {
@@ -72,6 +80,7 @@ nonisolated enum FilterListRules {
         return lists
     }
 
+    /// Schlüssel für das Zusammenführen: Art und Wert.
     private struct Key: Hashable {
         let kind: FilterEntryKind
         let value: String

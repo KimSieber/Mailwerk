@@ -2,26 +2,38 @@
 //  SpamSettings.swift
 //  Mailwerk
 //
-//  Einstellungen des Spamfilters. Liegen wie die Postfächer im
-//  iCloud-Key-Value-Store und gelten damit für alle Geräte – genau wie
-//  die Listen selbst.
+//  Zweck: Einstellungen des Spamfilters – an/aus und Score-Obergrenze für
+//  Whitelist-Treffer. Liegen wie die Postfächer im iCloud-Key-Value-Store
+//  und gelten damit für alle Geräte – genau wie die Listen selbst.
+//
+//  Änderungen von anderen Geräten werden auf dem Main-Thread übernommen.
+//
+//  Abgrenzung: Oberfläche → SpamSettingsView; Anwendung der Obergrenze →
+//  SpamClassifier.
+//
+//  Abhängigkeiten: Foundation, Observation, SpamClassifier (Standardwert).
 //
 
 import Foundation
 import Observation
 
+/// Einstellungen des Spamfilters, über iCloud abgeglichen.
 @Observable
 final class SpamSettings {
 
+    /// Schlüssel für „Filter an“ im Key-Value-Store.
     private static let enabledKey = "mailwerk.spam.enabled"
+    /// Schlüssel für die Score-Obergrenze im Key-Value-Store.
     private static let scoreLimitKey = "mailwerk.spam.scoreLimit"
 
     /// Der Filter ist standardmäßig aus. Er verschiebt Mails selbsttätig,
     /// deshalb wird er bewusst eingeschaltet und nicht stillschweigend aktiv.
     static let defaultEnabled = false
 
+    /// iCloud-Key-Value-Store.
     private let store = NSUbiquitousKeyValueStore.default
 
+    /// `true`, wenn der Filter läuft; Änderungen werden sofort gespeichert.
     var isEnabled: Bool {
         didSet {
             guard isEnabled != oldValue else { return }
@@ -39,6 +51,8 @@ final class SpamSettings {
         }
     }
 
+    /// Liest die gespeicherten Werte und meldet sich für Änderungen von
+    /// anderen Geräten an.
     init() {
         isEnabled = store.object(forKey: Self.enabledKey) as? Bool ?? Self.defaultEnabled
 
@@ -54,9 +68,12 @@ final class SpamSettings {
         store.synchronize()
     }
 
-    /// Änderungen von einem anderen Gerät übernehmen. Die Notification kommt
-    /// auf einem Hintergrund-Thread an, der Zustand wird auf dem Main-Thread
-    /// geändert.
+    /// Übernimmt Änderungen von einem anderen Gerät.
+    ///
+    /// Verarbeitung: Die Meldung kommt auf einem Hintergrund-Thread an; der
+    /// Zustand wird auf dem Main-Thread geändert.
+    ///
+    /// - Parameter notification: Meldung des Key-Value-Stores.
     @objc private func externalChange(_ notification: Notification) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }

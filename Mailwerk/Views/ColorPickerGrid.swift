@@ -2,13 +2,13 @@
 //  ColorPickerGrid.swift
 //  Mailwerk
 //
-//  Created by Kim Sieber on 20.09.26.
+//  Zweck: Raster aus Farbkreisen zur Wahl der Postfach-Farbe, dazu die
+//  Option „Keine Farbe“ (kein Streifen in der Liste).
 //
-
-
+//  Abgrenzung: Farbpalette → AccountColor; Formulare → AddAccountView,
+//  EditAccountView.
 //
-//  ColorPickerGrid.swift
-//  Mailwerk
+//  Abhängigkeiten: SwiftUI, AccountColor.
 //
 
 import SwiftUI
@@ -16,13 +16,16 @@ import SwiftUI
 /// Grid aus farbigen Kreisen zur Auswahl einer Account-Farbe.
 /// `selection` ist `nil`, wenn keine Farbe gewählt ist (= kein Streifen in der Inbox).
 struct ColorPickerGrid: View {
+    /// Gewählte Farbe; `nil` = keine Farbe.
     @Binding var selection: AccountColor?
 
+    /// Sechs Spalten fester Breite.
     private let columns = Array(
         repeating: GridItem(.fixed(44), spacing: 8),
         count: 6
     )
     
+    /// Option „Keine Farbe“ und je Farbe ein Kreis mit Häkchen bei Auswahl.
     var body: some View {
         LazyVGrid(columns: columns, spacing: 12) {
             // "Keine Farbe"-Option

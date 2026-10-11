@@ -1,32 +1,27 @@
 //
 //  FilterListRepositoryTests.swift
-//  Mailwerk
-//
-//  Created by Kim Sieber on 24.09.26.
-//
-
-
-//
-//  FilterListRepositoryTests.swift
 //  MailwerkTests
 //
-//  Tests für die Listenpflege gegen die In-Memory-Implementierung.
-//  Die CloudKit-Variante nutzt dieselben Regeln.
+//  Zweck: Tests für die Listenpflege gegen die In-Memory-Implementierung.
+//  Die CloudKit-Variante nutzt dieselben Regeln (FilterListRules).
 //
 
 import Foundation
 import Testing
 @testable import Mailwerk
 
+/// Tests für die In-Memory-Listenpflege.
 @MainActor
 struct FilterListRepositoryTests {
 
+    /// Testhilfe: leeres Repository.
     private func repository() -> InMemoryFilterListRepository {
         InMemoryFilterListRepository()
     }
 
     // MARK: - Leerer Zustand
 
+    /// Ein leeres Repository liefert keine Einträge.
     @Test("Ein leeres Repository liefert keine Einträge")
     func startsEmpty() async throws {
         let repo = repository()
@@ -36,6 +31,7 @@ struct FilterListRepositoryTests {
 
     // MARK: - Anlegen und Normalisieren
 
+    /// Eine Adresse wird normalisiert gespeichert.
     @Test("Eine Adresse wird normalisiert gespeichert")
     func addsNormalizedAddress() async throws {
         let repo = repository()
@@ -51,6 +47,7 @@ struct FilterListRepositoryTests {
         #expect(lists.blackAddresses.isEmpty)
     }
 
+    /// Eine Domain wird normalisiert gespeichert, auch in der Portal-Schreibweise.
     @Test("Eine Domain wird normalisiert gespeichert, auch in der Portal-Schreibweise")
     func addsNormalizedDomain() async throws {
         let repo = repository()
@@ -64,6 +61,7 @@ struct FilterListRepositoryTests {
         #expect(lists.blackAddresses.isEmpty)
     }
 
+    /// Unbrauchbare Eingaben werden abgelehnt.
     @Test("Unbrauchbare Eingaben werden abgelehnt",
           arguments: [("firma.de", FilterEntryKind.address), ("anna@firma.de", .domain),
                       ("", .address), ("  ", .domain), ("anna@firma", .address)])
@@ -77,6 +75,7 @@ struct FilterListRepositoryTests {
 
     // MARK: - Doppelte Einträge
 
+    /// Derselbe Eintrag auf derselben Liste bleibt ein Eintrag.
     @Test("Derselbe Eintrag auf derselben Liste bleibt ein Eintrag")
     func duplicateOnSameList() async throws {
         let repo = repository()
@@ -87,6 +86,7 @@ struct FilterListRepositoryTests {
         #expect(try await repo.entries().count == 1)
     }
 
+    /// Derselbe Eintrag auf der anderen Liste wird abgelehnt.
     @Test("Derselbe Eintrag auf der anderen Liste wird abgelehnt")
     func duplicateOnOtherList() async throws {
         let repo = repository()
@@ -101,6 +101,7 @@ struct FilterListRepositoryTests {
         #expect(entries.first?.list == .white)
     }
 
+    /// Adresse und Domain sind verschiedene Einträge und dürfen sich widersprechen.
     @Test("Adresse und Domain sind verschiedene Einträge und dürfen sich widersprechen")
     func addressAndDomainCoexist() async throws {
         let repo = repository()
@@ -114,6 +115,7 @@ struct FilterListRepositoryTests {
 
     // MARK: - Entfernen
 
+    /// Ein Eintrag lässt sich entfernen.
     @Test("Ein Eintrag lässt sich entfernen")
     func removesEntry() async throws {
         let repo = repository()
@@ -127,6 +129,7 @@ struct FilterListRepositoryTests {
         #expect(try await repo.lists().blackAddresses.isEmpty)
     }
 
+    /// Eine unbekannte Kennung wird übergangen.
     @Test("Eine unbekannte Kennung wird übergangen")
     func removesUnknownID() async throws {
         let repo = repository()
@@ -135,6 +138,7 @@ struct FilterListRepositoryTests {
         #expect(try await repo.entries().count == 1)
     }
 
+    /// Nach dem Entfernen ist derselbe Eintrag wieder anlegbar.
     @Test("Nach dem Entfernen ist derselbe Eintrag wieder anlegbar")
     func reAddAfterRemove() async throws {
         let repo = repository()
@@ -148,6 +152,7 @@ struct FilterListRepositoryTests {
 
     // MARK: - Reihenfolge und Zusammenführung
 
+    /// Einträge kommen nach Liste und Wert sortiert zurück.
     @Test("Einträge kommen nach Liste und Wert sortiert zurück")
     func sortedEntries() async throws {
         let repo = repository()
@@ -161,6 +166,7 @@ struct FilterListRepositoryTests {
         #expect(entries.map(\.value) == ["beta@firma.de", "omega.de", "alpha@firma.de", "zulu.de"])
     }
 
+    /// Doppelte Datensätze aus der Synchronisierung werden beim Lesen zusammengeführt.
     @Test("Doppelte Datensätze aus der Synchronisierung werden beim Lesen zusammengeführt")
     func mergesDuplicatesFromSync() async throws {
         let value = "anna@firma.de"

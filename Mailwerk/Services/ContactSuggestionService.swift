@@ -1,17 +1,9 @@
-
-//
-//  ContactSuggestion.swift
-//  Mailwerk
-//
-//  Created by Kim Sieber on 23.09.26.
-//
-
-
 //
 //  ContactSuggestionService.swift
 //  Mailwerk
 //
-//  Adressvorschläge aus den Systemkontakten.
+//  Zweck: Adressvorschläge aus den Systemkontakten für die Adressfelder
+//  beim Verfassen.
 //
 //  Datenschutz: Die Berechtigung wird erst beim ersten Antippen eines
 //  Adressfelds angefragt. Kontakte werden ausschließlich live gelesen,
@@ -21,6 +13,11 @@
 //  Die Abfrage läuft in einer abgetrennten Aufgabe, damit die Eingabe
 //  auch bei sehr vielen Kontakten flüssig bleibt.
 //
+//  Abgrenzung: Anzeige der Vorschläge → RecipientField.
+//
+//  Abhängigkeiten: Foundation, Contacts, SwiftMail (isValidEmail),
+//  MailAddress.
+//
 
 import Foundation
 import Contacts
@@ -28,21 +25,29 @@ import SwiftMail
 
 /// Ein Vorschlag für ein Adressfeld.
 struct ContactSuggestion: Identifiable, Hashable {
+    /// Anzeigename des Kontakts; `nil`, wenn keiner vorhanden ist.
     let name: String?
+    /// E-Mail-Adresse.
     let address: String
 
+    /// Kennung aus Name und Adresse.
     var id: String { "\(name ?? "")|\(address.lowercased())" }
+    /// Vorschlag als Empfängeradresse.
     var mailAddress: MailAddress { MailAddress(name: name, address: address) }
 }
 
+/// Liest Adressvorschläge aus den Systemkontakten.
 final class ContactSuggestionService {
+    /// Gemeinsame Instanz der App.
     static let shared = ContactSuggestionService()
 
     /// Ab dieser Länge wird gesucht – kürzere Eingaben liefern zu viele Treffer.
     static let minimumQueryLength = 2
 
+    /// Nur die gemeinsame Instanz.
     private init() {}
 
+    /// Aktueller Stand der Kontakte-Berechtigung.
     var authorizationStatus: CNAuthorizationStatus {
         CNContactStore.authorizationStatus(for: .contacts)
     }
@@ -57,6 +62,8 @@ final class ContactSuggestionService {
     }
 
     /// Fragt die Berechtigung an, falls noch nicht entschieden.
+    ///
+    /// - Returns: Stand der Berechtigung nach der Anfrage.
     @discardableResult
     func requestAccessIfNeeded() async -> CNAuthorizationStatus {
         guard authorizationStatus == .notDetermined else { return authorizationStatus }
@@ -69,6 +76,14 @@ final class ContactSuggestionService {
     }
 
     /// Sucht passende Kontakte zu einer Eingabe.
+    ///
+    /// Verarbeitung: Erst ab `minimumQueryLength` Zeichen und nur mit
+    /// Berechtigung; die Suche läuft außerhalb des Main-Actors.
+    ///
+    /// - Parameters:
+    ///   - query: Bisherige Eingabe.
+    ///   - limit: Höchstzahl der Vorschläge.
+    /// - Returns: Vorschläge, Treffer am Wortanfang zuerst.
     func suggestions(matching query: String, limit: Int = 6) async -> [ContactSuggestion] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= Self.minimumQueryLength, isAccessAllowed else { return [] }
@@ -84,6 +99,16 @@ final class ContactSuggestionService {
 
     // MARK: - Suche (außerhalb des Haupt-Threads)
 
+    /// Durchsucht die Kontakte nach Name und – sobald ein „@“ getippt ist –
+    /// nach Adresse.
+    ///
+    /// Verarbeitung: Nur gültige Adressen, die Name oder Adresse enthalten;
+    /// Doppelte entfallen; Treffer am Wortanfang zuerst, dann alphabetisch.
+    ///
+    /// - Parameters:
+    ///   - query: Bereinigte Eingabe.
+    ///   - limit: Höchstzahl der Treffer.
+    /// - Returns: Name und Adresse je Treffer.
     private nonisolated static func search(
         _ query: String,
         limit: Int
@@ -144,6 +169,12 @@ final class ContactSuggestionService {
         )
     }
 
+    /// Prüft, ob Name oder Adresse mit der Eingabe beginnt.
+    ///
+    /// - Parameters:
+    ///   - needle: Eingabe in Kleinschreibung.
+    ///   - row: Treffer.
+    /// - Returns: `true` bei Treffer am Wortanfang.
     private nonisolated static func startsWith(
         _ needle: String,
         _ row: (name: String, address: String)
@@ -151,6 +182,10 @@ final class ContactSuggestionService {
         row.name.lowercased().hasPrefix(needle) || row.address.lowercased().hasPrefix(needle)
     }
 
+    /// Anzeigename eines Kontakts: voller Name, sonst die Firma.
+    ///
+    /// - Parameter contact: Kontakt.
+    /// - Returns: Name oder leere Zeichenkette.
     private nonisolated static func displayName(of contact: CNContact) -> String {
         let name = CNContactFormatter.string(from: contact, style: .fullName)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

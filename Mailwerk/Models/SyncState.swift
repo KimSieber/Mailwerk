@@ -2,12 +2,19 @@
 //  SyncState.swift
 //  Mailwerk
 //
-//  Stand einer Ansicht: wann ihr Inhalt zuletzt erfolgreich vom Server
-//  abgerufen wurde. Grundlage für die Zeile „Aktualisiert: …" im Titel.
+//  Zweck: Stand einer Ansicht – wann ihr Inhalt zuletzt erfolgreich vom
+//  Server abgerufen wurde. Grundlage für die Zeile „Aktualisiert: …“ im
+//  Titel.
+//
+//  Abgrenzung: Zeitpunkte je Ordner → MessageStore (`lastSync`);
+//  Anzeige → InboxView.
+//
+//  Abhängigkeiten: Foundation.
 //
 
 import Foundation
 
+/// Stand einer Ansicht.
 nonisolated enum SyncState: Equatable, Sendable {
     /// Mindestens ein beteiligter Ordner wurde noch nie abgerufen.
     case never
@@ -16,10 +23,12 @@ nonisolated enum SyncState: Equatable, Sendable {
 
     /// Stand einer Ansicht aus einem oder mehreren Ordnern.
     ///
-    /// Eine Sammelansicht wie „Alle Eingänge" ist nur so aktuell wie der
-    /// Ordner, der am längsten nicht abgerufen wurde. Fehlt für einen
-    /// Ordner jeder Abruf, gilt die ganze Ansicht als nie abgerufen.
+    /// Verarbeitung: Eine Sammelansicht wie „Alle Eingänge“ ist nur so
+    /// aktuell wie der Ordner, der am längsten nicht abgerufen wurde. Fehlt
+    /// für einen Ordner jeder Abruf, gilt die ganze Ansicht als nie abgerufen.
+    ///
     /// - Parameter stamps: letzter Abruf je Ordner, `nil` = nie.
+    /// - Returns: `.never` oder der älteste Zeitpunkt.
     static func oldest(_ stamps: [Date?]) -> SyncState {
         guard !stamps.isEmpty else { return .never }
         var oldest: Date?

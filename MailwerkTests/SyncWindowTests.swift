@@ -2,7 +2,7 @@
 //  SyncWindowTests.swift
 //  MailwerkTests
 //
-//  Tests für das Zeitfenster des Caches („Ältere Nachrichten laden"):
+//  Zweck: Tests für das Zeitfenster des Caches („Ältere Nachrichten laden“):
 //  Datumslogik und die Ablage des Fensterbeginns in der Datenbank.
 //
 
@@ -10,6 +10,7 @@ import Foundation
 import Testing
 @testable import Mailwerk
 
+/// Tests für SyncWindow und den Fensterbeginn im MessageStore.
 @MainActor
 struct SyncWindowTests {
 
@@ -20,23 +21,27 @@ struct SyncWindowTests {
         return c
     }
 
+    /// Testhilfe: Datum im Testkalender.
     private func date(_ y: Int, _ m: Int, _ d: Int, _ h: Int = 0, _ min: Int = 0) -> Date {
         calendar.date(from: DateComponents(year: y, month: m, day: d, hour: h, minute: min))!
     }
 
     // MARK: - Datumslogik
 
+    /// Der Standardbeginn liegt 30 Tage zurück.
     @Test func standardStartIsThirtyDaysBack() {
         let start = SyncWindow.standardStart(now: date(2026, 9, 30, 12), days: 30, calendar: calendar)
         #expect(start == date(2026, 8, 31, 12))
     }
 
+    /// Der nächste Block endet am Fensterbeginn und beginnt um Mitternacht.
     @Test func nextBlockEndsAtStartAndBeginsAtStartOfDay() {
         let block = SyncWindow.nextBlock(before: date(2026, 8, 31, 12), days: 30, calendar: calendar)
         #expect(block.before == date(2026, 8, 31, 12))
         #expect(block.since == date(2026, 8, 1))
     }
 
+    /// Aufeinanderfolgende Blöcke lassen keine Lücke.
     @Test func consecutiveBlocksLeaveNoGap() {
         let first = SyncWindow.nextBlock(before: date(2026, 8, 31, 12), days: 30, calendar: calendar)
         let second = SyncWindow.nextBlock(before: first.since, days: 30, calendar: calendar)
@@ -46,11 +51,13 @@ struct SyncWindowTests {
 
     // MARK: - Ablage
 
+    /// Testhilfe: Ablage auf neuer Datei.
     private func makeStore() -> MessageStore {
         MessageStore(path: FileManager.default.temporaryDirectory
             .appendingPathComponent("MailwerkTests-\(UUID().uuidString).sqlite").path)
     }
 
+    /// Testhilfe: Nachricht mit Ordner, UID und Datum.
     private func message(folder: String, uid: UInt32, date: Date) -> CachedMessage {
         CachedMessage(
             id: CachedMessage.makeID(accountID: account, folder: folder, uid: uid),
@@ -75,10 +82,12 @@ struct SyncWindowTests {
         )
     }
 
+    /// Ohne Abruf ist kein Fensterbeginn gespeichert.
     @Test func noWindowByDefault() {
         #expect(makeStore().windowStart(accountID: account, folder: "INBOX") == nil)
     }
 
+    /// Der Fensterbeginn wird je Ordner gespeichert und ersetzt.
     @Test func windowStartIsStoredAndReplaced() {
         let store = makeStore()
         store.setWindowStart(date(2026, 8, 1), accountID: account, folder: "INBOX")
@@ -87,7 +96,7 @@ struct SyncWindowTests {
         #expect(store.windowStart(accountID: account, folder: "INBOX.Trash") == nil)
     }
 
-    /// v0.1.8b: Fensterbeginn und nachgeladene Mails überstehen einen
+    /// Fensterbeginn und nachgeladene Mails überstehen einen
     /// Neustart (neu geöffnete Ablage auf derselben Datei).
     @Test func windowAndOlderMailsSurviveRestart() {
         let path = FileManager.default.temporaryDirectory

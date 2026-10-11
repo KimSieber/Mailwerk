@@ -2,14 +2,19 @@
 //  SpamKeyword.swift
 //  Mailwerk
 //
-//  Eigene IMAP-Keywords des Spamfilters. Sie liegen auf dem Server und
-//  halten den Verarbeitungsstand für alle Geräte gemeinsam fest.
+//  Zweck: Eigene IMAP-Keywords des Spamfilters. Sie liegen auf dem Server
+//  und halten den Verarbeitungsstand für alle Geräte gemeinsam fest.
 //
 //  `nonisolated`, weil der Filterlauf außerhalb des Main-Actors arbeitet.
+//
+//  Abgrenzung: Setzen der Keywords → SpamFilterService.
+//
+//  Abhängigkeiten: Foundation.
 //
 
 import Foundation
 
+/// IMAP-Keywords des Spamfilters.
 nonisolated enum SpamKeyword {
 
     /// Mail wurde vom Filter verarbeitet, unabhängig vom Ergebnis.
@@ -27,8 +32,12 @@ nonisolated enum SpamKeyword {
 
     /// Prüft, ob ein Keyword ein gültiges IMAP-Atom ist (RFC 3501).
     ///
-    /// Hintergrund: SwiftMail ersetzt ungültige Keywords ohne Fehlermeldung
-    /// durch `CUSTOM`. Ein Tippfehler in einer Konstante bliebe sonst unbemerkt.
+    /// Verarbeitung: SwiftMail ersetzt ungültige Keywords ohne Fehlermeldung
+    /// durch `CUSTOM`. Ein Tippfehler in einer Konstante bliebe sonst
+    /// unbemerkt; die Tests prüfen deshalb beide Konstanten hiermit.
+    ///
+    /// - Parameter keyword: Keyword.
+    /// - Returns: `true`, wenn es nur zulässige ASCII-Zeichen enthält.
     static func isValidAtom(_ keyword: String) -> Bool {
         guard !keyword.isEmpty else { return false }
         return keyword.unicodeScalars.allSatisfy { scalar in

@@ -2,16 +2,18 @@
 //  FilterListExporterTests.swift
 //  MailwerkTests
 //
-//  Tests für die Textausgabe einer Filterliste.
+//  Zweck: Tests für die Textausgabe einer Filterliste (FilterListExporter).
 //
 
 import Foundation
 import Testing
 @testable import Mailwerk
 
+/// Tests für FilterListExporter.
 @MainActor
 struct FilterListExporterTests {
 
+    /// Testhilfe: Eintrag mit Wert und Art.
     private func entry(_ value: String, _ kind: FilterEntryKind) -> FilterEntryItem {
         FilterEntryItem(
             id: UUID(), value: value, kind: kind, list: .black,
@@ -19,21 +21,25 @@ struct FilterListExporterTests {
         )
     }
 
+    /// Eine leere Liste ergibt einen leeren Text.
     @Test("Eine leere Liste ergibt einen leeren Text")
     func emptyList() {
         #expect(FilterListExporter.text(for: []) == "")
     }
 
+    /// Eine Adresse steht unverändert in der Zeile.
     @Test("Eine Adresse steht unverändert in der Zeile")
     func addressLine() {
         #expect(FilterListExporter.text(for: [entry("anna@firma.de", .address)]) == "anna@firma.de")
     }
 
+    /// Eine Domain wird in der Portal-Schreibweise ausgegeben.
     @Test("Eine Domain wird in der Portal-Schreibweise ausgegeben")
     func domainLine() {
         #expect(FilterListExporter.text(for: [entry("firma.de", .domain)]) == "*@firma.de")
     }
 
+    /// Adressen stehen vor Domains, beide alphabetisch.
     @Test("Adressen stehen vor Domains, beide alphabetisch")
     func sortedOutput() {
         let text = FilterListExporter.text(for: [
@@ -50,6 +56,7 @@ struct FilterListExporterTests {
             """)
     }
 
+    /// Die Datei enthält den Text und trägt den Listennamen.
     @Test("Die Datei enthält den Text und trägt den Listennamen")
     func writesFile() throws {
         let url = try FilterListExporter.writeTemporaryFile(
@@ -63,6 +70,7 @@ struct FilterListExporterTests {
         #expect(content == "anna@firma.de\n*@firma.de")
     }
 
+    /// Ein erneuter Export überschreibt die alte Datei.
     @Test("Ein erneuter Export überschreibt die alte Datei")
     func overwritesFile() throws {
         let first = try FilterListExporter.writeTemporaryFile(
@@ -77,6 +85,7 @@ struct FilterListExporterTests {
         #expect(try String(contentsOf: second, encoding: .utf8) == "bob@firma.de")
     }
 
+    /// Die Dateinamen unterscheiden die Listen.
     @Test("Die Dateinamen unterscheiden die Listen")
     func filenames() {
         #expect(FilterListExporter.filename(for: .white) == "Mailwerk-Whitelist.txt")

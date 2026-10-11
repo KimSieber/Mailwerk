@@ -2,7 +2,17 @@
 //  MailAccount.swift
 //  Mailwerk
 //
-//  Created by Kim Sieber on 18.09.26.
+//  Zweck: Datenmodell eines eingerichteten IMAP-/SMTP-Postfachs – Bezeichnung,
+//  Absendername, Benutzername, Server und Ports, Farbe und gemerkter
+//  Spam-Ordner.
+//
+//  Das Passwort gehört bewusst nicht dazu; es liegt im Schlüsselbund
+//  (KeychainService), referenziert über `id`. Verbindungen sind immer
+//  verschlüsselt (MailServerFactory), deshalb gibt es keine TLS-Schalter.
+//
+//  Abgrenzung: Speichern und Abgleich über iCloud → AccountStore.
+//
+//  Abhängigkeiten: Foundation.
 //
 
 import Foundation
@@ -14,6 +24,7 @@ import Foundation
 /// Verbindungen sind immer verschlüsselt (siehe MailServerFactory) –
 /// daher gibt es keine TLS-Schalter mehr.
 struct MailAccount: Identifiable, Codable, Equatable {
+    /// Kennung; verknüpft das Postfach mit Passwort und Cache.
     let id: UUID
 
     /// Frei wählbare Bezeichnung des Postfachs, z. B. "Kim @ manitu".
@@ -28,10 +39,14 @@ struct MailAccount: Identifiable, Codable, Equatable {
     /// Dient zugleich als Absenderadresse.
     var username: String
 
+    /// IMAP-Server.
     var imapHost: String
+    /// IMAP-Port (Standard 993).
     var imapPort: Int
 
+    /// SMTP-Server.
     var smtpHost: String
+    /// SMTP-Port (Standard 465).
     var smtpPort: Int
 
     /// Hex-Farbwert aus AccountColor, z. B. "#378ADD". nil = keine Farbmarkierung.
@@ -42,6 +57,21 @@ struct MailAccount: Identifiable, Codable, Equatable {
     /// Wird beim ersten Filterlauf gefüllt und danach wiederverwendet.
     var spamFolder: String?
 
+    /// Legt ein Postfach an.
+    ///
+    /// Verarbeitung: Ein leerer Absendername wird zu `nil` (`normalized`).
+    ///
+    /// - Parameters:
+    ///   - id: Kennung (neu, wenn nicht angegeben).
+    ///   - displayName: Bezeichnung in der App.
+    ///   - senderName: Name in der Absenderzeile.
+    ///   - username: Anmeldename, zugleich Absenderadresse.
+    ///   - imapHost: IMAP-Server.
+    ///   - imapPort: IMAP-Port.
+    ///   - smtpHost: SMTP-Server.
+    ///   - smtpPort: SMTP-Port.
+    ///   - colorHex: Farbe als Hex-Wert.
+    ///   - spamFolder: gemerkter Spam-Ordner.
     init(
         id: UUID = UUID(),
         displayName: String,
@@ -66,7 +96,11 @@ struct MailAccount: Identifiable, Codable, Equatable {
         self.spamFolder = spamFolder
     }
 
-    /// Leere bzw. nur aus Leerzeichen bestehende Namen werden zu nil.
+    /// Bereinigt einen Namen: Leerraum an den Rändern entfällt, ein leerer
+    /// Name wird zu `nil`.
+    ///
+    /// - Parameter name: Eingegebener Name.
+    /// - Returns: Bereinigter Name oder `nil`.
     static func normalized(_ name: String?) -> String? {
         guard let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines),
               !trimmed.isEmpty else { return nil }

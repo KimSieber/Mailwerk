@@ -2,33 +2,57 @@
 //  FilterListRepository.swift
 //  Mailwerk
 //
-//  Zugriff auf die Black- und Whitelist. Einzige Stelle, die den
+//  Zweck: Zugriff auf die Black- und Whitelist. Einzige Stelle, die den
 //  Speicherort kennt – heute iCloud (CloudKit), später vielleicht eine
-//  eigene API.
+//  eigene API. Enthält das Protokoll und eine Variante im Speicher für
+//  Tests und Vorschauen.
 //
 //  Main-Actor-gebunden, weil SwiftData seinen Kontext an einen Actor
 //  bindet. Der Filterlauf holt sich einmal je Durchlauf die Momentaufnahme
 //  `lists()` und rechnet damit außerhalb des Main-Actors weiter.
 //
+//  Abgrenzung: SwiftData-Variante → SwiftDataFilterListRepository;
+//  gemeinsame Regeln → FilterListRules.
+//
+//  Abhängigkeiten: Foundation, FilterEntryItem, FilterLists, FilterListRules.
+//
 
 import Foundation
 
+/// Zugriff auf die Filterlisten, unabhängig vom Speicherort.
 @MainActor
 protocol FilterListRepository: AnyObject {
 
     /// Alle Einträge, sortiert nach Liste und darin nach Wert.
+    ///
+    /// - Returns: Zusammengeführte Einträge.
+    /// - Throws: Fehler beim Lesen.
     func entries() async throws -> [FilterEntryItem]
 
     /// Momentaufnahme für den Classifier.
+    ///
+    /// - Returns: Listen als Mengen.
+    /// - Throws: Fehler beim Lesen.
     func lists() async throws -> FilterLists
 
     /// Legt einen Eintrag an. Der Wert wird normalisiert.
-    /// - Steht er schon auf derselben Liste, wird der vorhandene Eintrag geliefert.
-    /// - Steht er auf der anderen Liste, wirft die Methode `alreadyOnOtherList`.
+    ///
+    /// Verarbeitung: Steht er schon auf derselben Liste, wird der vorhandene
+    /// Eintrag geliefert; steht er auf der anderen Liste, wird abgelehnt.
+    ///
+    /// - Parameters:
+    ///   - value: Eingabe.
+    ///   - kind: Adresse oder Domain.
+    ///   - list: Ziel-Liste.
+    /// - Returns: Angelegter oder vorhandener Eintrag.
+    /// - Throws: `FilterListError.invalidValue`, `.alreadyOnOtherList`, Speicherfehler.
     @discardableResult
     func add(_ value: String, kind: FilterEntryKind, to list: FilterList) async throws -> FilterEntryItem
 
     /// Entfernt einen Eintrag. Unbekannte Kennungen werden übergangen.
+    ///
+    /// - Parameter id: Kennung des Eintrags.
+    /// - Throws: Speicherfehler.
     func remove(_ id: UUID) async throws
 }
 
@@ -36,20 +60,38 @@ protocol FilterListRepository: AnyObject {
 @MainActor
 final class InMemoryFilterListRepository: FilterListRepository {
 
+    /// Gespeicherte Einträge, auch Doppelte.
     private var storage: [FilterEntryItem]
 
+    /// Legt die Variante mit Startinhalt an.
+    ///
+    /// - Parameter entries: Startinhalt.
     init(entries: [FilterEntryItem] = []) {
         self.storage = entries
     }
 
+    /// Alle Einträge, zusammengeführt und sortiert.
+    ///
+    /// - Returns: Einträge.
     func entries() async throws -> [FilterEntryItem] {
         FilterListRules.merged(storage)
     }
 
+    /// Momentaufnahme für den Classifier.
+    ///
+    /// - Returns: Listen als Mengen.
     func lists() async throws -> FilterLists {
         FilterListRules.lists(from: storage)
     }
 
+    /// Legt einen Eintrag an (siehe Protokoll).
+    ///
+    /// - Parameters:
+    ///   - value: Eingabe.
+    ///   - kind: Adresse oder Domain.
+    ///   - list: Ziel-Liste.
+    /// - Returns: Angelegter oder vorhandener Eintrag.
+    /// - Throws: `FilterListError`.
     @discardableResult
     func add(_ value: String, kind: FilterEntryKind, to list: FilterList) async throws -> FilterEntryItem {
         guard let normalized = FilterListRules.normalize(value, kind: kind) else {
@@ -75,6 +117,9 @@ final class InMemoryFilterListRepository: FilterListRepository {
         return item
     }
 
+    /// Entfernt einen Eintrag samt seiner zusammengeführten Doppelten.
+    ///
+    /// - Parameter id: Kennung des Eintrags.
     func remove(_ id: UUID) async throws {
         guard let target = storage.first(where: { $0.id == id }) else { return }
         // Auch die zusammengeführten Doppelten entfernen, sonst taucht der

@@ -2,7 +2,7 @@
 //  FolderCatalogTests.swift
 //  MailwerkTests
 //
-//  Tests für die Zustände des Ordnerkatalogs – ohne Server, mit
+//  Zweck: Tests für die Zustände des Ordnerkatalogs – ohne Server, mit
 //  einem Test-Lader.
 //
 
@@ -10,9 +10,11 @@ import Foundation
 import Testing
 @testable import Mailwerk
 
+/// Tests für FolderCatalog.
 @MainActor
 struct FolderCatalogTests {
 
+    /// Testhilfe: Fehler des Test-Laders mit Meldungstext.
     private struct LoadError: LocalizedError {
         var errorDescription: String? { "Anmeldung fehlgeschlagen" }
     }
@@ -26,6 +28,7 @@ struct FolderCatalogTests {
         var cancelling: Set<UUID> = []
         var folderName = "Posteingang"
 
+        /// Testhilfe: zählt den Abruf und liefert Baum, Fehler oder Abbruch.
         func load(_ account: MailAccount) async throws -> [FolderNode] {
             calls[account.id, default: 0] += 1
             if cancelling.contains(account.id) { throw CancellationError() }
@@ -34,14 +37,17 @@ struct FolderCatalogTests {
         }
     }
 
+    /// Testhilfe: Postfach mit Namen.
     private func account(_ name: String) -> MailAccount {
         MailAccount(displayName: name, username: "\(name)@example.org", imapHost: "imap.example.org", smtpHost: "smtp.example.org")
     }
 
+    /// Testhilfe: Katalog mit dem Test-Lader.
     private func makeCatalog(_ fake: FakeLoader) -> FolderCatalog {
         FolderCatalog { account in try await fake.load(account) }
     }
 
+    /// Testhilfe: Ordnernamen eines geladenen Zustands, sonst `nil`.
     private func names(_ state: FolderCatalog.State) -> [String]? {
         if case .loaded(let tree) = state { return tree.map(\.name) }
         return nil
@@ -49,11 +55,13 @@ struct FolderCatalogTests {
 
     // MARK: - Tests
 
+    /// Ein unbekanntes Postfach ist im Ruhezustand.
     @Test func unknownAccountIsIdle() {
         let catalog = makeCatalog(FakeLoader())
         #expect(catalog.state(for: UUID()) == .idle)
     }
 
+    /// Erstes Laden holt die Ordner aller Postfächer.
     @Test func loadIfNeededLoadsAllAccounts() async {
         let fake = FakeLoader()
         let catalog = makeCatalog(fake)
@@ -65,6 +73,7 @@ struct FolderCatalogTests {
         #expect(names(catalog.state(for: b.id)) == ["Posteingang"])
     }
 
+    /// Ein zweites Laden bei Bedarf fragt den Server nicht erneut.
     @Test func loadIfNeededDoesNotLoadTwice() async {
         let fake = FakeLoader()
         let catalog = makeCatalog(fake)
@@ -76,6 +85,7 @@ struct FolderCatalogTests {
         #expect(fake.calls[a.id] == 1)
     }
 
+    /// Der Fehler eines Postfachs berührt die anderen nicht.
     @Test func failureOfOneAccountDoesNotAffectOthers() async {
         let fake = FakeLoader()
         let catalog = makeCatalog(fake)
@@ -88,6 +98,7 @@ struct FolderCatalogTests {
         #expect(names(catalog.state(for: b.id)) == ["Posteingang"])
     }
 
+    /// Ein gescheitertes Postfach wird nicht von selbst neu geladen.
     @Test func failedAccountIsNotReloadedAutomatically() async {
         let fake = FakeLoader()
         let catalog = makeCatalog(fake)
@@ -100,6 +111,7 @@ struct FolderCatalogTests {
         #expect(fake.calls[a.id] == 1)
     }
 
+    /// Erneut versuchen lädt ein gescheitertes Postfach.
     @Test func retryLoadsFailedAccount() async {
         let fake = FakeLoader()
         let catalog = makeCatalog(fake)
@@ -113,6 +125,7 @@ struct FolderCatalogTests {
         #expect(names(catalog.state(for: a.id)) == ["Posteingang"])
     }
 
+    /// Neu laden fragt erneut und ersetzt den Baum.
     @Test func reloadFetchesAgainAndReplacesTree() async {
         let fake = FakeLoader()
         let catalog = makeCatalog(fake)
@@ -126,8 +139,8 @@ struct FolderCatalogTests {
         #expect(names(catalog.state(for: a.id)) == ["Neu"])
     }
 
-    /// v0.1.8b: Ein gescheitertes Neuladen lässt den Baum stehen
-    /// (bis v0.1.8a wurde er durch die Fehlermeldung ersetzt).
+    /// Ein gescheitertes Neuladen lässt den vorhandenen Baum stehen, statt
+    /// ihn durch die Fehlermeldung zu ersetzen.
     @Test func failedReloadKeepsExistingTree() async {
         let fake = FakeLoader()
         let catalog = makeCatalog(fake)
@@ -140,6 +153,7 @@ struct FolderCatalogTests {
         #expect(names(catalog.state(for: a.id)) == ["Posteingang"])
     }
 
+    /// Ein abgebrochenes erstes Laden kehrt in den Ruhezustand zurück und lädt erneut.
     @Test func cancelledFirstLoadReturnsToIdleAndLoadsAgain() async {
         let fake = FakeLoader()
         let catalog = makeCatalog(fake)
@@ -154,6 +168,7 @@ struct FolderCatalogTests {
         #expect(names(catalog.state(for: a.id)) == ["Posteingang"])
     }
 
+    /// Ein abgebrochenes Neuladen behält den vorhandenen Baum.
     @Test func cancelledReloadKeepsExistingTree() async {
         let fake = FakeLoader()
         let catalog = makeCatalog(fake)
@@ -166,6 +181,7 @@ struct FolderCatalogTests {
         #expect(names(catalog.state(for: a.id)) == ["Posteingang"])
     }
 
+    /// Entfernte Postfächer verschwinden aus dem Katalog.
     @Test func removedAccountsAreDropped() async {
         let fake = FakeLoader()
         let catalog = makeCatalog(fake)
@@ -178,12 +194,14 @@ struct FolderCatalogTests {
         #expect(catalog.states.count == 1)
     }
 
-    // MARK: - Gespeicherter Baum (v0.1.8b)
+    // MARK: - Gespeicherter Baum
 
+    /// Testhilfe: gespeicherter Baum mit einem Ordner.
     private func cachedTree(_ name: String) -> [FolderNode] {
         [FolderNode(id: "INBOX", name: name, role: .inbox, isSelectable: true, children: [])]
     }
 
+    /// Scheitert der Server, erscheint der gespeicherte Baum.
     @Test func cachedTreeIsShownWhenServerFails() async {
         let fake = FakeLoader()
         let a = account("a")
@@ -199,6 +217,7 @@ struct FolderCatalogTests {
         #expect(fake.calls[a.id] == 1)
     }
 
+    /// Der Baum vom Server ersetzt den gespeicherten.
     @Test func serverTreeReplacesCachedTree() async {
         let fake = FakeLoader()
         let a = account("a")
@@ -212,6 +231,7 @@ struct FolderCatalogTests {
         #expect(names(catalog.state(for: a.id)) == ["Posteingang"])
     }
 
+    /// Der gespeicherte Baum wird nur einmal je Sitzung gelesen.
     @Test func cachedTreeIsFetchedOnlyOncePerSession() async {
         let fake = FakeLoader()
         let a = account("a")
@@ -226,6 +246,7 @@ struct FolderCatalogTests {
         #expect(fake.calls[a.id] == 1)
     }
 
+    /// Ohne gespeicherten Baum wird der Fehler gemeldet.
     @Test func withoutCacheFailureIsReported() async {
         let fake = FakeLoader()
         let a = account("a")

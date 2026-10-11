@@ -2,16 +2,31 @@
 //  FlowLayout.swift
 //  Mailwerk
 //
-//  Einfaches Layout, das seine Elemente von links nach rechts anordnet
-//  und bei Platzmangel umbricht. Wird für die Adress-Chips gebraucht.
+//  Zweck: Einfaches Layout, das seine Elemente von links nach rechts
+//  anordnet und bei Platzmangel umbricht. Wird für die Adress-Chips
+//  gebraucht.
+//
+//  Abgrenzung: Adressfeld → RecipientField.
+//
+//  Abhängigkeiten: SwiftUI.
 //
 
 import SwiftUI
 
+/// Fließendes Layout mit Zeilenumbruch.
 struct FlowLayout: Layout {
+    /// Abstand zwischen Elementen einer Zeile.
     var spacing: CGFloat = 6
+    /// Abstand zwischen den Zeilen.
     var lineSpacing: CGFloat = 6
 
+    /// Benötigte Größe für die vorgeschlagene Breite.
+    ///
+    /// - Parameters:
+    ///   - proposal: Vorgeschlagene Größe.
+    ///   - subviews: Elemente.
+    ///   - cache: Nicht verwendet.
+    /// - Returns: Breite der längsten Zeile und Höhe aller Zeilen.
     nonisolated func sizeThatFits(
         proposal: ProposedViewSize,
         subviews: Subviews,
@@ -26,6 +41,13 @@ struct FlowLayout: Layout {
         return CGSize(width: min(width, maxWidth), height: height)
     }
 
+    /// Setzt die Elemente zeilenweise, je Zeile vertikal mittig.
+    ///
+    /// - Parameters:
+    ///   - bounds: Verfügbarer Bereich.
+    ///   - proposal: Vorgeschlagene Größe.
+    ///   - subviews: Elemente.
+    ///   - cache: Nicht verwendet.
     nonisolated func placeSubviews(
         in bounds: CGRect,
         proposal: ProposedViewSize,
@@ -49,17 +71,28 @@ struct FlowLayout: Layout {
 
     // MARK: - Umbruch berechnen
 
+    /// Ein Element mit Index und gemessener Größe.
     private struct Item {
         let index: Int
         let size: CGSize
     }
 
+    /// Eine Zeile mit ihren Elementen, Breite und Höhe.
     private struct Row {
         var items: [Item] = []
         var width: CGFloat = 0
         var height: CGFloat = 0
     }
 
+    /// Verteilt die Elemente auf Zeilen.
+    ///
+    /// Verarbeitung: Kein Element wird breiter als die Zeile – sonst ragt
+    /// z. B. ein langer Adress-Chip über den Rand hinaus.
+    ///
+    /// - Parameters:
+    ///   - subviews: Elemente.
+    ///   - maxWidth: Verfügbare Breite.
+    /// - Returns: Zeilen.
     private nonisolated func arrange(subviews: Subviews, maxWidth: CGFloat) -> [Row] {
         var rows: [Row] = []
         var row = Row()
