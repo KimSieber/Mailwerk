@@ -7,6 +7,10 @@
 //  Ordnerliste und Ordnerbaum abrufen. Reine Server-Operationen: Den
 //  lokalen Cache aktualisiert der Aufrufer nach erfolgreicher Aktion.
 //
+//  Gelesen, Kennzeichnung, Löschen und Verschieben gibt es auch für
+//  mehrere Mails eines Ordners (`uids:`): ein Befehl mit allen UIDs über
+//  eine Verbindung, statt Mail für Mail.
+//
 //  Jede Aktion öffnet eine eigene Verbindung über `MailSession`. Fehler
 //  der Verbindung oder des Servers werden als `ActionError.operationFailed`
 //  gemeldet. Fehler, deren Meldung sich direkt an den Nutzer richtet
@@ -71,8 +75,30 @@ enum MailActionService {
         accountStore: AccountStore,
         folder: String = MailFolder.inboxPath
     ) async throws {
+        try await setRead(
+            uids: [uid], isRead: isRead, accountID: accountID,
+            accountStore: accountStore, folder: folder
+        )
+    }
+
+    /// Setzt oder entfernt `\Seen` an mehreren Mails eines Ordners.
+    ///
+    /// - Parameters:
+    ///   - uids: UIDs der Mails im Ordner.
+    ///   - isRead: `true` = als gelesen markieren, `false` = als ungelesen.
+    ///   - accountID: Postfach der Mails.
+    ///   - accountStore: Quelle für die Zugangsdaten.
+    ///   - folder: Ordner der Mails (UIDs gelten nur je Ordner).
+    /// - Throws: `MailCredentialError` oder `ActionError`.
+    static func setRead(
+        uids: [UInt32],
+        isRead: Bool,
+        accountID: UUID,
+        accountStore: AccountStore,
+        folder: String
+    ) async throws {
         try await storeFlag(
-            .seen, set: isRead, uid: uid, folder: folder,
+            .seen, set: isRead, uids: uids, folder: folder,
             accountID: accountID, accountStore: accountStore
         )
     }
@@ -93,20 +119,43 @@ enum MailActionService {
         accountStore: AccountStore,
         folder: String = MailFolder.inboxPath
     ) async throws {
+        try await setFlagged(
+            uids: [uid], isFlagged: isFlagged, accountID: accountID,
+            accountStore: accountStore, folder: folder
+        )
+    }
+
+    /// Setzt oder entfernt `\Flagged` an mehreren Mails eines Ordners.
+    ///
+    /// - Parameters:
+    ///   - uids: UIDs der Mails im Ordner.
+    ///   - isFlagged: `true` = kennzeichnen, `false` = Kennzeichnung entfernen.
+    ///   - accountID: Postfach der Mails.
+    ///   - accountStore: Quelle für die Zugangsdaten.
+    ///   - folder: Ordner der Mails (UIDs gelten nur je Ordner).
+    /// - Throws: `MailCredentialError` oder `ActionError`.
+    static func setFlagged(
+        uids: [UInt32],
+        isFlagged: Bool,
+        accountID: UUID,
+        accountStore: AccountStore,
+        folder: String
+    ) async throws {
         try await storeFlag(
-            .flagged, set: isFlagged, uid: uid, folder: folder,
+            .flagged, set: isFlagged, uids: uids, folder: folder,
             accountID: accountID, accountStore: accountStore
         )
     }
 
-    /// Setzt oder entfernt ein Flag an einer Mail.
+    /// Setzt oder entfernt ein Flag an Mails eines Ordners.
     ///
-    /// Verarbeitung: Ordner auswählen, dann `UID STORE +FLAGS` bzw. `-FLAGS`.
+    /// Verarbeitung: Ordner auswählen, dann ein `UID STORE +FLAGS` bzw.
+    /// `-FLAGS` für alle UIDs.
     ///
     /// - Parameters:
     ///   - flag: Zu setzendes Flag.
     ///   - set: `true` = setzen, `false` = entfernen.
-    ///   - uid: UID der Mail im Ordner.
+    ///   - uids: UIDs der Mails im Ordner.
     ///   - folder: Ordner der Mail.
     ///   - accountID: Postfach der Mail.
     ///   - accountStore: Quelle für die Zugangsdaten.
@@ -114,7 +163,7 @@ enum MailActionService {
     private static func storeFlag(
         _ flag: SwiftMail.Flag,
         set: Bool,
-        uid: UInt32,
+        uids: [UInt32],
         folder: String,
         accountID: UUID,
         accountStore: AccountStore
@@ -125,7 +174,7 @@ enum MailActionService {
             _ = try await server.selectMailbox(folder)
             try await server.store(
                 flags: [flag],
-                on: UIDSet([SwiftMail.UID(uid)]),
+                on: UIDSet(uids.map { SwiftMail.UID($0) }),
                 operation: set ? .add : .remove
             )
         }
@@ -135,9 +184,7 @@ enum MailActionService {
 
     /// Löscht eine Mail.
     ///
-    /// Verarbeitung: Hat das Postfach einen Papierkorb (SPECIAL-USE
-    /// `\Trash`), wird die Mail dorthin verschoben. Sonst wird sie mit
-    /// `\Deleted` markiert und per EXPUNGE endgültig entfernt.
+    /// Verarbeitung: siehe `deleteMessages(uids:…)`.
     ///
     /// - Parameters:
     ///   - uid: UID der Mail im Ordner.
@@ -153,6 +200,32 @@ enum MailActionService {
         accountStore: AccountStore,
         folder: String = MailFolder.inboxPath
     ) async throws -> String? {
+        try await deleteMessages(
+            uids: [uid], accountID: accountID, accountStore: accountStore, folder: folder
+        )
+    }
+
+    /// Löscht mehrere Mails eines Ordners.
+    ///
+    /// Verarbeitung: Hat das Postfach einen Papierkorb (SPECIAL-USE
+    /// `\Trash`), werden die Mails mit einem Befehl dorthin verschoben.
+    /// Sonst werden sie mit `\Deleted` markiert und per EXPUNGE endgültig
+    /// entfernt.
+    ///
+    /// - Parameters:
+    ///   - uids: UIDs der Mails im Ordner.
+    ///   - accountID: Postfach der Mails.
+    ///   - accountStore: Quelle für die Zugangsdaten.
+    ///   - folder: Ordner der Mails.
+    /// - Returns: Pfad des Papierkorbs oder `nil`, wenn endgültig gelöscht wurde.
+    /// - Throws: `MailCredentialError` oder `ActionError`.
+    @discardableResult
+    static func deleteMessages(
+        uids: [UInt32],
+        accountID: UUID,
+        accountStore: AccountStore,
+        folder: String
+    ) async throws -> String? {
         try await withIMAPConnection(
             accountID: accountID, accountStore: accountStore
         ) { server in
@@ -160,20 +233,20 @@ enum MailActionService {
             let trashFolder = folders.first { $0.specialUse == .trash }
 
             _ = try await server.selectMailbox(folder)
-            let imapUID = SwiftMail.UID(uid)
+            let set = UIDSet(uids.map { SwiftMail.UID($0) })
 
             if let trash = trashFolder {
-                _ = try await server.move(message: imapUID, to: trash.id)
-                Log.actions.info("🗑️ Mail UID \(uid) nach \(trash.id, privacy: .public) verschoben")
+                _ = try await server.move(messages: set, to: trash.id)
+                Log.actions.info("🗑️ \(uids.count) Mail(s) nach \(trash.id, privacy: .public) verschoben")
                 return trash.id
             } else {
                 try await server.store(
                     flags: [SwiftMail.Flag.deleted],
-                    on: UIDSet([imapUID]),
+                    on: set,
                     operation: .add
                 )
                 try await server.expunge()
-                Log.actions.info("🗑️ Mail UID \(uid) gelöscht (EXPUNGE)")
+                Log.actions.info("🗑️ \(uids.count) Mail(s) gelöscht (EXPUNGE)")
                 return nil
             }
         }
@@ -209,6 +282,35 @@ enum MailActionService {
             let newUID = copyUID?.mapping.first?.destination.value
             Log.actions.info("📁 Mail UID \(uid) von \(folder, privacy: .public) nach \(toFolder, privacy: .public) verschoben (neue UID: \(newUID.map(String.init) ?? "unbekannt", privacy: .public))")
             return newUID
+        }
+    }
+
+    /// Verschiebt mehrere Mails eines Ordners in einen anderen Ordner
+    /// desselben Postfachs – ein Befehl für alle UIDs.
+    ///
+    /// Verarbeitung: Neue UIDs im Zielordner werden nicht ausgewertet; der
+    /// Aufrufer entfernt die Mails aus dem Cache des bisherigen Ordners.
+    ///
+    /// - Parameters:
+    ///   - uids: UIDs der Mails im bisherigen Ordner.
+    ///   - toFolder: Server-Pfad des Zielordners.
+    ///   - accountID: Postfach der Mails.
+    ///   - accountStore: Quelle für die Zugangsdaten.
+    ///   - folder: Bisheriger Ordner der Mails.
+    /// - Throws: `MailCredentialError` oder `ActionError`.
+    static func moveMessages(
+        uids: [UInt32],
+        toFolder: String,
+        accountID: UUID,
+        accountStore: AccountStore,
+        folder: String
+    ) async throws {
+        try await withIMAPConnection(
+            accountID: accountID, accountStore: accountStore
+        ) { server in
+            _ = try await server.selectMailbox(folder)
+            _ = try await server.move(messages: UIDSet(uids.map { SwiftMail.UID($0) }), to: toFolder)
+            Log.actions.info("📁 \(uids.count) Mail(s) von \(folder, privacy: .public) nach \(toFolder, privacy: .public) verschoben")
         }
     }
 

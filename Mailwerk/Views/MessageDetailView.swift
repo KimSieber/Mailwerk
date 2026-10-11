@@ -299,6 +299,8 @@ struct MessageDetailView: View {
     /// - Parameter action: Gewählte Aktion.
     private func handleMenuAction(_ action: MessageMenuAction) {
         switch action {
+        case .select:
+            break  // gibt es nur im Kontextmenü der Liste
         case .reply(let kind):
             composeRequest = ComposeRequest(kind: kind)
         case .toggleFlag:

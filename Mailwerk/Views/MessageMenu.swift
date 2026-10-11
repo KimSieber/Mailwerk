@@ -7,6 +7,7 @@
 //  langem Drücken), damit beide gleich aussehen und sich gleich bedienen.
 //
 //  Aufbau (jeder Eintrag einzeilig):
+//  - nur im Kontextmenü der Liste: „Auswählen“ (Mehrfachauswahl)
 //  - Antworten, Allen antworten, Weiterleiten
 //  - Kennzeichnung (Symbol zeigt, was der Tipp bewirkt), Gelesen bzw.
 //    Ungelesen, Verschieben
@@ -70,6 +71,8 @@ struct SpamMenuRequest: Equatable {
 
 /// Im Menü gewählte Aktion.
 enum MessageMenuAction: Equatable {
+    /// Mehrfachauswahl beginnen, diese Mail ist ausgewählt.
+    case select
     /// Antworten, Allen antworten oder Weiterleiten.
     case reply(ComposeKind)
     /// Kennzeichnung umschalten.
@@ -118,6 +121,9 @@ enum MessageMenuLabels {
             ? Entry(title: "Gelesen", systemImage: "envelope.open", accessibility: "Als gelesen markieren")
             : Entry(title: "Ungelesen", systemImage: "envelope.badge", accessibility: "Als ungelesen markieren")
     }
+
+    /// Eintrag „Auswählen“ (nur im Kontextmenü der Liste).
+    static let select = Entry(title: "Auswählen", systemImage: "checkmark.circle", accessibility: "Mehrere Mails auswählen")
 
     /// Eintrag „Verschieben“.
     static let move = Entry(title: "Verschieben", systemImage: "folder", accessibility: "In Ordner verschieben")
@@ -178,6 +184,8 @@ struct ReplyMenuButtons: View {
 struct MessageMenuItems<Extra: View>: View {
     /// Zustand der Mail.
     let context: MessageMenuContext
+    /// `true` = „Auswählen“ als erster Eintrag (Kontextmenü der Liste).
+    var showsSelect = false
     /// Empfängt die gewählte Aktion.
     let onAction: (MessageMenuAction) -> Void
     /// Zusätzliche Einträge vor „Mail löschen“ (z. B. Teilen, Drucken).
@@ -185,6 +193,12 @@ struct MessageMenuItems<Extra: View>: View {
 
     /// Abschnitte des Menüs.
     var body: some View {
+        if showsSelect {
+            Section {
+                entryButton(MessageMenuLabels.select, action: .select)
+            }
+        }
+
         Section {
             ReplyMenuButtons(onAction: onAction)
         }

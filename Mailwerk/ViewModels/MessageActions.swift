@@ -11,6 +11,11 @@
 //  schließen sich. Kennzeichnung und Gelesen-Status sind zusätzlich als
 //  umkehrbare `StateChange` beschrieben – Grundlage für „Rückgängig“.
 //
+//  Für mehrere Mails werden die Ziele je Postfach und Ordner gruppiert;
+//  jede Gruppe ist ein Serverbefehl. Scheitert eine Gruppe, laufen die
+//  übrigen weiter, und das Ergebnis (`BatchOutcome`) nennt, was gelang
+//  und was nicht.
+//
 //  Ändert sich auf dem Server nichts (Fehler), bleibt auch der Cache
 //  unverändert; der Fehler geht an den Aufrufer, der ihn anzeigt.
 //
@@ -18,7 +23,7 @@
 //  → SpamFilterService; Anzeige und Rückfragen → InboxViewModel bzw.
 //  MessageDetailView.
 //
-//  Abhängigkeiten: MailActionService, MessageStore, AccountStore.
+//  Abhängigkeiten: MailActionService, MessageStore, AccountStore, FolderKey.
 //
 
 import Foundation
@@ -147,6 +152,147 @@ enum MessageActions {
             folder: target.folder
         )
         MessageStore.shared.deleteMessage(id: target.id)
+    }
+}
+
+extension MessageActions {
+
+    // MARK: - Mehrere Mails
+
+    /// Ergebnis einer Aktion an mehreren Mails.
+    struct BatchOutcome {
+        /// Eine gescheiterte Gruppe (ein Ordner eines Postfachs).
+        struct Failure {
+            /// Postfach der Gruppe.
+            let accountID: UUID
+            /// Anzahl der Mails der Gruppe.
+            let count: Int
+            /// Aufgetretener Fehler.
+            let error: Error
+        }
+
+        /// Mails, an denen die Aktion gelang.
+        var succeeded: [Target] = []
+        /// Gescheiterte Gruppen.
+        var failures: [Failure] = []
+
+        /// Anzahl der Mails, an denen die Aktion scheiterte.
+        var failedCount: Int { failures.reduce(0) { $0 + $1.count } }
+    }
+
+    /// Gruppiert Ziele nach Postfach und Ordner, in der Reihenfolge ihres
+    /// ersten Auftretens.
+    ///
+    /// - Parameter targets: Ziele der Aktion.
+    /// - Returns: Nicht leere Gruppen; jede gehört zu genau einem Ordner.
+    static func groups(_ targets: [Target]) -> [[Target]] {
+        var order: [FolderKey] = []
+        var grouped: [FolderKey: [Target]] = [:]
+        for target in targets {
+            let key = FolderKey(accountID: target.accountID, folder: target.folder)
+            if grouped[key] == nil { order.append(key) }
+            grouped[key, default: []].append(target)
+        }
+        return order.compactMap { grouped[$0] }
+    }
+
+    /// Führt eine Zustandsänderung an mehreren Mails aus – je Ordner ein
+    /// Serverbefehl – und trägt sie bei Erfolg in den Cache ein.
+    ///
+    /// - Parameters:
+    ///   - change: Kennzeichnung oder Gelesen-Status mit neuem Wert.
+    ///   - targets: Betroffene Mails.
+    ///   - accountStore: Quelle für die Zugangsdaten.
+    /// - Returns: Gelungene Mails und gescheiterte Gruppen.
+    static func apply(_ change: StateChange, to targets: [Target], accountStore: AccountStore) async -> BatchOutcome {
+        await runGrouped(targets) { group, accountID, folder in
+            let uids = group.map(\.uid)
+            switch change {
+            case .flagged(let value):
+                try await MailActionService.setFlagged(
+                    uids: uids, isFlagged: value, accountID: accountID,
+                    accountStore: accountStore, folder: folder
+                )
+                for target in group {
+                    MessageStore.shared.updateFlagged(messageID: target.id, isFlagged: value)
+                }
+            case .read(let value):
+                try await MailActionService.setRead(
+                    uids: uids, isRead: value, accountID: accountID,
+                    accountStore: accountStore, folder: folder
+                )
+                for target in group {
+                    MessageStore.shared.updateUnread(messageID: target.id, isUnread: !value)
+                }
+            }
+        }
+    }
+
+    /// Löscht mehrere Mails (Papierkorb oder endgültig) und entfernt sie
+    /// aus dem Cache ihres Ordners.
+    ///
+    /// - Parameters:
+    ///   - targets: Betroffene Mails.
+    ///   - accountStore: Quelle für die Zugangsdaten.
+    /// - Returns: Gelungene Mails und gescheiterte Gruppen.
+    static func delete(_ targets: [Target], accountStore: AccountStore) async -> BatchOutcome {
+        await runGrouped(targets) { group, accountID, folder in
+            try await MailActionService.deleteMessages(
+                uids: group.map(\.uid), accountID: accountID,
+                accountStore: accountStore, folder: folder
+            )
+            for target in group {
+                MessageStore.shared.deleteMessage(id: target.id)
+            }
+        }
+    }
+
+    /// Verschiebt mehrere Mails in einen Ordner desselben Postfachs und
+    /// entfernt sie aus dem Cache des bisherigen Ordners.
+    ///
+    /// - Parameters:
+    ///   - targets: Betroffene Mails (alle aus einem Postfach).
+    ///   - path: Server-Pfad des Zielordners.
+    ///   - accountStore: Quelle für die Zugangsdaten.
+    /// - Returns: Gelungene Mails und gescheiterte Gruppen.
+    static func move(_ targets: [Target], to path: String, accountStore: AccountStore) async -> BatchOutcome {
+        await runGrouped(targets) { group, accountID, folder in
+            try await MailActionService.moveMessages(
+                uids: group.map(\.uid), toFolder: path, accountID: accountID,
+                accountStore: accountStore, folder: folder
+            )
+            for target in group {
+                MessageStore.shared.deleteMessage(id: target.id)
+            }
+        }
+    }
+
+    /// Führt eine Operation je Ordnergruppe aus und sammelt das Ergebnis.
+    ///
+    /// Verarbeitung: Gruppen laufen nacheinander; ein Fehler betrifft nur
+    /// seine Gruppe.
+    ///
+    /// - Parameters:
+    ///   - targets: Betroffene Mails.
+    ///   - operation: Aktion an einer Gruppe (Mails, Postfach, Ordner).
+    /// - Returns: Gelungene Mails und gescheiterte Gruppen.
+    private static func runGrouped(
+        _ targets: [Target],
+        operation: ([Target], UUID, String) async throws -> Void
+    ) async -> BatchOutcome {
+        var outcome = BatchOutcome()
+        for group in groups(targets) {
+            guard let first = group.first else { continue }
+            do {
+                try await operation(group, first.accountID, first.folder)
+                outcome.succeeded += group
+            } catch {
+                outcome.failures.append(
+                    BatchOutcome.Failure(accountID: first.accountID, count: group.count, error: error)
+                )
+            }
+        }
+        return outcome
     }
 }
 

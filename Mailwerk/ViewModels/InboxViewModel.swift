@@ -8,8 +8,14 @@
 //  Spamfilter beim Abruf und Rückfragen zum Anlegen eines Spam-Ordners.
 //  Dazu die Aktionen an einzelnen Mails aus Wischaktionen und
 //  Kontextmenü (gelesen, kennzeichnen, verschieben, löschen, Spam) samt
-//  „Rückgängig“ für Kennzeichnung und Gelesen-Status sowie der einzige
-//  Meldungskanal der Liste (`alert`).
+//  „Rückgängig“ für Kennzeichnung und Gelesen-Status, die Mehrfachauswahl
+//  mit Sammelaktionen (kennzeichnen, gelesen, verschieben, löschen) sowie
+//  der einzige Meldungskanal der Liste (`alert`).
+//
+//  Mehrfachauswahl: Die Auswahl hängt an der Cache-ID, nicht an der
+//  Position. Mails, die beim Neuladen der Liste verschwinden, fallen aus
+//  der Auswahl; ein Wechsel der Ansicht und jede Sammelaktion beenden den
+//  Auswahlmodus.
 //
 //  Ablauf: Die Liste wird immer zuerst aus dem lokalen Cache gezeigt
 //  (`loadFromCache`), der Abruf vom Server läuft danach und aktualisiert
@@ -39,7 +45,7 @@
 //
 //  Abhängigkeiten: AccountStore, SpamSettings, SpamFilterService,
 //  MailFetchService, MailSession (Zugangsdaten), MessageActions, UndoOffer,
-//  MessageActionDialogs, SpamMenuRequest,
+//  MessageActionDialogs, SpamMenuRequest, MessageSelection,
 //  MessageStore, NetworkMonitor, SyncWindow, FetchCoordinator,
 //  FolderKey, MailFolder, SpamClassifier, FilterAddress, Log.
 //
@@ -72,6 +78,10 @@ final class InboxViewModel {
     /// Zählt Lesevorgänge der Filterlisten; ein überholtes Ergebnis wird
     /// verworfen, wenn inzwischen ein neueres Lesen begonnen hat.
     @ObservationIgnored private var filterListsGeneration = 0
+    /// Auswahlmodus der Liste aktiv (Kreise vor den Zeilen, Befehlsleiste).
+    var isSelecting = false
+    /// Ausgewählte Mails (Cache-IDs).
+    var selectedIDs: Set<String> = []
     /// Mails, für die gerade eine Aktion läuft (Zeile gesperrt).
     var processingMessageIDs: Set<String> = []
     /// Zeitgeber, der den „Rückgängig“-Hinweis nach 5 Sekunden ausblendet.
@@ -119,6 +129,7 @@ final class InboxViewModel {
             // ermittelt ihn bei ihrem eigenen Abruf.
             connectionFailed = false
             olderConnectionFailed = false
+            endSelection()
             loadFromCache()
         }
     }
@@ -170,7 +181,8 @@ final class InboxViewModel {
     ///
     /// Verarbeitung: Ermittelt den Stand der Ansicht und liest je nach
     /// Auswahl alle Posteingänge, die gekennzeichneten Mails oder einen
-    /// Ordner – als Listeneinträge ohne Mailinhalt – und liest die
+    /// Ordner – als Listeneinträge ohne Mailinhalt –, entfernt nicht mehr
+    /// vorhandene Mails aus der Mehrfachauswahl und liest die
     /// Filterlisten für die Absenderbilder neu. In Debug-Builds werden
     /// Laufzeit, Anzahl, Menge der Vorschautexte und die zwischenzeitlichen
     /// Abfragen der Ansicht ausgegeben.
@@ -193,6 +205,10 @@ final class InboxViewModel {
             messages = MessageStore.shared.folderMessages(
                 accountID: accountID, folder: path
             )
+        }
+        if !selectedIDs.isEmpty {
+            // Verschwundene Mails fallen aus der Auswahl.
+            selectedIDs.formIntersection(messages.map(\.id))
         }
         reloadFilterLists()
         #if DEBUG
@@ -838,31 +854,175 @@ final class InboxViewModel {
 
     /// Nimmt eine eben ausgeführte Änderung zurück.
     ///
-    /// Verarbeitung: Mail für Mail; scheitert eine, laufen die übrigen
-    /// weiter, und die Meldung nennt die Anzahl der gescheiterten.
+    /// Verarbeitung: Je Ordner ein Serverbefehl; scheitert ein Ordner,
+    /// laufen die übrigen weiter, und die Meldung nennt, was nicht
+    /// zurückgenommen wurde.
     ///
     /// - Parameter offer: Ausgeführte Änderung und betroffene Mails.
     @MainActor
     func undo(_ offer: UndoOffer) async {
         dismissUndo()
-        var failures = 0
-        var lastError: Error?
-        for target in offer.targets {
-            do {
-                try await MessageActions.apply(offer.change.reversed, to: target, accountStore: accountStore)
-            } catch {
-                failures += 1
-                lastError = error
-            }
+        let outcome = await runBatch(offer.targets) {
+            await MessageActions.apply(offer.change.reversed, to: offer.targets, accountStore: self.accountStore)
         }
+        report(outcome, total: offer.targets.count, title: "Rückgängig fehlgeschlagen")
+    }
+
+    // MARK: - Mehrfachauswahl
+
+    /// Ausgewählte Mails in der Reihenfolge der Liste.
+    var selectedItems: [MessageListItem] {
+        messages.filter { selectedIDs.contains($0.id) }
+    }
+
+    /// `true`, wenn alle Mails der Liste ausgewählt sind.
+    var isAllSelected: Bool {
+        !messages.isEmpty && selectedIDs.count == messages.count
+    }
+
+    /// Beginnt den Auswahlmodus mit einer ausgewählten Mail.
+    ///
+    /// Verarbeitung: Läuft der Modus schon, kommt die Mail zur Auswahl hinzu.
+    ///
+    /// - Parameter id: Cache-ID der Mail, auf der lange gedrückt wurde.
+    func beginSelection(with id: String) {
+        selectedIDs.insert(id)
+        isSelecting = true
+    }
+
+    /// Wählt eine Mail aus bzw. ab (Klick im Auswahlmodus auf dem Mac).
+    ///
+    /// - Parameter id: Cache-ID der Mail.
+    func toggleSelection(_ id: String) {
+        if selectedIDs.contains(id) {
+            selectedIDs.remove(id)
+        } else {
+            selectedIDs.insert(id)
+        }
+    }
+
+    /// Beendet den Auswahlmodus und leert die Auswahl.
+    func endSelection() {
+        isSelecting = false
+        selectedIDs = []
+    }
+
+    /// Wählt alle Mails der Liste aus bzw. hebt die Auswahl auf, wenn
+    /// schon alle ausgewählt sind.
+    func toggleSelectAll() {
+        selectedIDs = isAllSelected ? [] : Set(messages.map(\.id))
+    }
+
+    /// Kennzeichnet die Auswahl bzw. entfernt die Kennzeichnung
+    /// (Regel siehe `MessageSelection.flagChange`).
+    @MainActor
+    func toggleFlagForSelection() async {
+        await applyToSelection(
+            MessageSelection.flagChange(for: selectedItems),
+            failureTitle: "Kennzeichnen fehlgeschlagen"
+        )
+    }
+
+    /// Markiert die Auswahl als gelesen bzw. ungelesen
+    /// (Regel siehe `MessageSelection.readChange`).
+    @MainActor
+    func toggleReadForSelection() async {
+        await applyToSelection(
+            MessageSelection.readChange(for: selectedItems),
+            failureTitle: "Status ändern fehlgeschlagen"
+        )
+    }
+
+    /// Führt eine umkehrbare Änderung an der Auswahl aus.
+    ///
+    /// Verarbeitung: Nur Mails mit abweichendem Zustand werden geändert.
+    /// Der Auswahlmodus endet sofort; danach wird für die gelungenen Mails
+    /// „Rückgängig“ angeboten.
+    ///
+    /// - Parameters:
+    ///   - change: Änderung mit neuem Wert.
+    ///   - failureTitle: Überschrift der Fehlermeldung.
+    @MainActor
+    private func applyToSelection(_ change: MessageActions.StateChange, failureTitle: String) async {
+        let targets = MessageSelection.targets(for: change, in: selectedItems)
+        endSelection()
+        guard !targets.isEmpty else { return }
+        let outcome = await runBatch(targets) {
+            await MessageActions.apply(change, to: targets, accountStore: self.accountStore)
+        }
+        if !outcome.succeeded.isEmpty {
+            offerUndo(UndoOffer(change: change, targets: outcome.succeeded))
+        }
+        report(outcome, total: targets.count, title: failureTitle)
+    }
+
+    /// Löscht die Auswahl. Die Rückfrage stellt die Ansicht vorher.
+    @MainActor
+    func deleteSelection() async {
+        let targets = selectedItems.map { MessageActions.Target($0) }
+        endSelection()
+        guard !targets.isEmpty else { return }
+        let outcome = await runBatch(targets) {
+            await MessageActions.delete(targets, accountStore: self.accountStore)
+        }
+        report(outcome, total: targets.count, title: "Löschen fehlgeschlagen")
+    }
+
+    /// Verschiebt die Auswahl in einen Ordner ihres Postfachs.
+    ///
+    /// - Parameter path: Server-Pfad des Zielordners.
+    @MainActor
+    func moveSelection(to path: String) async {
+        let items = selectedItems
+        endSelection()
+        guard MessageSelection.canMove(items) else { return }
+        let targets = items.map { MessageActions.Target($0) }
+        let outcome = await runBatch(targets) {
+            await MessageActions.move(targets, to: path, accountStore: self.accountStore)
+        }
+        report(outcome, total: targets.count, title: "Verschieben fehlgeschlagen")
+    }
+
+    /// Führt eine Sammelaktion aus: Zeilen sperren, ausführen, Liste neu laden.
+    ///
+    /// - Parameters:
+    ///   - targets: Betroffene Mails.
+    ///   - operation: Eigentliche Aktion.
+    /// - Returns: Ergebnis der Aktion.
+    @MainActor
+    private func runBatch(
+        _ targets: [MessageActions.Target],
+        operation: () async -> MessageActions.BatchOutcome
+    ) async -> MessageActions.BatchOutcome {
+        let ids = Set(targets.map(\.id))
+        processingMessageIDs.formUnion(ids)
+        defer { processingMessageIDs.subtract(ids) }
+        let outcome = await operation()
         loadFromCache()
-        if let lastError {
-            alert = offer.targets.count <= 1
-                ? .failure("Rückgängig fehlgeschlagen", lastError)
-                : AlertItem(
-                    title: "Rückgängig fehlgeschlagen",
-                    message: "\(failures) von \(offer.targets.count) Mails: \(lastError.localizedDescription)"
-                )
+        return outcome
+    }
+
+    /// Meldet gescheiterte Teile einer Sammelaktion ehrlich: wie viele
+    /// Mails nicht bearbeitet wurden und warum, je Postfach.
+    ///
+    /// - Parameters:
+    ///   - outcome: Ergebnis der Aktion.
+    ///   - total: Anzahl der betroffenen Mails.
+    ///   - title: Überschrift der Meldung.
+    @MainActor
+    private func report(_ outcome: MessageActions.BatchOutcome, total: Int, title: String) {
+        guard !outcome.failures.isEmpty else { return }
+        if total <= 1, let failure = outcome.failures.first {
+            alert = .failure(title, failure.error)
+            return
         }
+        let lines = outcome.failures.map { failure -> String in
+            let name = accountStore.accounts.first { $0.id == failure.accountID }?.displayName ?? "Postfach"
+            return "\(name): \(failure.error.localizedDescription)"
+        }
+        alert = AlertItem(
+            title: title,
+            message: "\(outcome.failedCount) von \(total) Mails nicht bearbeitet.\n" + lines.joined(separator: "\n")
+        )
     }
 }

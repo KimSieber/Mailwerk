@@ -7,7 +7,9 @@
 //  Stand und Verbindungshinweis, Wischaktionen (gelesen, kennzeichnen),
 //  das Kontextmenü einer Mail per langem Drücken (dasselbe Menü wie in
 //  der Mailansicht, siehe MessageMenu), „Rückgängig“ für Kennzeichnung
-//  und Gelesen-Status, die Zeile „Ältere Nachrichten laden“, die
+//  und Gelesen-Status, die Mehrfachauswahl (über „Auswählen“ im
+//  Kontextmenü; Auswahlkreise, „Alle auswählen“, „Fertig“ und schwebende
+//  Befehlsleiste unten), die Zeile „Ältere Nachrichten laden“, die
 //  Ordnerleiste sowie Einstellungen und Verfassen. Aktualisiert wird auf
 //  iPhone/iPad durch Herunterziehen, auf dem Mac per Knopf bzw. ⌘R.
 //  Kommen Postfächer hinzu (beim ersten Start aus iCloud oder neu
@@ -33,6 +35,7 @@
 //  FolderCatalog, NetworkMonitor, MessageRow, MessageRowParty,
 //  ContactImageDirectory, SenderIconCache, FilterListCloudEvents,
 //  MessageDetailView, MessageMenu, MessageActionDialogs, FolderMoveSheet,
+//  MessageSelection, SelectionActionBar,
 //  ComposeView, Dialogs, Log.
 //
 
@@ -73,6 +76,8 @@ struct InboxView: View {
     /// Rückfrage aus dem Kontextmenü (Löschen, Spam); einziger
     /// Rückfragekanal der Liste neben der Warteschlange der Spam-Ordner.
     @State private var listConfirmation: ConfirmationRequest?
+    /// Ordnerwahl für die Mehrfachauswahl geöffnet.
+    @State private var showingSelectionMove = false
     /// Netzzustand (online/offline).
     private let network = NetworkMonitor.shared
 
@@ -201,57 +206,16 @@ struct InboxView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
-            .toolbar {
-                ToolbarItem(placement: .navigation) {
-                    Button {
-                        showingFolders = true
-                    } label: {
-                        Label("Ordner", systemImage: "sidebar.left")
-                    }
-                }
-                ToolbarItem(placement: .principal) {
-                    InboxTitle(
-                        selection: viewModel.selection,
-                        accountColor: selectedAccountColor,
-                        syncState: viewModel.syncState,
-                        connectionStatus: connectionStatus
-                    )
-                }
-                ToolbarItem(placement: Self.progressPlacement) {
-                    if viewModel.isLoading && !viewModel.messages.isEmpty {
-                        ProgressView()
-                    }
-                }
-                #if os(macOS)
-                ToolbarItem {
-                    refreshButton
-                }
-                #endif
-                ToolbarItem {
-                    Button {
-                        showingCompose = true
-                    } label: {
-                        Label("Neue Nachricht", systemImage: "square.and.pencil")
-                    }
-                    .disabled(accountStore.accounts.isEmpty)
-                }
-                ToolbarItem {
-                    Menu {
-                        Button {
-                            showingAccounts = true
-                        } label: {
-                            Label("Postfächer", systemImage: "envelope")
-                        }
-                        Button {
-                            showingSpamSettings = true
-                        } label: {
-                            Label("Spamfilter", systemImage: "shield")
-                        }
-                    } label: {
-                        Label("Einstellungen", systemImage: "gearshape")
-                    }
+            .toolbar { listToolbar }
+            // Befehlsleiste im Auswahlmodus – schwebt über der Liste am
+            // unteren Rand, wo später die Suche sitzt.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if viewModel.isSelecting {
+                    selectionBar
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
+            .animation(.snappy(duration: 0.25), value: viewModel.isSelecting)
             .task {
                 guard !hasLoadedOnce else { return }
                 hasLoadedOnce = true
@@ -309,6 +273,9 @@ struct InboxView: View {
                     onSent: { viewModel.loadFromCache() }
                 )
             }
+            .sheet(isPresented: $showingSelectionMove) {
+                selectionMoveSheet
+            }
             .sheet(item: $moveItem) { item in
                 if let account = accountStore.accounts.first(where: { $0.id == item.accountID }) {
                     FolderMoveSheet(
@@ -360,6 +327,131 @@ struct InboxView: View {
         }
     }
 
+    // MARK: - Symbolleiste
+
+    /// Symbolleiste: im Auswahlmodus „Alle auswählen“, Anzahl und „Fertig“,
+    /// sonst Ordnerleiste, Titel, Ladeanzeige, Verfassen und Einstellungen.
+    @ToolbarContentBuilder
+    private var listToolbar: some ToolbarContent {
+        if viewModel.isSelecting {
+            ToolbarItem(placement: .navigation) {
+                Button(viewModel.isAllSelected ? "Auswahl aufheben" : "Alle auswählen") {
+                    viewModel.toggleSelectAll()
+                }
+            }
+            ToolbarItem(placement: .principal) {
+                Text("\(viewModel.selectedIDs.count) ausgewählt")
+                    .font(.subheadline.weight(.semibold))
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Fertig") {
+                    withAnimation(.snappy(duration: 0.25)) { viewModel.endSelection() }
+                }
+            }
+        } else {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    showingFolders = true
+                } label: {
+                    Label("Ordner", systemImage: "sidebar.left")
+                }
+            }
+            ToolbarItem(placement: .principal) {
+                InboxTitle(
+                    selection: viewModel.selection,
+                    accountColor: selectedAccountColor,
+                    syncState: viewModel.syncState,
+                    connectionStatus: connectionStatus
+                )
+            }
+            ToolbarItem(placement: Self.progressPlacement) {
+                if viewModel.isLoading && !viewModel.messages.isEmpty {
+                    ProgressView()
+                }
+            }
+            #if os(macOS)
+            ToolbarItem {
+                refreshButton
+            }
+            #endif
+            ToolbarItem {
+                Button {
+                    showingCompose = true
+                } label: {
+                    Label("Neue Nachricht", systemImage: "square.and.pencil")
+                }
+                .disabled(accountStore.accounts.isEmpty)
+            }
+            ToolbarItem {
+                Menu {
+                    Button {
+                        showingAccounts = true
+                    } label: {
+                        Label("Postfächer", systemImage: "envelope")
+                    }
+                    Button {
+                        showingSpamSettings = true
+                    } label: {
+                        Label("Spamfilter", systemImage: "shield")
+                    }
+                } label: {
+                    Label("Einstellungen", systemImage: "gearshape")
+                }
+            }
+        }
+    }
+
+    // MARK: - Mehrfachauswahl
+
+    /// Befehlsleiste für die Auswahl; Symbole passend zur Auswahl.
+    private var selectionBar: some View {
+        let items = viewModel.selectedItems
+        return SelectionActionBar(
+            flagEntry: MessageMenuLabels.flag(
+                isFlagged: MessageSelection.flagChange(for: items) == .flagged(false)
+            ),
+            readEntry: MessageMenuLabels.read(
+                isUnread: MessageSelection.readChange(for: items) == .read(true)
+            ),
+            hasSelection: !items.isEmpty,
+            canMove: MessageSelection.canMove(items),
+            onFlag: { runSelectionAction { await viewModel.toggleFlagForSelection() } },
+            onRead: { runSelectionAction { await viewModel.toggleReadForSelection() } },
+            onMove: { showingSelectionMove = true },
+            onDelete: {
+                listConfirmation = MessageActionDialogs.deleteConfirmation(count: items.count) {
+                    runSelectionAction { await viewModel.deleteSelection() }
+                }
+            }
+        )
+    }
+
+    /// Startet eine Sammelaktion. Das Ende des Auswahlmodus animiert die
+    /// Ansicht selbst (`animation(value: isSelecting)`).
+    ///
+    /// - Parameter action: Sammelaktion des ViewModels.
+    private func runSelectionAction(_ action: @escaping @MainActor () async -> Void) {
+        Task { await action() }
+    }
+
+    /// Ordnerwahl für die Auswahl: Postfach der ausgewählten Mails, der
+    /// gemeinsame Ordner ist ausgegraut.
+    @ViewBuilder
+    private var selectionMoveSheet: some View {
+        let items = viewModel.selectedItems
+        if MessageSelection.canMove(items),
+           let accountID = items.first?.accountID,
+           let account = accountStore.accounts.first(where: { $0.id == accountID }) {
+            FolderMoveSheet(
+                account: account,
+                currentFolder: MessageSelection.commonFolder(items) ?? "",
+                accountStore: accountStore
+            ) { path in
+                runSelectionAction { await viewModel.moveSelection(to: path) }
+            }
+        }
+    }
+
     // MARK: - Aktualisieren (Mac)
 
     #if os(macOS)
@@ -382,14 +474,15 @@ struct InboxView: View {
 
     // MARK: - Nachrichtenliste
 
-    /// Liste der Nachrichten samt Zeile „Ältere Nachrichten laden“.
+    /// Liste der Nachrichten samt Zeile „Ältere Nachrichten laden“. Im
+    /// Auswahlmodus mit Auswahlkreisen; die Zeile „Ältere“ entfällt dann.
     ///
     /// Eigene Eigenschaft statt Teil von `body`, damit der Compiler den
     /// Ausdruck in vertretbarer Zeit prüfen kann.
     private var messageList: some View {
         let colors = accountColors
         let recipients = showsRecipients
-        return List {
+        return List(selection: listSelection) {
             ForEach(viewModel.messages) { message in
                 messageRow(
                     for: message,
@@ -400,12 +493,28 @@ struct InboxView: View {
 
             // Letzte Zeile der Liste – gehört IN die List, damit
             // der Zweig ein einzelnes View bleibt.
-            if viewModel.showsOlderRow {
+            if viewModel.showsOlderRow && !viewModel.isSelecting {
                 Section {
                     olderRow
                 }
             }
         }
+        #if os(iOS)
+        // Auswahlmodus: Kreise vor den Zeilen, Tipp wählt aus statt zu öffnen.
+        .environment(\.editMode, .constant(viewModel.isSelecting ? .active : .inactive))
+        #endif
+    }
+
+    /// Auswahlbindung der Liste: auf iPhone/iPad nur im Auswahlmodus. Auf
+    /// dem Mac nie – dort wählt die Zeile selbst per Klick aus (siehe
+    /// `selectableRow`), weil die Listenauswahl des Mac einen einfachen
+    /// Klick als Ersetzen der Auswahl versteht.
+    private var listSelection: Binding<Set<String>>? {
+        #if os(macOS)
+        return nil
+        #else
+        return viewModel.isSelecting ? $viewModel.selectedIDs : nil
+        #endif
     }
 
     /// Farbe je Postfach – einmal je Listenaufbau statt einer Suche je Zeile.
@@ -447,30 +556,25 @@ struct InboxView: View {
         colorHex: String?,
         showsRecipients: Bool
     ) -> some View {
-        NavigationLink {
-            MessageDetailLoader(
-                messageID: message.id,
-                accountStore: accountStore,
-                spamFilter: viewModel.spamFilter,
-                scoreLimit: spamSettings.scoreLimit,
-                onChange: { viewModel.loadFromCache() }
-            )
-        } label: {
-            let party = MessageRowParty.make(for: message, showsRecipients: showsRecipients)
-            let showsImage = viewModel.showsSenderImage(for: message)
-            // Nur erlaubte Zeilen fragen nach Bildern – Spam löst so keinen
-            // Logo-Abruf aus. Ein Kontaktbild hat Vorrang vor dem Logo.
-            let contactImage = showsImage ? ContactImageDirectory.shared.image(for: party.address) : nil
-            MessageRow(
-                message: message,
-                party: party,
-                showsImage: showsImage,
-                contactImage: contactImage,
-                logoImage: showsImage && contactImage == nil
-                    ? SenderIconCache.shared.image(forAddress: party.address)
-                    : nil,
-                colorHex: colorHex
-            )
+        Group {
+            if viewModel.isSelecting {
+                // Im Auswahlmodus kein Link: Ein Tipp wählt aus statt zu
+                // öffnen. Auf dem Mac würde der Link den Klick sonst selbst
+                // verarbeiten und die Mail öffnen.
+                selectableRow(for: message, colorHex: colorHex, showsRecipients: showsRecipients)
+            } else {
+                NavigationLink {
+                    MessageDetailLoader(
+                        messageID: message.id,
+                        accountStore: accountStore,
+                        spamFilter: viewModel.spamFilter,
+                        scoreLimit: spamSettings.scoreLimit,
+                        onChange: { viewModel.loadFromCache() }
+                    )
+                } label: {
+                    rowContent(for: message, colorHex: colorHex, showsRecipients: showsRecipients)
+                }
+            }
         }
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             Button {
@@ -497,12 +601,77 @@ struct InboxView: View {
         .contextMenu {
             MessageMenuItems(
                 context: MessageMenuContext(message),
+                showsSelect: true,
                 onAction: { handleMenuAction($0, for: message) }
             ) {
                 EmptyView()
             }
         }
         .disabled(viewModel.processingMessageIDs.contains(message.id))
+    }
+
+    /// Inhalt einer Zeile: Absenderbild, Namen, Datum, Betreff.
+    ///
+    /// - Parameters:
+    ///   - message: Darzustellender Listeneintrag.
+    ///   - colorHex: Farbe des Postfachs; `nil` = keine Farbe gewählt.
+    ///   - showsRecipients: `true` in Gesendet und Entwürfen.
+    /// - Returns: Die Zeile ohne Link.
+    private func rowContent(
+        for message: MessageListItem,
+        colorHex: String?,
+        showsRecipients: Bool
+    ) -> some View {
+        let party = MessageRowParty.make(for: message, showsRecipients: showsRecipients)
+        let showsImage = viewModel.showsSenderImage(for: message)
+        // Nur erlaubte Zeilen fragen nach Bildern – Spam löst so keinen
+        // Logo-Abruf aus. Ein Kontaktbild hat Vorrang vor dem Logo.
+        let contactImage = showsImage ? ContactImageDirectory.shared.image(for: party.address) : nil
+        return MessageRow(
+            message: message,
+            party: party,
+            showsImage: showsImage,
+            contactImage: contactImage,
+            logoImage: showsImage && contactImage == nil
+                ? SenderIconCache.shared.image(forAddress: party.address)
+                : nil,
+            colorHex: colorHex
+        )
+    }
+
+    /// Zeile im Auswahlmodus.
+    ///
+    /// Verarbeitung: Auf iPhone/iPad zeichnet die Liste im Bearbeitungsmodus
+    /// die Auswahlkreise selbst. Der Mac kennt diesen Modus nicht; dort
+    /// zeigt die Zeile einen eigenen Kreis, und ein Klick wählt aus bzw. ab
+    /// – so verhält sich die Auswahl wie auf dem iPhone.
+    ///
+    /// - Parameters:
+    ///   - message: Darzustellender Listeneintrag.
+    ///   - colorHex: Farbe des Postfachs; `nil` = keine Farbe gewählt.
+    ///   - showsRecipients: `true` in Gesendet und Entwürfen.
+    /// - Returns: Die auswählbare Zeile.
+    @ViewBuilder
+    private func selectableRow(
+        for message: MessageListItem,
+        colorHex: String?,
+        showsRecipients: Bool
+    ) -> some View {
+        #if os(macOS)
+        let isSelected = viewModel.selectedIDs.contains(message.id)
+        HStack(spacing: 10) {
+            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                .font(.title3)
+                .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                .accessibilityHidden(true)
+            rowContent(for: message, colorHex: colorHex, showsRecipients: showsRecipients)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { viewModel.toggleSelection(message.id) }
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        #else
+        rowContent(for: message, colorHex: colorHex, showsRecipients: showsRecipients)
+        #endif
     }
 
     // MARK: - Kontextmenü
@@ -518,6 +687,10 @@ struct InboxView: View {
     ///   - item: Betroffener Listeneintrag.
     private func handleMenuAction(_ action: MessageMenuAction, for item: MessageListItem) {
         switch action {
+        case .select:
+            withAnimation(.snappy(duration: 0.25)) {
+                viewModel.beginSelection(with: item.id)
+            }
         case .reply(let kind):
             if let original = MessageStore.shared.message(id: item.id) {
                 listCompose = ListComposeRequest(kind: kind, original: original)
