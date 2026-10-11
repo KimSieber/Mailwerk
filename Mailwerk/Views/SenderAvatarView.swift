@@ -2,15 +2,17 @@
 //  SenderAvatarView.swift
 //  Mailwerk
 //
-//  Zweck: Runder Kreis links in der Listenzeile – Initialen auf einer
-//  festen Farbe je Absender, oder ein leerer Kreis, wenn kein Bild gezeigt
-//  werden darf (Spam, Spamverdacht, unbekannte Einstufung).
+//  Zweck: Runder Kreis links in der Listenzeile – Kontaktbild, sonst
+//  Initialen auf einer festen Farbe je Absender, oder ein leerer Kreis,
+//  wenn kein Bild gezeigt werden darf (Spam, Spamverdacht, unbekannte
+//  Einstufung).
 //
 //  Der leere Kreis hält den Platz, damit alle Zeilen gleich ausgerichtet
 //  bleiben.
 //
 //  Abgrenzung: Welche Person und welche Initialen → MessageRowParty; ob
-//  ein Bild erlaubt ist → SpamClassifier.allowsSenderImage.
+//  ein Bild erlaubt ist → SpamClassifier.allowsSenderImage; Kontaktbilder
+//  → ContactImageDirectory.
 //
 //  Abhängigkeiten: SwiftUI, AccountColor (Farbpalette).
 //
@@ -18,9 +20,11 @@
 import SwiftUI
 
 /// Inhalt des Kreises.
-enum SenderAvatar: Equatable {
+enum SenderAvatar {
     /// Leerer Kreis (kein Bild erlaubt).
     case empty
+    /// Bild (Kontaktbild), rund zugeschnitten.
+    case image(Image)
     /// Initialen auf der Farbe mit dem Index in `AccountColor.allCases`.
     case initials(String, colorIndex: Int)
 }
@@ -40,6 +44,11 @@ struct SenderAvatarView: View {
             case .empty:
                 Circle()
                     .strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1)
+            case .image(let image):
+                image
+                    .resizable()
+                    .scaledToFill()
+                    .clipShape(Circle())
             case .initials(let text, colorIndex: let colorIndex):
                 Circle()
                     .fill(color(at: colorIndex))

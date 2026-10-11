@@ -8,8 +8,8 @@
 //  2. Name fett (bei ungelesenen Mails), dahinter die Adresse klein und
 //     grau; gekürzt wird zuerst die Adresse;
 //  3. Betreff.
-//  Links davon der Farbstreifen des Postfachs und der Kreis mit Bild bzw.
-//  Initialen.
+//  Links davon der Farbstreifen des Postfachs und der Kreis mit
+//  Kontaktbild bzw. Initialen.
 //
 //  Farbstreifen: gelesen 4 pt, ungelesen 8 pt in der Postfachfarbe.
 //  Postfächer ohne Farbe zeigen gelesen keinen Streifen, ungelesen einen
@@ -33,6 +33,8 @@ struct MessageRow: View {
     let party: MessageRowParty
     /// `true`, wenn ein Bild bzw. Initialen gezeigt werden dürfen.
     let showsImage: Bool
+    /// Kontaktbild der gezeigten Person; `nil` = keines vorhanden.
+    let contactImage: Image?
     /// Farbe des Postfachs; `nil` = keine Farbe gewählt.
     let colorHex: String?
 
@@ -74,9 +76,12 @@ struct MessageRow: View {
         return message.isUnread ? Color.gray.opacity(0.35) : .clear
     }
 
-    /// Inhalt des Kreises.
+    /// Inhalt des Kreises: leer, wenn kein Bild erlaubt ist, sonst das
+    /// Kontaktbild und ersatzweise die Initialen.
     private var avatar: SenderAvatar {
-        showsImage ? .initials(party.initials, colorIndex: party.colorIndex) : .empty
+        guard showsImage else { return .empty }
+        if let contactImage { return .image(contactImage) }
+        return .initials(party.initials, colorIndex: party.colorIndex)
     }
 
     /// Zeile 1: Kennzeichen links, Datum rechts.

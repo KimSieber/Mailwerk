@@ -5,10 +5,11 @@
 //  Zweck: Adressvorschläge aus den Systemkontakten für die Adressfelder
 //  beim Verfassen.
 //
-//  Datenschutz: Die Berechtigung wird erst beim ersten Antippen eines
-//  Adressfelds angefragt. Kontakte werden ausschließlich live gelesen,
-//  niemals gespeichert oder übertragen. Ohne Berechtigung bleibt das
-//  Adressfeld voll benutzbar, nur ohne Vorschläge.
+//  Datenschutz: Die Berechtigung wird beim ersten Anzeigen der Mailliste
+//  angefragt (für Kontaktbilder, siehe ContactImageDirectory), spätestens
+//  beim ersten Antippen eines Adressfelds. Kontakte werden ausschließlich
+//  live gelesen, niemals gespeichert oder übertragen. Ohne Berechtigung
+//  bleibt das Adressfeld voll benutzbar, nur ohne Vorschläge.
 //
 //  Die Abfrage läuft in einer abgetrennten Aufgabe, damit die Eingabe
 //  auch bei sehr vielen Kontakten flüssig bleibt.

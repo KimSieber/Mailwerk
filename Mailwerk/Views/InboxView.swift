@@ -29,7 +29,7 @@
 //
 //  Abhängigkeiten: InboxViewModel, MessageStore, MailActionService,
 //  FolderCatalog, NetworkMonitor, MessageRow, MessageRowParty,
-//  FilterListCloudEvents, MessageDetailView, ComposeView, Dialogs, Log.
+//  ContactImageDirectory, FilterListCloudEvents, MessageDetailView, ComposeView, Dialogs, Log.
 //
 
 import SwiftUI
@@ -244,6 +244,9 @@ struct InboxView: View {
             .task {
                 guard !hasLoadedOnce else { return }
                 hasLoadedOnce = true
+                // Kontaktbilder parallel zum Abruf: Die Systemabfrage zur
+                // Berechtigung soll den Abruf nicht aufhalten.
+                Task { await ContactImageDirectory.shared.start() }
                 await viewModel.refresh()
             }
             .onChange(of: accountStore.accounts.map(\.id)) { oldIDs, newIDs in
@@ -422,10 +425,12 @@ struct InboxView: View {
                 onChange: { viewModel.loadFromCache() }
             )
         } label: {
+            let party = MessageRowParty.make(for: message, showsRecipients: showsRecipients)
             MessageRow(
                 message: message,
-                party: .make(for: message, showsRecipients: showsRecipients),
+                party: party,
                 showsImage: viewModel.showsSenderImage(for: message),
+                contactImage: ContactImageDirectory.shared.image(for: party.address),
                 colorHex: colorHex
             )
         }
