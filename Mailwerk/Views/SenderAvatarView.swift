@@ -1,0 +1,65 @@
+//
+//  SenderAvatarView.swift
+//  Mailwerk
+//
+//  Zweck: Runder Kreis links in der Listenzeile – Initialen auf einer
+//  festen Farbe je Absender, oder ein leerer Kreis, wenn kein Bild gezeigt
+//  werden darf (Spam, Spamverdacht, unbekannte Einstufung).
+//
+//  Der leere Kreis hält den Platz, damit alle Zeilen gleich ausgerichtet
+//  bleiben.
+//
+//  Abgrenzung: Welche Person und welche Initialen → MessageRowParty; ob
+//  ein Bild erlaubt ist → SpamClassifier.allowsSenderImage.
+//
+//  Abhängigkeiten: SwiftUI, AccountColor (Farbpalette).
+//
+
+import SwiftUI
+
+/// Inhalt des Kreises.
+enum SenderAvatar: Equatable {
+    /// Leerer Kreis (kein Bild erlaubt).
+    case empty
+    /// Initialen auf der Farbe mit dem Index in `AccountColor.allCases`.
+    case initials(String, colorIndex: Int)
+}
+
+/// Runder Kreis mit Initialen oder leer.
+struct SenderAvatarView: View {
+    /// Darzustellender Inhalt.
+    let avatar: SenderAvatar
+
+    /// Durchmesser in Punkten.
+    static let size: CGFloat = 40
+
+    /// Aufbau des Kreises.
+    var body: some View {
+        ZStack {
+            switch avatar {
+            case .empty:
+                Circle()
+                    .strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1)
+            case .initials(let text, colorIndex: let colorIndex):
+                Circle()
+                    .fill(color(at: colorIndex))
+                Text(text)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+            }
+        }
+        .frame(width: Self.size, height: Self.size)
+        .accessibilityHidden(true)
+    }
+
+    /// Farbe aus der Palette; ein ungültiger Index fällt auf die erste Farbe.
+    ///
+    /// - Parameter index: Index in `AccountColor.allCases`.
+    /// - Returns: Farbe des Kreises.
+    private func color(at index: Int) -> Color {
+        let palette = AccountColor.allCases
+        return palette.indices.contains(index) ? palette[index].color : palette[0].color
+    }
+}

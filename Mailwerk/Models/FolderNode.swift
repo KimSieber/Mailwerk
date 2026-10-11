@@ -6,6 +6,9 @@
 //  Anzeige, samt Rolle (Posteingang, Gesendet, …), deutschem Anzeigenamen
 //  und Symbol. Dazu die eingerückte Darstellung für die Ordnerleiste.
 //
+//  Dazu die Suche eines Ordners über seinen Pfad (z. B. für die Rolle der
+//  gerade gezeigten Ansicht).
+//
 //  Abgrenzung: Aufbau aus der flachen Ordnerliste → FolderTreeBuilder;
 //  Darstellung → FolderSidebarView, FolderMoveSheet.
 //
@@ -113,6 +116,21 @@ nonisolated extension Array where Element == FolderNode {
             [IndentedFolder(node: node, depth: depth)]
                 + node.children.indented(startingAt: depth + 1)
         }
+    }
+
+    /// Sucht einen Ordner samt Unterordnern über seinen IMAP-Pfad.
+    ///
+    /// Verarbeitung: Tiefensuche; der Pfad muss exakt übereinstimmen, weil
+    /// Ordnerpfade auf dem Server die Schreibweise unterscheiden.
+    ///
+    /// - Parameter path: Vollständiger IMAP-Pfad (`FolderNode.id`).
+    /// - Returns: Gefundener Ordner oder `nil`.
+    func node(withPath path: String) -> FolderNode? {
+        for node in self {
+            if node.id == path { return node }
+            if let found = node.children.node(withPath: path) { return found }
+        }
+        return nil
     }
 }
 

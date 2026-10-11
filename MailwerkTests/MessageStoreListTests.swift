@@ -3,7 +3,7 @@
 //  MailwerkTests
 //
 //  Zweck: Tests für die Listenabfragen des MessageStore – Listeneinträge
-//  ohne Mailinhalt, Vorschau aus dem Textteil, Sortierung, Migration auf
+//  ohne Mailinhalt (samt Empfängern und Spam-Angabe), Vorschau aus dem Textteil, Sortierung, Migration auf
 //  Schema-Stufe 3 (Vorschau nachgetragen, Index angelegt) und weiter bis
 //  zur aktuellen Stufe.
 //
@@ -62,6 +62,38 @@ struct MessageStoreListTests {
         #expect(item.isUnread && !item.isFlagged && !item.isAnswered && item.isForwarded)
         #expect(item.hasAttachments)
         #expect(item.preview == "Text")
+    }
+
+    /// Der Listeneintrag übernimmt Empfänger und Spam-Angabe.
+    @Test func listItemCarriesRecipientsAndSpamVerdict() throws {
+        let store = MessageStore(path: temporaryPath())
+        let base = message(uid: 3)
+        var headers = CachedMessageHeaders()
+        headers.toList = ["Anna Muster <anna@example.org>", "ben@example.org"]
+        headers.spamVerdict = SpamHeaderVerdict(isSpam: true, score: 7.5)
+        store.saveMessage(CachedMessage(
+            id: base.id, accountID: base.accountID, accountDisplayName: base.accountDisplayName,
+            folder: base.folder, uid: base.uid, subject: base.subject, from: base.from, to: base.to,
+            date: base.date, isUnread: base.isUnread, isFlagged: base.isFlagged,
+            isAnswered: base.isAnswered, isForwarded: base.isForwarded,
+            totalSizeBytes: base.totalSizeBytes, hasAttachments: base.hasAttachments,
+            textBody: base.textBody, htmlBody: base.htmlBody, fetchedAt: base.fetchedAt,
+            headers: headers
+        ))
+
+        let item = try #require(store.folderMessages(accountID: Self.account, folder: "INBOX").first)
+        #expect(item.recipients == ["Anna Muster <anna@example.org>", "ben@example.org"])
+        #expect(item.spamVerdict == SpamHeaderVerdict(isSpam: true, score: 7.5))
+    }
+
+    /// Ohne gespeicherte Spam-Angabe bleibt sie im Listeneintrag unbekannt.
+    @Test func listItemWithoutVerdictIsUnknown() throws {
+        let store = MessageStore(path: temporaryPath())
+        store.saveMessage(message(uid: 4))
+
+        let item = try #require(store.folderMessages(accountID: Self.account, folder: "INBOX").first)
+        #expect(item.spamVerdict == nil)
+        #expect(item.recipients.isEmpty)
     }
 
     /// Die Vorschau besteht aus den ersten 200 Zeichen des Textteils (Zeichen, nicht Bytes).

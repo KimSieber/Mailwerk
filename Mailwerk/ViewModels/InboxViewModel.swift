@@ -22,6 +22,11 @@
 //  Die Liste hält nur Listeneinträge (`MessageListItem`) ohne Mailinhalt;
 //  die vollständige Nachricht wird erst beim Öffnen geladen.
 //
+//  Absenderbilder: Das ViewModel hält eine Kopie der Filterlisten und
+//  beantwortet je Zeile, ob ein Bild gezeigt werden darf
+//  (`SpamClassifier.allowsSenderImage`). Die Kopie wird bei jedem Laden
+//  der Liste und nach Änderungen an den Listen neu gelesen.
+//
 //  Messung: In Debug-Builds gibt `loadFromCache` Laufzeit, Anzahl der
 //  Mails und Menge der geladenen Vorschautexte aus (`⏱ …`), außerdem wie
 //  viele Datenbankabfragen die Ansicht seit der letzten Liste ausgelöst
@@ -33,7 +38,7 @@
 //  Abhängigkeiten: AccountStore, SpamSettings, SpamFilterService,
 //  MailFetchService, MailSession (Zugangsdaten), MessageActions,
 //  MessageStore, NetworkMonitor, SyncWindow, FetchCoordinator,
-//  FolderKey, MailFolder, Log.
+//  FolderKey, MailFolder, SpamClassifier, FilterAddress, Log.
 //
 
 import Foundation
@@ -57,6 +62,13 @@ final class InboxViewModel {
     /// Meldung für die Anzeige (Abruf- und Aktionsfehler); `nil` = keine.
     /// Einziger Meldungskanal der Liste.
     var alert: AlertItem?
+    /// Filterlisten für die Entscheidung über Absenderbilder; `nil`,
+    /// solange sie nicht gelesen sind oder sich nicht lesen ließen – dann
+    /// zeigt die Liste vorsichtshalber keine Bilder.
+    private(set) var imageFilterLists: FilterLists?
+    /// Zählt Lesevorgänge der Filterlisten; ein überholtes Ergebnis wird
+    /// verworfen, wenn inzwischen ein neueres Lesen begonnen hat.
+    @ObservationIgnored private var filterListsGeneration = 0
     /// Mails, für die gerade eine Wischaktion läuft (Zeile gesperrt).
     var processingMessageIDs: Set<String> = []
     /// Zeitgeber, der den „Rückgängig“-Hinweis nach 5 Sekunden ausblendet.
@@ -163,7 +175,8 @@ final class InboxViewModel {
     ///
     /// Verarbeitung: Ermittelt den Stand der Ansicht und liest je nach
     /// Auswahl alle Posteingänge, die gekennzeichneten Mails oder einen
-    /// Ordner – als Listeneinträge ohne Mailinhalt. In Debug-Builds werden
+    /// Ordner – als Listeneinträge ohne Mailinhalt – und liest die
+    /// Filterlisten für die Absenderbilder neu. In Debug-Builds werden
     /// Laufzeit, Anzahl, Menge der Vorschautexte und die zwischenzeitlichen
     /// Abfragen der Ansicht ausgegeben.
     func loadFromCache() {
@@ -186,9 +199,47 @@ final class InboxViewModel {
                 accountID: accountID, folder: path
             )
         }
+        reloadFilterLists()
         #if DEBUG
         reportCacheLoad(startedAt: started)
         #endif
+    }
+
+    // MARK: - Absenderbilder
+
+    /// Liest die Filterlisten neu, auf denen die Entscheidung über
+    /// Absenderbilder beruht.
+    ///
+    /// Verarbeitung: Läuft im Hintergrund; ein Ergebnis wird nur
+    /// übernommen, wenn kein neueres Lesen begonnen hat und sich die Listen
+    /// geändert haben – so baut die Liste nicht unnötig neu auf.
+    func reloadFilterLists() {
+        filterListsGeneration += 1
+        let generation = filterListsGeneration
+        Task {
+            let lists = await spamFilter.currentLists()
+            guard generation == filterListsGeneration,
+                  lists != imageFilterLists else { return }
+            imageFilterLists = lists
+        }
+    }
+
+    /// Entscheidet, ob die Zeile einer Mail ein Absenderbild zeigen darf.
+    ///
+    /// Verarbeitung: Dieselbe Regel wie der Spamfilter – ein Bild nur,
+    /// wenn der Filter die Mail behalten würde. Ohne gelesene Listen
+    /// vorsichtshalber kein Bild.
+    ///
+    /// - Parameter message: Listeneintrag.
+    /// - Returns: `true`, wenn ein Bild gezeigt werden darf.
+    func showsSenderImage(for message: MessageListItem) -> Bool {
+        guard let lists = imageFilterLists else { return false }
+        return SpamClassifier.allowsSenderImage(
+            sender: FilterAddress.sender(fromHeader: message.from),
+            verdict: message.spamVerdict,
+            lists: lists,
+            scoreLimit: spamSettings.scoreLimit
+        )
     }
 
     #if DEBUG

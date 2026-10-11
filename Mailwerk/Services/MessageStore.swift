@@ -138,7 +138,8 @@ final class MessageStore: @unchecked Sendable {
     /// Reihenfolge entspricht readListItem().
     private static let listColumns = """
         id, accountID, folder, uid, subject, "from", date, \
-        isUnread, isFlagged, isAnswered, isForwarded, hasAttachments, preview
+        isUnread, isFlagged, isAnswered, isForwarded, hasAttachments, preview, \
+        toJSON, spamFlag, spamScore
         """
 
     /// Höchstlänge der Vorschau in Zeichen.
@@ -1570,7 +1571,7 @@ final class MessageStore: @unchecked Sendable {
         )
     }
 
-    /// Liest eine Zeile gemäß `listColumns` (Indizes 0–12).
+    /// Liest eine Zeile gemäß `listColumns` (Indizes 0–15).
     ///
     /// - Parameter s: Statement, das auf einer Ergebniszeile steht.
     /// - Returns: Der gelesene Listeneintrag.
@@ -1584,13 +1585,15 @@ final class MessageStore: @unchecked Sendable {
             uid: UInt32(truncatingIfNeeded: sqlite3_column_int64(s, 3)),
             subject: str(s, 4),
             from: str(s, 5),
+            recipients: decodeList(optStr(s, 13)),
             date: dateVal.map { Date(timeIntervalSince1970: $0) },
             isUnread: sqlite3_column_int(s, 7) != 0,
             isFlagged: sqlite3_column_int(s, 8) != 0,
             isAnswered: sqlite3_column_int(s, 9) != 0,
             isForwarded: sqlite3_column_int(s, 10) != 0,
             hasAttachments: sqlite3_column_int(s, 11) != 0,
-            preview: optStr(s, 12)
+            preview: optStr(s, 12),
+            spamVerdict: readSpamVerdict(s, startingAt: 14)
         )
     }
 

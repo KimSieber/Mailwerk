@@ -24,11 +24,12 @@
 //  `confirmationRequest`, siehe Dialogs.swift).
 //
 //  Abgrenzung: Zustand, Abruf und Wischaktionen im InboxViewModel,
-//  Mailansicht in MessageDetailView, Ordnerleiste in FolderSidebarView.
+//  Aufbau einer Zeile in MessageRow, Mailansicht in MessageDetailView,
+//  Ordnerleiste in FolderSidebarView.
 //
 //  Abhängigkeiten: InboxViewModel, MessageStore, MailActionService,
-//  FolderCatalog, NetworkMonitor, MessageDetailView, ComposeView, Dialogs,
-//  Log.
+//  FolderCatalog, NetworkMonitor, MessageRow, MessageRowParty,
+//  FilterListCloudEvents, MessageDetailView, ComposeView, Dialogs, Log.
 //
 
 import SwiftUI
@@ -253,6 +254,10 @@ struct InboxView: View {
                 viewModel.loadFromCache()
                 Task { await viewModel.refresh() }
             }
+            .onReceive(FilterListCloudEvents.remoteChangesImported) {
+                // Listen von einem anderen Gerät übernommen (Absenderbilder).
+                viewModel.reloadFilterLists()
+            }
             .onChange(of: network.isOnline) { wasOnline, isOnline in
                 // Netz ist zurück: aktuelle Ansicht selbst abrufen.
                 guard isOnline, !wasOnline else { return }
@@ -269,7 +274,10 @@ struct InboxView: View {
                 AccountListView(accountStore: accountStore)
             }
             .confirmationRequest(spamFolderConfirmation)
-            .sheet(isPresented: $showingSpamSettings) {
+            .sheet(isPresented: $showingSpamSettings, onDismiss: {
+                // Listen können sich geändert haben (Absenderbilder).
+                viewModel.reloadFilterLists()
+            }) {
                 SpamSettingsView(settings: spamSettings, filterLists: filterLists)
             }
             .sheet(isPresented: $showingCompose) {
@@ -346,9 +354,14 @@ struct InboxView: View {
     /// Ausdruck in vertretbarer Zeit prüfen kann.
     private var messageList: some View {
         let colors = accountColors
+        let recipients = showsRecipients
         return List {
             ForEach(viewModel.messages) { message in
-                messageRow(for: message, colorHex: colors[message.accountID])
+                messageRow(
+                    for: message,
+                    colorHex: colors[message.accountID],
+                    showsRecipients: recipients
+                )
             }
 
             // Letzte Zeile der Liste – gehört IN die List, damit
@@ -372,6 +385,18 @@ struct InboxView: View {
         )
     }
 
+    /// `true`, wenn die gezeigte Ansicht ein Gesendet- oder Entwürfe-Ordner
+    /// ist – dort zeigen die Zeilen den Empfänger statt des Absenders.
+    ///
+    /// Die Rolle kommt aus dem Ordnerbaum des Postfachs; die Ansicht wird
+    /// über die Ordnerleiste gewählt, der Baum liegt dann vor.
+    private var showsRecipients: Bool {
+        guard case .folder(let accountID, let path, _) = viewModel.selection,
+              case .loaded(let tree) = folderCatalog.state(for: accountID),
+              let role = tree.node(withPath: path)?.role else { return false }
+        return role == .sent || role == .drafts
+    }
+
     /// Eine Zeile der Liste: Link zur Mail, Wischaktionen, Sperre während
     /// einer laufenden Aktion.
     ///
@@ -380,9 +405,14 @@ struct InboxView: View {
     ///
     /// - Parameters:
     ///   - message: Darzustellender Listeneintrag.
-    ///   - colorHex: Farbe des Postfachs; `nil` = kein Streifen.
+    ///   - colorHex: Farbe des Postfachs; `nil` = keine Farbe gewählt.
+    ///   - showsRecipients: `true` in Gesendet und Entwürfen.
     /// - Returns: Die fertige Zeile.
-    private func messageRow(for message: MessageListItem, colorHex: String?) -> some View {
+    private func messageRow(
+        for message: MessageListItem,
+        colorHex: String?,
+        showsRecipients: Bool
+    ) -> some View {
         NavigationLink {
             MessageDetailLoader(
                 messageID: message.id,
@@ -392,7 +422,12 @@ struct InboxView: View {
                 onChange: { viewModel.loadFromCache() }
             )
         } label: {
-            InboxRow(message: message, colorHex: colorHex)
+            MessageRow(
+                message: message,
+                party: .make(for: message, showsRecipients: showsRecipients),
+                showsImage: viewModel.showsSenderImage(for: message),
+                colorHex: colorHex
+            )
         }
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             Button {
@@ -706,79 +741,6 @@ private struct UndoBanner: View {
         .padding(.vertical, 12)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
-    }
-}
-
-/// Zeile der Nachrichtenliste: Farbstreifen des Postfachs, Absender,
-/// Symbole (beantwortet, weitergeleitet, gekennzeichnet, Anhang), Datum,
-/// Betreff und Vorschau.
-private struct InboxRow: View {
-    /// Darzustellender Listeneintrag.
-    let message: MessageListItem
-    /// Farbe des Postfachs; `nil` = kein Streifen.
-    let colorHex: String?
-
-    /// Aufbau der Zeile.
-    var body: some View {
-        HStack(spacing: 0) {
-            // Farbstreifen am linken Rand (nur wenn Farbe gesetzt)
-            if let hex = colorHex {
-                Color(hex: hex)
-                    .frame(width: 4)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(message.from)
-                        .font(message.isUnread ? .headline : .subheadline)
-                        .lineLimit(1)
-                    Spacer()
-                    if message.isAnswered {
-                        Image(systemName: "arrowshape.turn.up.left.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .accessibilityLabel("Beantwortet")
-                    }
-                    if message.isForwarded {
-                        Image(systemName: "arrowshape.turn.up.right.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .accessibilityLabel("Weitergeleitet")
-                    }
-                    if message.isFlagged {
-                        Image(systemName: "flag.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                            .accessibilityLabel("Gekennzeichnet")
-                    }
-                    if message.hasAttachments {
-                        Image(systemName: "paperclip")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .accessibilityLabel("Mit Anhang")
-                    }
-                    // Ohne Datum bleibt die Stelle leer – die aktuelle Zeit
-                    // würde ein falsches Datum vortäuschen.
-                    if let date = message.date {
-                        Text(date, format: .dateTime.weekday(.abbreviated).day().month().year().hour().minute())
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Text(message.subject)
-                    .font(.subheadline)
-                    .lineLimit(1)
-
-                if let preview = message.preview {
-                    Text(preview)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            .padding(.leading, colorHex != nil ? 8 : 0)
-        }
     }
 }
 

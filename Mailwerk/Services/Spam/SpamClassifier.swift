@@ -6,9 +6,11 @@
 //  Spam-Einstufung des Servers:
 //  - beim Filterlauf: behalten oder nach Spam (`classify`);
 //  - in der Anzeige: ist der Absender vertrauenswürdig genug, um externe
-//    Inhalte sofort zu laden (`trustsSender`).
+//    Inhalte sofort zu laden (`trustsSender`);
+//  - in der Mailliste: darf die Zeile ein Absenderbild zeigen
+//    (`allowsSenderImage`) – nur, wenn der Filter die Mail behalten würde.
 //
-//  Beide Entscheidungen nutzen denselben Listenabgleich (`listMatch`):
+//  Alle Entscheidungen nutzen denselben Listenabgleich (`listMatch`):
 //  exakte Adresse vor Domain, auf jeder Stufe Whitelist vor Blacklist. Ein
 //  Whitelist-Treffer schützt nur unterhalb der Score-Obergrenze – Schutz
 //  gegen gefälschte `From`-Adressen. So gilt für Spamfilter und Anzeige
@@ -127,6 +129,32 @@ nonisolated enum SpamClassifier {
         guard let sender, let verdict,
               listMatch(for: sender, in: lists) == .white else { return false }
         return whitelisted(verdict, scoreLimit) == .keep
+    }
+
+    /// Entscheidet, ob die Mailliste zu einer Mail ein Absenderbild
+    /// (Kontaktbild oder Logo) zeigen darf.
+    ///
+    /// Verarbeitung: Erlaubt nur, wenn der Spamfilter die Mail behalten
+    /// würde (`classify` liefert `.keep`). Damit bekommt eine Mail auf der
+    /// Blacklist oder mit Spam-Einstufung des Servers kein vertraut
+    /// wirkendes Bild – außer ein Whitelist-Treffer rettet sie unterhalb der
+    /// Score-Obergrenze. Ist die Einstufung des Servers unbekannt, wird
+    /// vorsichtshalber kein Bild gezeigt.
+    ///
+    /// - Parameters:
+    ///   - sender: Absender; `nil`, wenn er sich nicht auswerten lässt.
+    ///   - verdict: Einstufung des Servers; `nil` = unbekannt.
+    ///   - lists: Black- und Whitelist.
+    ///   - scoreLimit: Score-Obergrenze für Whitelist-Treffer.
+    /// - Returns: `true`, wenn ein Absenderbild gezeigt werden darf.
+    static func allowsSenderImage(
+        sender: FilterAddress?,
+        verdict: SpamHeaderVerdict?,
+        lists: FilterLists,
+        scoreLimit: Double = defaultScoreLimit
+    ) -> Bool {
+        guard let verdict else { return false }
+        return classify(sender: sender, verdict: verdict, lists: lists, scoreLimit: scoreLimit) == .keep
     }
 
     /// Sucht den spezifischsten Listentreffer eines Absenders.

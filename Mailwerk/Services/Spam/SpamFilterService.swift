@@ -15,10 +15,11 @@
 //  Einzelaktionen: Absender oder Domain blockieren (Blacklist, Mail in den
 //  Spam-Ordner) bzw. vertrauen (Whitelist, Mail zurück in den Posteingang).
 //
-//  Externe Inhalte: Für die Mailansicht beantwortet der Dienst, ob der
-//  Absender einer Mail vertrauenswürdig genug ist, um externe Inhalte
-//  sofort zu laden. Die Regel steht im `SpamClassifier`; hier werden nur
-//  die aktuellen Listen dazugegeben.
+//  Anzeige: Für die Mailliste liefert der Dienst die aktuellen Listen
+//  (Entscheidung über Absenderbilder). Für die Mailansicht beantwortet er,
+//  ob der Absender einer Mail vertrauenswürdig genug ist, um externe
+//  Inhalte sofort zu laden. Die Regeln stehen im `SpamClassifier`; hier
+//  werden nur die aktuellen Listen dazugegeben.
 //
 //  Abgrenzung: Die Entscheidung steckt in `SpamFilterPlanner` und ist dort
 //  getestet – hier geht es nur um das Ausführen. Welcher Ordner der
@@ -260,6 +261,24 @@ final class SpamFilterService {
             return try await move(
                 message, to: MailFolder.inboxPath, on: server, account: account
             )
+        }
+    }
+
+    // MARK: - Filterlisten für die Anzeige
+
+    /// Liest die aktuellen Black- und Whitelists für Entscheidungen in der
+    /// Oberfläche (z. B. Absenderbilder in der Mailliste).
+    ///
+    /// Verarbeitung: Ein Lesefehler wird protokolliert und als `nil`
+    /// gemeldet; die Oberfläche entscheidet dann vorsichtig.
+    ///
+    /// - Returns: Aktuelle Listen oder `nil`, wenn sie nicht lesbar sind.
+    func currentLists() async -> FilterLists? {
+        do {
+            return try await filterLists.lists()
+        } catch {
+            Log.spam.error("⚠️ Filterlisten für die Mailliste nicht lesbar: \(error.localizedDescription, privacy: .public)")
+            return nil
         }
     }
 

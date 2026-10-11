@@ -16,7 +16,7 @@
 //  Abgrenzung: Vollständige Nachricht → CachedMessage; Speichern und
 //  Lesen → MessageStore.
 //
-//  Abhängigkeiten: keine (reiner Datentyp).
+//  Abhängigkeiten: SpamHeaderVerdict (reiner Datentyp).
 //
 
 import Foundation
@@ -33,8 +33,11 @@ struct MessageListItem: Identifiable, Equatable {
     let uid: UInt32
     /// Betreff.
     let subject: String
-    /// Absender als Anzeigetext.
+    /// Absender als formatierte Adresse.
     let from: String
+    /// Empfänger (To) – je Eintrag eine formatierte Adresse. Gebraucht für
+    /// Gesendet und Entwürfe, wo die Zeile den Empfänger zeigt.
+    let recipients: [String]
     /// Datum der Nachricht; `nil`, wenn unbekannt.
     let date: Date?
     /// `true` = ungelesen.
@@ -47,7 +50,10 @@ struct MessageListItem: Identifiable, Equatable {
     let isForwarded: Bool
     /// `true`, wenn die Nachricht Anhänge hat.
     let hasAttachments: Bool
-    /// Anfang des Textteils (höchstens 200 Zeichen) für die zweite
-    /// Zeile; `nil`, wenn die Mail keinen Textteil hat.
+    /// Anfang des Textteils (höchstens 200 Zeichen); `nil`, wenn die Mail
+    /// keinen Textteil hat. Die Listenzeile zeigt ihn bewusst nicht.
     let preview: String?
+    /// Spam-Einstufung des Servers; `nil` = unbekannt. Entscheidet mit den
+    /// Filterlisten, ob die Zeile ein Absenderbild zeigen darf.
+    let spamVerdict: SpamHeaderVerdict?
 }

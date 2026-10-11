@@ -5,7 +5,8 @@
 //  Zweck: Tests für die Entscheidungsregeln des SpamClassifier – beim
 //  Filterlauf (Adresse vor Domain, Whitelist vor Blacklist, beides vor der
 //  Server-Einstufung, mit Score-Obergrenze) und für vertrauenswürdige
-//  Absender, deren externe Inhalte sofort geladen werden.
+//  Absender, deren externe Inhalte sofort geladen werden, sowie für die
+//  Erlaubnis von Absenderbildern in der Mailliste.
 //
 
 import Foundation
@@ -207,5 +208,45 @@ struct SpamClassifierTests {
         let lists = FilterLists(whiteAddresses: ["news@shop.de"])
         #expect(try !trusts("x@firma.de", clean, lists))
         #expect(try !trusts(nil, clean, lists))
+    }
+
+    // MARK: - Absenderbilder in der Mailliste
+
+    /// Testhilfe: Entscheidung über das Absenderbild für eine Absenderadresse.
+    private func allowsImage(
+        _ sender: String,
+        _ verdict: SpamHeaderVerdict?,
+        _ lists: FilterLists = .empty
+    ) throws -> Bool {
+        let address: FilterAddress = try #require(FilterAddress(normalizing: sender))
+        return SpamClassifier.allowsSenderImage(
+            sender: address,
+            verdict: verdict,
+            lists: lists,
+            scoreLimit: 15
+        )
+    }
+
+    /// Unauffällige Mail ohne Listeneintrag bekommt ein Bild.
+    @Test func ordinaryMailAllowsImage() throws {
+        #expect(try allowsImage("info@firma.de", clean))
+    }
+
+    /// Server-Spam und Blacklist bekommen kein Bild.
+    @Test func spamOrBlacklistGivesNoImage() throws {
+        #expect(try !allowsImage("info@firma.de", serverSpam(8)))
+        #expect(try !allowsImage("info@firma.de", clean, FilterLists(blackDomains: ["firma.de"])))
+    }
+
+    /// Whitelist rettet nur unterhalb der Score-Obergrenze.
+    @Test func whitelistAllowsImageOnlyBelowScoreLimit() throws {
+        let lists = FilterLists(whiteAddresses: ["info@firma.de"])
+        #expect(try allowsImage("info@firma.de", serverSpam(8), lists))
+        #expect(try !allowsImage("info@firma.de", serverSpam(20), lists))
+    }
+
+    /// Ohne bekannte Spam-Angabe vorsichtshalber kein Bild.
+    @Test func unknownVerdictGivesNoImage() throws {
+        #expect(try !allowsImage("info@firma.de", nil))
     }
 }
