@@ -6,8 +6,10 @@
 //  kennzeichnen, löschen, verschieben – jeweils auf dem Server UND im
 //  lokalen Cache, an einer Stelle.
 //
-//  Liste (Wischaktionen) und Mailansicht (Menü) nutzen dieselben
-//  Funktionen und laden danach nur ihre Liste neu bzw. schließen sich.
+//  Liste (Wischaktionen, Kontextmenü) und Mailansicht (Menü) nutzen
+//  dieselben Funktionen und laden danach nur ihre Liste neu bzw.
+//  schließen sich. Kennzeichnung und Gelesen-Status sind zusätzlich als
+//  umkehrbare `StateChange` beschrieben – Grundlage für „Rückgängig“.
 //
 //  Ändert sich auf dem Server nichts (Fehler), bleibt auch der Cache
 //  unverändert; der Fehler geht an den Aufrufer, der ihn anzeigt.
@@ -34,6 +36,39 @@ enum MessageActions {
         let folder: String
         /// UID der Mail im Ordner.
         let uid: UInt32
+    }
+
+    /// Umkehrbare Zustandsänderung: Kennzeichnung oder Gelesen-Status,
+    /// jeweils mit dem neu gesetzten Wert.
+    enum StateChange: Equatable {
+        /// Kennzeichnung gesetzt (`true`) bzw. entfernt (`false`).
+        case flagged(Bool)
+        /// Als gelesen (`true`) bzw. ungelesen (`false`) markiert.
+        case read(Bool)
+
+        /// Die Änderung, die diese zurücknimmt.
+        var reversed: StateChange {
+            switch self {
+            case .flagged(let value): return .flagged(!value)
+            case .read(let value): return .read(!value)
+            }
+        }
+    }
+
+    /// Führt eine Zustandsänderung an einer Mail aus.
+    ///
+    /// - Parameters:
+    ///   - change: Kennzeichnung oder Gelesen-Status mit neuem Wert.
+    ///   - target: Betroffene Mail.
+    ///   - accountStore: Quelle für die Zugangsdaten.
+    /// - Throws: `MailCredentialError` oder `MailActionService.ActionError`.
+    static func apply(_ change: StateChange, to target: Target, accountStore: AccountStore) async throws {
+        switch change {
+        case .flagged(let value):
+            try await setFlagged(value, for: target, accountStore: accountStore)
+        case .read(let value):
+            try await setRead(value, for: target, accountStore: accountStore)
+        }
     }
 
     /// Markiert eine Mail als gelesen oder ungelesen.

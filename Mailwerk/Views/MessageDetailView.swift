@@ -4,9 +4,9 @@
 //
 //  Zweck: Ansicht einer einzelnen Mail – Kopfdaten, Inhalt (HTML oder
 //  Text), Anhänge mit Vorschau, Teilen und Nachladen sowie das
-//  Aktionsmenü: Antworten/Weiterleiten, Kennzeichnen, Gelesen, Verschieben,
-//  Spam-Aktionen (Blockieren/Vertrauen), Teilen, Drucken, Anlagen lokal
-//  löschen und Mail löschen.
+//  Aktionsmenü (gemeinsamer Baustein `MessageMenuItems`, ergänzt um
+//  Teilen, Drucken und Anlagen lokal löschen) und die Ausführung seiner
+//  Aktionen.
 //
 //  Eine ungelesene Mail wird beim Öffnen als gelesen markiert.
 //
@@ -14,7 +14,10 @@
 //  gemeinsam). Meldungen und Rückfragen haben je einen Kanal
 //  (`activeAlert`, `activeConfirmation`, siehe Dialogs.swift).
 //
-//  Abgrenzung: Laden der Mail aus dem Cache → MessageDetailLoader;
+//  Abgrenzung: Kopfbereich und Hinweis auf externe Inhalte →
+//  MessageDetailHeader; Anhangliste → MessageAttachmentList; Menüeinträge
+//  → MessageMenu; Rückfragen und Meldungen zu den Aktionen →
+//  MessageActionDialogs; Laden der Mail aus dem Cache → MessageDetailLoader;
 //  HTML-Darstellung → HTMLMailView; Verfassen → ComposeView; Ordnerwahl →
 //  FolderMoveSheet; Anhang-Zeile → AttachmentRow; Druck → MailPrinter;
 //  HTML für Druck und Teilen → MailPrintFormatter; Regeln für externe
@@ -34,7 +37,9 @@
 //  Teilen-Blatt, auf dem Mac das Teilen-Untermenü des Systems. Die Dateien
 //  (Mail als HTML, geladene Anhänge) liegen dafür schon beim Öffnen bereit.
 //
-//  Abhängigkeiten: SwiftUI, QuickLook, MessageActions, SpamFilterService,
+//  Abhängigkeiten: SwiftUI, QuickLook, MessageActions, MessageMenu,
+//  MessageActionDialogs, MessageDetailHeader, MessageAttachmentList,
+//  SpamFilterService,
 //  AttachmentManager, MessageStore, MailPrintFormatter, RemoteContentPolicy,
 //  Dialogs, Log.
 //
@@ -96,11 +101,6 @@ struct MessageDetailView: View {
     @State private var activeAlert: AlertItem?
     /// Einziger Rückfragekanal der Ansicht.
     @State private var activeConfirmation: ConfirmationRequest?
-
-    /// Art einer Spam-Aktion.
-    private enum SpamActionKind {
-        case block, trust
-    }
 
     /// Kapselt die Art der zu verfassenden Nachricht für das Sheet.
     private struct ComposeRequest: Identifiable {
@@ -185,49 +185,22 @@ struct MessageDetailView: View {
     private var content: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                header
+                MessageDetailHeader(message: message, isFlagged: isFlagged)
                 Divider()
                 messageBody
                 if !attachments.isEmpty {
                     Divider()
-                    attachmentList
+                    MessageAttachmentList(
+                        attachments: attachments,
+                        downloadingIDs: downloadingIDs,
+                        shareURLs: shareURLs,
+                        onTap: { handleTap($0) }
+                    )
                 }
             }
             .padding()
         }
         .alertItem($activeAlert)
-    }
-
-    /// Betreff, Kennzeichnung, Absender, Empfänger, Kopie und Datum.
-    @ViewBuilder
-    private var header: some View {
-        HStack {
-            Text(message.subject)
-                .font(.title2)
-                .bold()
-            if isFlagged {
-                Image(systemName: "flag.fill")
-                    .foregroundStyle(.orange)
-            }
-        }
-        Text("Von: \(message.from)")
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-        if !message.to.isEmpty {
-            Text("An: \(message.to)")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        if !message.headers.ccList.isEmpty {
-            Text("Kopie: \(message.headers.ccList.joined(separator: ", "))")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        if let date = message.date {
-            Text(date, format: .dateTime.weekday(.abbreviated).day(.twoDigits).month(.twoDigits).year().hour(.defaultDigits(amPM: .omitted)).minute(.twoDigits))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
     }
 
     /// Inhalt der Mail: HTML bevorzugt, sonst Text. Über einer HTML-Mail
@@ -239,7 +212,7 @@ struct MessageDetailView: View {
             Color.clear.frame(height: 100)
         } else if let html = message.htmlBody {
             if hasRemoteContent && !allowsRemoteContent {
-                remoteContentNotice
+                RemoteContentNotice(onLoad: allowRemoteContent)
             }
             HTMLMailView(
                 html: html,
@@ -255,42 +228,6 @@ struct MessageDetailView: View {
         }
     }
 
-    /// Schmaler Hinweis „Externe Inhalte blockiert“ mit kleinem Knopf zum
-    /// Laden – bewusst zurückhaltend, damit er die Mail nicht verdrängt.
-    private var remoteContentNotice: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "eye.slash")
-                .foregroundStyle(.secondary)
-            Text("Externe Inhalte blockiert")
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 8)
-            Button("Laden") {
-                allowRemoteContent()
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .accessibilityLabel("Externe Inhalte laden")
-        }
-        .font(.footnote)
-    }
-
-    /// Liste der Anhänge mit Vorschau, Nachladen und Teilen.
-    private var attachmentList: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Anhänge (\(attachments.count))", systemImage: "paperclip")
-                .font(.headline)
-
-            ForEach(attachments) { attachment in
-                AttachmentRow(
-                    attachment: attachment,
-                    isDownloading: downloadingIDs.contains(attachment.id),
-                    onTap: { handleTap(attachment) },
-                    shareURL: shareURLs[attachment.id]
-                )
-            }
-        }
-    }
-
     // MARK: - Symbolleiste und Menü
 
     /// Antworten (Tipp antwortet direkt, langes Drücken zeigt alle
@@ -299,7 +236,7 @@ struct MessageDetailView: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
             Menu {
-                replyButtons
+                ReplyMenuButtons(onAction: handleMenuAction)
             } label: {
                 Image(systemName: "arrowshape.turn.up.left")
             } primaryAction: {
@@ -315,44 +252,11 @@ struct MessageDetailView: View {
         }
     }
 
-    /// Aktionsmenü der Mail.
+    /// Aktionsmenü der Mail: der gemeinsame Baustein, ergänzt um Teilen,
+    /// Drucken und Anlagen lokal löschen.
     private var messageMenu: some View {
         Menu {
-            Section {
-                replyButtons
-            }
-
-            Section {
-                Button {
-                    Task { await toggleFlag() }
-                } label: {
-                    Label(
-                        isFlagged ? "Kennzeichnung entfernen" : "Kennzeichnen",
-                        systemImage: isFlagged ? "flag.slash" : "flag"
-                    )
-                }
-
-                Button {
-                    Task { await toggleRead() }
-                } label: {
-                    Label(
-                        isUnread ? "Als gelesen markieren" : "Als ungelesen markieren",
-                        systemImage: isUnread ? "envelope.open" : "envelope.badge"
-                    )
-                }
-
-                Button {
-                    showFolderPicker = true
-                } label: {
-                    Label("In Ordner verschieben", systemImage: "folder")
-                }
-            }
-
-            Section {
-                spamMenu
-            }
-
-            Section {
+            MessageMenuItems(context: menuContext, onAction: handleMenuAction) {
                 ShareLink(items: shareItems) {
                     Label("Teilen", systemImage: "square.and.arrow.up")
                 }
@@ -371,12 +275,6 @@ struct MessageDetailView: View {
                         Label("Anlagen lokal löschen", systemImage: "trash")
                     }
                 }
-
-                Button(role: .destructive) {
-                    confirmDeleteMessage()
-                } label: {
-                    Label("Mail löschen", systemImage: "trash.fill")
-                }
             }
         } label: {
             Image(systemName: "ellipsis.circle")
@@ -384,57 +282,39 @@ struct MessageDetailView: View {
         .disabled(isProcessingAction)
     }
 
-    /// Untermenü „Spam / Vertrauen“ für Absenderadresse und Domain.
-    @ViewBuilder
-    private var spamMenu: some View {
-        if let sender = FilterAddress.sender(fromHeader: message.from) {
-            Menu {
-                Button {
-                    confirmSpamAction(.block, entryKind: .address, value: sender.address)
-                } label: {
-                    Label("\(sender.address) blockieren", systemImage: "person.crop.circle.badge.xmark")
-                }
-                Button {
-                    confirmSpamAction(.block, entryKind: .domain, value: sender.domain)
-                } label: {
-                    Label("\(sender.domain) blockieren", systemImage: "globe.badge.chevron.backward")
-                }
-                Button {
-                    confirmSpamAction(.trust, entryKind: .address, value: sender.address)
-                } label: {
-                    Label("\(sender.address) vertrauen", systemImage: "person.crop.circle.badge.checkmark")
-                }
-                Button {
-                    confirmSpamAction(.trust, entryKind: .domain, value: sender.domain)
-                } label: {
-                    Label("\(sender.domain) vertrauen", systemImage: "globe")
-                }
-            } label: {
-                Label("Spam / Vertrauen", systemImage: "shield")
-            }
-        }
+    /// Zustand der Mail für das Menü.
+    private var menuContext: MessageMenuContext {
+        MessageMenuContext(
+            isUnread: isUnread,
+            isFlagged: isFlagged,
+            sender: FilterAddress.sender(fromHeader: message.from)
+        )
     }
 
-    /// Antworten, Allen antworten und Weiterleiten – im Menü und in der
-    /// Symbolleiste.
-    @ViewBuilder
-    private var replyButtons: some View {
-        Button {
-            composeRequest = ComposeRequest(kind: .reply)
-        } label: {
-            Label("Antworten", systemImage: "arrowshape.turn.up.left")
-        }
-
-        Button {
-            composeRequest = ComposeRequest(kind: .replyAll)
-        } label: {
-            Label("Allen antworten", systemImage: "arrowshape.turn.up.left.2")
-        }
-
-        Button {
-            composeRequest = ComposeRequest(kind: .forward)
-        } label: {
-            Label("Weiterleiten", systemImage: "arrowshape.turn.up.right")
+    /// Führt eine Aktion aus dem Menü aus.
+    ///
+    /// Verarbeitung: Löschen und Spam-Aktionen fragen vorher nach;
+    /// Verschieben öffnet die Ordnerwahl.
+    ///
+    /// - Parameter action: Gewählte Aktion.
+    private func handleMenuAction(_ action: MessageMenuAction) {
+        switch action {
+        case .reply(let kind):
+            composeRequest = ComposeRequest(kind: kind)
+        case .toggleFlag:
+            Task { await toggleFlag() }
+        case .toggleRead:
+            Task { await toggleRead() }
+        case .move:
+            showFolderPicker = true
+        case .spam(let request):
+            activeConfirmation = MessageActionDialogs.spamConfirmation(request) {
+                Task { await performSpamAction(request) }
+            }
+        case .delete:
+            activeConfirmation = MessageActionDialogs.deleteConfirmation(count: 1) {
+                Task { await deleteMessage() }
+            }
         }
     }
 
@@ -511,17 +391,6 @@ struct MessageDetailView: View {
         }
     }
 
-    /// Fragt vor dem Löschen der Mail nach.
-    private func confirmDeleteMessage() {
-        activeConfirmation = ConfirmationRequest(
-            title: "Mail löschen?",
-            message: "Die Mail wird auf dem Server gelöscht bzw. in den Papierkorb verschoben.",
-            confirmLabel: "Löschen"
-        ) {
-            Task { await deleteMessage() }
-        }
-    }
-
     /// Löscht die Mail und kehrt zur Liste zurück.
     @MainActor
     private func deleteMessage() async {
@@ -554,29 +423,6 @@ struct MessageDetailView: View {
 
     // MARK: - Spam-Aktionen
 
-    /// Fragt vor dem Blockieren bzw. Vertrauen nach.
-    ///
-    /// - Parameters:
-    ///   - kind: Blockieren oder Vertrauen.
-    ///   - entryKind: Adresse oder Domain.
-    ///   - value: Einzutragende Adresse bzw. Domain.
-    private func confirmSpamAction(_ kind: SpamActionKind, entryKind: FilterEntryKind, value: String) {
-        let scope = entryKind == .domain
-            ? "Alle künftigen Mails dieser Domain"
-            : "Alle künftigen Mails dieses Absenders"
-        let isBlock = kind == .block
-        activeConfirmation = ConfirmationRequest(
-            title: isBlock ? "\(value) blockieren?" : "\(value) vertrauen?",
-            message: isBlock
-                ? "\(scope) wandern in den Spam-Ordner. Diese Mail wird mitverschoben."
-                : "\(scope) bleiben im Posteingang. Liegt diese Mail im Spam-Ordner, wird sie zurückgeholt.",
-            confirmLabel: isBlock ? "Blockieren" : "Vertrauen",
-            isDestructive: isBlock
-        ) {
-            Task { await performSpamAction(kind, entryKind: entryKind, value: value) }
-        }
-    }
-
     /// Trägt Adresse bzw. Domain in die Liste ein und verschiebt die Mail
     /// bei Bedarf.
     ///
@@ -585,37 +431,21 @@ struct MessageDetailView: View {
     /// bestätigt eine Meldung den Eintrag. Steht der Wert schon auf der
     /// anderen Liste, wird der Eintrag abgelehnt.
     ///
-    /// - Parameters:
-    ///   - kind: Blockieren oder Vertrauen.
-    ///   - entryKind: Adresse oder Domain.
-    ///   - value: Einzutragende Adresse bzw. Domain.
+    /// - Parameter request: Spam-Aktion aus dem Menü.
     @MainActor
-    private func performSpamAction(_ kind: SpamActionKind, entryKind: FilterEntryKind, value: String) async {
+    private func performSpamAction(_ request: SpamMenuRequest) async {
         isProcessingAction = true
         defer { isProcessingAction = false }
         do {
-            let moved: Bool
-            switch kind {
-            case .block: moved = try await spamFilter.block(message, kind: entryKind)
-            case .trust: moved = try await spamFilter.trust(message, kind: entryKind)
-            }
+            let moved = try await request.perform(on: message, using: spamFilter)
             onChange?()
             if moved {
                 dismiss()
             } else {
-                activeAlert = AlertItem(
-                    title: "Listeneintrag",
-                    message: "\(value) steht jetzt auf der \(kind == .block ? "Blacklist" : "Whitelist")."
-                )
+                activeAlert = MessageActionDialogs.spamResultAlert(request)
             }
-        } catch FilterListError.alreadyOnOtherList(let list) {
-            let other = list == .white ? "Whitelist" : "Blacklist"
-            activeAlert = AlertItem(
-                title: "Listeneintrag",
-                message: "\(value) steht bereits auf der \(other). Entferne den Eintrag dort zuerst."
-            )
         } catch {
-            activeAlert = .failure("Listeneintrag fehlgeschlagen", error)
+            activeAlert = MessageActionDialogs.spamFailureAlert(request, error)
         }
     }
 

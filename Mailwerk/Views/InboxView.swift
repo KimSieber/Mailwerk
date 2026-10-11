@@ -4,8 +4,10 @@
 //
 //  Zweck: Hauptansicht mit der Nachrichtenliste. Zeigt die gewählte
 //  Ansicht (alle Posteingänge, Gekennzeichnet, ein Ordner), Titel mit
-//  Stand und Verbindungshinweis, Wischaktionen (gelesen, kennzeichnen)
-//  samt „Rückgängig“, die Zeile „Ältere Nachrichten laden“, die
+//  Stand und Verbindungshinweis, Wischaktionen (gelesen, kennzeichnen),
+//  das Kontextmenü einer Mail per langem Drücken (dasselbe Menü wie in
+//  der Mailansicht, siehe MessageMenu), „Rückgängig“ für Kennzeichnung
+//  und Gelesen-Status, die Zeile „Ältere Nachrichten laden“, die
 //  Ordnerleiste sowie Einstellungen und Verfassen. Aktualisiert wird auf
 //  iPhone/iPad durch Herunterziehen, auf dem Mac per Knopf bzw. ⌘R.
 //  Kommen Postfächer hinzu (beim ersten Start aus iCloud oder neu
@@ -23,13 +25,15 @@
 //  Meldungen und Rückfragen laufen über je einen Kanal (`alertItem`,
 //  `confirmationRequest`, siehe Dialogs.swift).
 //
-//  Abgrenzung: Zustand, Abruf und Wischaktionen im InboxViewModel,
+//  Abgrenzung: Zustand, Abruf und Aktionen an Mails im InboxViewModel,
 //  Aufbau einer Zeile in MessageRow, Mailansicht in MessageDetailView,
 //  Ordnerleiste in FolderSidebarView.
 //
 //  Abhängigkeiten: InboxViewModel, MessageStore, MailActionService,
 //  FolderCatalog, NetworkMonitor, MessageRow, MessageRowParty,
-//  ContactImageDirectory, SenderIconCache, FilterListCloudEvents, MessageDetailView, ComposeView, Dialogs, Log.
+//  ContactImageDirectory, SenderIconCache, FilterListCloudEvents,
+//  MessageDetailView, MessageMenu, MessageActionDialogs, FolderMoveSheet,
+//  ComposeView, Dialogs, Log.
 //
 
 import SwiftUI
@@ -62,6 +66,13 @@ struct InboxView: View {
     @State private var expandedFolderAccounts: Set<UUID> = []
     /// Erster Abruf nach dem Start ist erfolgt.
     @State private var hasLoadedOnce = false
+    /// Antwort bzw. Weiterleitung aus dem Kontextmenü.
+    @State private var listCompose: ListComposeRequest?
+    /// Mail, für die aus dem Kontextmenü ein Zielordner gewählt wird.
+    @State private var moveItem: MessageListItem?
+    /// Rückfrage aus dem Kontextmenü (Löschen, Spam); einziger
+    /// Rückfragekanal der Liste neben der Warteschlange der Spam-Ordner.
+    @State private var listConfirmation: ConfirmationRequest?
     /// Netzzustand (online/offline).
     private let network = NetworkMonitor.shared
 
@@ -276,7 +287,7 @@ struct InboxView: View {
             .sheet(isPresented: $showingAccounts) {
                 AccountListView(accountStore: accountStore)
             }
-            .confirmationRequest(spamFolderConfirmation)
+            .confirmationRequest(confirmation)
             .sheet(isPresented: $showingSpamSettings, onDismiss: {
                 // Listen können sich geändert haben (Absenderbilder).
                 viewModel.reloadFilterLists()
@@ -290,22 +301,42 @@ struct InboxView: View {
                     onSent: { viewModel.loadFromCache() }
                 )
             }
+            .sheet(item: $listCompose) { request in
+                ComposeView(
+                    accountStore: accountStore,
+                    kind: request.kind,
+                    original: request.original,
+                    onSent: { viewModel.loadFromCache() }
+                )
+            }
+            .sheet(item: $moveItem) { item in
+                if let account = accountStore.accounts.first(where: { $0.id == item.accountID }) {
+                    FolderMoveSheet(
+                        account: account,
+                        currentFolder: item.folder,
+                        accountStore: accountStore
+                    ) { path in
+                        Task { await viewModel.move(item, to: path) }
+                    }
+                }
+            }
         }
         // Einziger Meldungskanal der Liste – am äußeren Element, getrennt
         // von der Rückfrage am Inhalt.
         .alertItem($viewModel.alert)
         .overlay(alignment: .bottom) {
-            if let undo = viewModel.undoUnflag {
+            if let offer = viewModel.undoOffer {
                 UndoBanner(
-                    onUndo: { Task { await viewModel.undo(undo) } },
-                    onDismiss: { viewModel.dismissUndoUnflag() }
+                    text: offer.text,
+                    onUndo: { Task { await viewModel.undo(offer) } },
+                    onDismiss: { viewModel.dismissUndo() }
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .padding(.bottom, 16)
                 .padding(.horizontal, 16)
             }
         }
-        .animation(.snappy(duration: 0.25), value: viewModel.undoUnflag?.id)
+        .animation(.snappy(duration: 0.25), value: viewModel.undoOffer?.id)
         .sideDrawer(isPresented: $showingFolders) {
             FolderSidebarView(
                 accounts: accountStore.accounts,
@@ -400,8 +431,8 @@ struct InboxView: View {
         return role == .sent || role == .drafts
     }
 
-    /// Eine Zeile der Liste: Link zur Mail, Wischaktionen, Sperre während
-    /// einer laufenden Aktion.
+    /// Eine Zeile der Liste: Link zur Mail, Wischaktionen, Kontextmenü,
+    /// Sperre während einer laufenden Aktion.
     ///
     /// Verarbeitung: Der Link öffnet `MessageDetailLoader`, der die
     /// vollständige Mail erst beim Öffnen aus dem Cache lädt.
@@ -463,7 +494,54 @@ struct InboxView: View {
             }
             .tint(.orange)
         }
+        .contextMenu {
+            MessageMenuItems(
+                context: MessageMenuContext(message),
+                onAction: { handleMenuAction($0, for: message) }
+            ) {
+                EmptyView()
+            }
+        }
         .disabled(viewModel.processingMessageIDs.contains(message.id))
+    }
+
+    // MARK: - Kontextmenü
+
+    /// Führt eine Aktion aus dem Kontextmenü einer Mail aus.
+    ///
+    /// Verarbeitung: Antworten und Weiterleiten brauchen die vollständige
+    /// Mail und laden sie aus dem Cache. Löschen und Spam-Aktionen fragen
+    /// vorher nach; Verschieben öffnet die Ordnerwahl.
+    ///
+    /// - Parameters:
+    ///   - action: Gewählte Aktion.
+    ///   - item: Betroffener Listeneintrag.
+    private func handleMenuAction(_ action: MessageMenuAction, for item: MessageListItem) {
+        switch action {
+        case .reply(let kind):
+            if let original = MessageStore.shared.message(id: item.id) {
+                listCompose = ListComposeRequest(kind: kind, original: original)
+            } else {
+                viewModel.alert = AlertItem(
+                    title: "Nachricht nicht mehr vorhanden",
+                    message: "Sie wurde inzwischen gelöscht oder verschoben."
+                )
+            }
+        case .toggleFlag:
+            Task { await viewModel.toggleFlag(item) }
+        case .toggleRead:
+            Task { await viewModel.toggleRead(item) }
+        case .move:
+            moveItem = item
+        case .spam(let request):
+            listConfirmation = MessageActionDialogs.spamConfirmation(request) {
+                Task { await viewModel.performSpamAction(request, for: item) }
+            }
+        case .delete:
+            listConfirmation = MessageActionDialogs.deleteConfirmation(count: 1) {
+                Task { await viewModel.delete(item) }
+            }
+        }
     }
 
     // MARK: - Ordner löschen
@@ -494,6 +572,21 @@ struct InboxView: View {
     }
 
     // MARK: - Rückfragen
+
+    /// Einziger Rückfragekanal der Liste: zuerst eine Rückfrage aus dem
+    /// Kontextmenü, sonst die erste offene Frage „Spam-Ordner anlegen?“.
+    ///
+    /// Verarbeitung: Schließt sich die Rückfrage aus dem Kontextmenü, wird
+    /// sie verworfen; die Warteschlange der Spam-Ordner räumt ihre Knöpfe
+    /// selbst ab.
+    private var confirmation: Binding<ConfirmationRequest?> {
+        Binding(
+            get: { listConfirmation ?? spamFolderConfirmation.wrappedValue },
+            set: { newValue in
+                if newValue == nil { listConfirmation = nil }
+            }
+        )
+    }
 
     /// Rückfrage „Spam-Ordner anlegen?“ zur ersten offenen Anfrage.
     ///
@@ -724,10 +817,23 @@ private struct OlderMessagesRow: View {
     }
 }
 
+/// Antwort bzw. Weiterleitung aus dem Kontextmenü: Art und vollständige
+/// Ursprungsmail für das Sheet.
+private struct ListComposeRequest: Identifiable {
+    /// Kennung für SwiftUI.
+    let id = UUID()
+    /// Antworten, Allen antworten oder Weiterleiten.
+    let kind: ComposeKind
+    /// Ursprungsmail aus dem Cache.
+    let original: CachedMessage
+}
+
 /// „Rückgängig"-Hinweis am unteren Rand. Verschwindet nach 5 Sekunden
 /// oder auf Tipp – je nachdem, was zuerst kommt.
 private struct UndoBanner: View {
-    /// Stellt die Kennzeichnung wieder her.
+    /// Was geändert wurde, z. B. „Kennzeichnung entfernt“.
+    let text: String
+    /// Nimmt die Änderung zurück.
     let onUndo: () -> Void
     /// Blendet den Hinweis aus.
     let onDismiss: () -> Void
@@ -735,7 +841,7 @@ private struct UndoBanner: View {
     /// Hinweis mit „Rückgängig“ und Schließen.
     var body: some View {
         HStack {
-            Text("Kennzeichnung entfernt")
+            Text(text)
                 .font(.subheadline)
             Spacer()
             Button("Rückgängig") { onUndo() }

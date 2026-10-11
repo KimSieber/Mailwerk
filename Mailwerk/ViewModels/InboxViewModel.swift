@@ -6,8 +6,10 @@
 //  gewählt ist (alle Posteingänge, Gekennzeichnet, ein Ordner), welche
 //  Mails sie aus dem Cache zeigt, Abruf vom Server, „Ältere laden“,
 //  Spamfilter beim Abruf und Rückfragen zum Anlegen eines Spam-Ordners.
-//  Dazu die Wischaktionen der Liste (gelesen, kennzeichnen) samt
-//  „Rückgängig“ und der einzige Meldungskanal der Liste (`alert`).
+//  Dazu die Aktionen an einzelnen Mails aus Wischaktionen und
+//  Kontextmenü (gelesen, kennzeichnen, verschieben, löschen, Spam) samt
+//  „Rückgängig“ für Kennzeichnung und Gelesen-Status sowie der einzige
+//  Meldungskanal der Liste (`alert`).
 //
 //  Ablauf: Die Liste wird immer zuerst aus dem lokalen Cache gezeigt
 //  (`loadFromCache`), der Abruf vom Server läuft danach und aktualisiert
@@ -36,7 +38,8 @@
 //  Ablage im MessageStore.
 //
 //  Abhängigkeiten: AccountStore, SpamSettings, SpamFilterService,
-//  MailFetchService, MailSession (Zugangsdaten), MessageActions,
+//  MailFetchService, MailSession (Zugangsdaten), MessageActions, UndoOffer,
+//  MessageActionDialogs, SpamMenuRequest,
 //  MessageStore, NetworkMonitor, SyncWindow, FetchCoordinator,
 //  FolderKey, MailFolder, SpamClassifier, FilterAddress, Log.
 //
@@ -69,7 +72,7 @@ final class InboxViewModel {
     /// Zählt Lesevorgänge der Filterlisten; ein überholtes Ergebnis wird
     /// verworfen, wenn inzwischen ein neueres Lesen begonnen hat.
     @ObservationIgnored private var filterListsGeneration = 0
-    /// Mails, für die gerade eine Wischaktion läuft (Zeile gesperrt).
+    /// Mails, für die gerade eine Aktion läuft (Zeile gesperrt).
     var processingMessageIDs: Set<String> = []
     /// Zeitgeber, der den „Rückgängig“-Hinweis nach 5 Sekunden ausblendet.
     @ObservationIgnored private var undoTask: Task<Void, Never>?
@@ -120,17 +123,9 @@ final class InboxViewModel {
         }
     }
 
-    /// Nachricht, deren Kennzeichen gerade entfernt wurde – zeigt den
-    /// „Rückgängig"-Hinweis in der Kennzeichen-Sicht.
-    var undoUnflag: UndoUnflag?
-
-    /// Angaben, um ein entferntes Kennzeichen wiederherzustellen.
-    struct UndoUnflag: Identifiable {
-        /// Kennung für SwiftUI (Cache-ID der Mail).
-        var id: String { target.id }
-        /// Betroffene Mail.
-        let target: MessageActions.Target
-    }
+    /// Angebot „Rückgängig“ nach einer Änderung von Kennzeichnung oder
+    /// Gelesen-Status; `nil` = kein Hinweis sichtbar.
+    var undoOffer: UndoOffer?
 
     /// Ein Postfach ohne Spam-Ordner samt Vorschlag. Angelegt wird nur nach
     /// Bestätigung durch den Nutzer.
@@ -701,84 +696,173 @@ final class InboxViewModel {
         }
     }
 
-    // MARK: - Aktionen an Mails (Wischaktionen)
+
+    // MARK: - Aktionen an Mails (Wischaktionen und Kontextmenü)
 
     /// Schaltet gelesen/ungelesen um.
     ///
     /// Verarbeitung: Server und Cache über `MessageActions`, danach die
-    /// Liste neu laden. Während der Aktion ist die Zeile gesperrt.
+    /// Liste neu laden und 5 Sekunden „Rückgängig“ anbieten. Während der
+    /// Aktion ist die Zeile gesperrt.
     ///
     /// - Parameter item: Betroffener Listeneintrag.
     @MainActor
     func toggleRead(_ item: MessageListItem) async {
-        processingMessageIDs.insert(item.id)
-        defer { processingMessageIDs.remove(item.id) }
-        do {
-            try await MessageActions.setRead(
-                item.isUnread, for: MessageActions.Target(item), accountStore: accountStore
-            )
-            loadFromCache()
-        } catch {
-            alert = .failure("Status ändern fehlgeschlagen", error)
-        }
+        await applyChange(.read(item.isUnread), to: item, failureTitle: "Status ändern fehlgeschlagen")
     }
 
     /// Schaltet die Kennzeichnung um.
     ///
-    /// Verarbeitung: Server und Cache über `MessageActions`. In der Ansicht
-    /// „Gekennzeichnet“ erscheint nach dem Entfernen 5 Sekunden lang ein
-    /// „Rückgängig“-Hinweis.
+    /// Verarbeitung: Server und Cache über `MessageActions`, danach die
+    /// Liste neu laden und 5 Sekunden „Rückgängig“ anbieten.
     ///
     /// - Parameter item: Betroffener Listeneintrag.
     @MainActor
     func toggleFlag(_ item: MessageListItem) async {
+        await applyChange(.flagged(!item.isFlagged), to: item, failureTitle: "Kennzeichnen fehlgeschlagen")
+    }
+
+    /// Führt eine umkehrbare Änderung an einer Mail aus.
+    ///
+    /// Verarbeitung: Sperrt die Zeile während der Aktion. Bei Erfolg wird
+    /// die Liste neu geladen und „Rückgängig“ angeboten, sonst erscheint
+    /// eine Meldung.
+    ///
+    /// - Parameters:
+    ///   - change: Änderung mit neuem Wert.
+    ///   - item: Betroffener Listeneintrag.
+    ///   - failureTitle: Überschrift der Fehlermeldung.
+    @MainActor
+    private func applyChange(_ change: MessageActions.StateChange, to item: MessageListItem, failureTitle: String) async {
         processingMessageIDs.insert(item.id)
         defer { processingMessageIDs.remove(item.id) }
         let target = MessageActions.Target(item)
-        let newFlagged = !item.isFlagged
         do {
-            try await MessageActions.setFlagged(newFlagged, for: target, accountStore: accountStore)
-            if selection == .flagged && !newFlagged {
-                offerUndoUnflag(for: target)
-            }
+            try await MessageActions.apply(change, to: target, accountStore: accountStore)
+            offerUndo(UndoOffer(change: change, targets: [target]))
             loadFromCache()
         } catch {
-            alert = .failure("Kennzeichnen fehlgeschlagen", error)
+            alert = .failure(failureTitle, error)
         }
     }
 
+    /// Löscht eine Mail (Papierkorb oder endgültig).
+    ///
+    /// Verarbeitung: Die Rückfrage stellt die Ansicht vorher. Danach wird
+    /// die Liste neu geladen.
+    ///
+    /// - Parameter item: Betroffener Listeneintrag.
+    @MainActor
+    func delete(_ item: MessageListItem) async {
+        processingMessageIDs.insert(item.id)
+        defer { processingMessageIDs.remove(item.id) }
+        do {
+            try await MessageActions.delete(MessageActions.Target(item), accountStore: accountStore)
+            loadFromCache()
+        } catch {
+            alert = .failure("Löschen fehlgeschlagen", error)
+        }
+    }
+
+    /// Verschiebt eine Mail in einen Ordner desselben Postfachs.
+    ///
+    /// - Parameters:
+    ///   - item: Betroffener Listeneintrag.
+    ///   - path: Server-Pfad des Zielordners.
+    @MainActor
+    func move(_ item: MessageListItem, to path: String) async {
+        processingMessageIDs.insert(item.id)
+        defer { processingMessageIDs.remove(item.id) }
+        do {
+            try await MessageActions.move(MessageActions.Target(item), to: path, accountStore: accountStore)
+            loadFromCache()
+        } catch {
+            alert = .failure("Verschieben fehlgeschlagen", error)
+        }
+    }
+
+    /// Führt eine Spam-Aktion (Blockieren, Vertrauen) an einer Mail aus.
+    ///
+    /// Verarbeitung: Die Spam-Aktionen brauchen die vollständige Mail; sie
+    /// wird aus dem Cache geholt. Wurde die Mail verschoben, verschwindet
+    /// sie aus der Liste – das genügt als Rückmeldung. Sonst bestätigt eine
+    /// Meldung den Listeneintrag. Die Filterlisten werden neu gelesen
+    /// (Absenderbilder).
+    ///
+    /// - Parameters:
+    ///   - request: Spam-Aktion.
+    ///   - item: Betroffener Listeneintrag.
+    @MainActor
+    func performSpamAction(_ request: SpamMenuRequest, for item: MessageListItem) async {
+        guard let message = MessageStore.shared.message(id: item.id) else {
+            alert = AlertItem(title: "Listeneintrag", message: "Die Mail ist nicht mehr vorhanden.")
+            return
+        }
+        processingMessageIDs.insert(item.id)
+        defer { processingMessageIDs.remove(item.id) }
+        do {
+            let moved = try await request.perform(on: message, using: spamFilter)
+            loadFromCache()
+            if !moved {
+                alert = MessageActionDialogs.spamResultAlert(request)
+            }
+        } catch {
+            alert = MessageActionDialogs.spamFailureAlert(request, error)
+        }
+    }
+
+    // MARK: - Rückgängig
+
     /// Zeigt den „Rückgängig“-Hinweis und blendet ihn nach 5 Sekunden aus.
     ///
-    /// - Parameter target: Mail, deren Kennzeichnung entfernt wurde.
+    /// Verarbeitung: Ein neues Angebot ersetzt ein noch sichtbares.
+    ///
+    /// - Parameter offer: Ausgeführte Änderung und betroffene Mails.
     @MainActor
-    private func offerUndoUnflag(for target: MessageActions.Target) {
+    func offerUndo(_ offer: UndoOffer) {
         undoTask?.cancel()
-        undoUnflag = UndoUnflag(target: target)
+        undoOffer = offer
         undoTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(5))
             guard !Task.isCancelled else { return }
-            self?.undoUnflag = nil
+            self?.undoOffer = nil
         }
     }
 
     /// Blendet den „Rückgängig“-Hinweis aus, ohne etwas zu ändern.
     @MainActor
-    func dismissUndoUnflag() {
+    func dismissUndo() {
         undoTask?.cancel()
-        undoUnflag = nil
+        undoOffer = nil
     }
 
-    /// Stellt eine eben entfernte Kennzeichnung wieder her.
+    /// Nimmt eine eben ausgeführte Änderung zurück.
     ///
-    /// - Parameter undo: Angaben zur betroffenen Mail.
+    /// Verarbeitung: Mail für Mail; scheitert eine, laufen die übrigen
+    /// weiter, und die Meldung nennt die Anzahl der gescheiterten.
+    ///
+    /// - Parameter offer: Ausgeführte Änderung und betroffene Mails.
     @MainActor
-    func undo(_ undo: UndoUnflag) async {
-        dismissUndoUnflag()
-        do {
-            try await MessageActions.setFlagged(true, for: undo.target, accountStore: accountStore)
-            loadFromCache()
-        } catch {
-            alert = .failure("Rückgängig fehlgeschlagen", error)
+    func undo(_ offer: UndoOffer) async {
+        dismissUndo()
+        var failures = 0
+        var lastError: Error?
+        for target in offer.targets {
+            do {
+                try await MessageActions.apply(offer.change.reversed, to: target, accountStore: accountStore)
+            } catch {
+                failures += 1
+                lastError = error
+            }
+        }
+        loadFromCache()
+        if let lastError {
+            alert = offer.targets.count <= 1
+                ? .failure("Rückgängig fehlgeschlagen", lastError)
+                : AlertItem(
+                    title: "Rückgängig fehlgeschlagen",
+                    message: "\(failures) von \(offer.targets.count) Mails: \(lastError.localizedDescription)"
+                )
         }
     }
 }
