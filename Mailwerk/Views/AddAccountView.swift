@@ -3,16 +3,17 @@
 //  Mailwerk
 //
 //  Zweck: Formular zum Einrichten eines Postfachs – Bezeichnung,
-//  Absendername, Zugangsdaten, IMAP- und SMTP-Server – mit
-//  Verbindungstest. Speichern legt das Postfach an und das Passwort im
-//  Schlüsselbund ab; scheitert das, bleibt das Formular mit allen
-//  Eingaben offen und eine Meldung erklärt den Grund.
+//  Absendername, E-Mail-Adresse, Benutzername, Passwort, IMAP- und
+//  SMTP-Server – mit Verbindungstest. Jede Zeile zeigt ihre Beschriftung
+//  und ein Beispiel (LabeledInputField). Speichern legt das Postfach an
+//  und das Passwort im Schlüsselbund ab; scheitert das, bleibt das
+//  Formular mit allen Eingaben offen und eine Meldung erklärt den Grund.
 //
 //  Abgrenzung: Eingabeprüfung, Verbindungstest und Aufbau des Postfachs
 //  → AddAccountViewModel; Bearbeiten → EditAccountView.
 //
 //  Abhängigkeiten: SwiftUI, AddAccountViewModel, AccountStore, Dialogs,
-//  PlatformInputModifiers (Eingabearten der Felder).
+//  LabeledInputField, PlatformInputModifiers (Eingabearten der Felder).
 //
 
 import SwiftUI
@@ -32,29 +33,46 @@ struct AddAccountView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("Bezeichnung", text: $viewModel.displayName)
-                    TextField("Absendername", text: $viewModel.senderName)
+                    LabeledInputField(label: "Bezeichnung", example: "z. B. Privat",
+                                      text: $viewModel.displayName)
+                    LabeledInputField(label: "Absendername", example: "z. B. Max Müller",
+                                      text: $viewModel.senderName)
                         .textContentType(.name)
-                    TextField("Benutzername / E-Mail", text: $viewModel.username)
+                    LabeledInputField(label: "E-Mail-Adresse", example: "z. B. max.mueller@mail.org",
+                                      text: $viewModel.emailAddress)
+                        .emailInput()
+                    LabeledInputField(label: "Benutzername", example: "leer = E-Mail-Adresse",
+                                      text: $viewModel.username)
                         .plainTextInput()
-                    SecureField("Passwort", text: $viewModel.password)
+                    LabeledInputField(label: "Passwort", example: "erforderlich",
+                                      text: $viewModel.password, isSecure: true)
                 } header: {
                     Text("Konto")
                 } footer: {
-                    Text("Die Bezeichnung dient nur zur Anzeige in Mailwerk. Der Absendername erscheint beim Empfänger vor deiner Adresse.")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Die Bezeichnung dient nur zur Anzeige in Mailwerk, der Absendername erscheint beim Empfänger vor der Adresse. Den Benutzernamen nur eintragen, wenn sich der Anbieter nicht mit der E-Mail-Adresse anmeldet.")
+                        if !viewModel.emailAddress.isEmpty && !viewModel.hasValidEmailAddress {
+                            Text("Die E-Mail-Adresse ist ungültig.")
+                                .foregroundStyle(.red)
+                        }
+                    }
                 }
 
                 Section("IMAP (Empfang)") {
-                    TextField("Host", text: $viewModel.imapHost)
+                    LabeledInputField(label: "Host", example: "z. B. imap.mail.org",
+                                      text: $viewModel.imapHost)
                         .plainTextInput()
-                    TextField("Port", text: $viewModel.imapPort)
+                    LabeledInputField(label: "Port", example: "z. B. 993",
+                                      text: $viewModel.imapPort)
                         .numberInput()
                 }
 
                 Section("SMTP (Versand)") {
-                    TextField("Host", text: $viewModel.smtpHost)
+                    LabeledInputField(label: "Host", example: "z. B. smtp.mail.org",
+                                      text: $viewModel.smtpHost)
                         .plainTextInput()
-                    TextField("Port", text: $viewModel.smtpPort)
+                    LabeledInputField(label: "Port", example: "z. B. 587",
+                                      text: $viewModel.smtpPort)
                         .numberInput()
                 }
 

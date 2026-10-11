@@ -3,8 +3,16 @@
 //  Mailwerk
 //
 //  Zweck: Datenmodell eines eingerichteten IMAP-/SMTP-Postfachs – Bezeichnung,
-//  Absendername, Benutzername, Server und Ports, Farbe und gemerkter
-//  Spam-Ordner.
+//  Absendername, Benutzername, E-Mail-Adresse, Server und Ports, Farbe und
+//  gemerkter Spam-Ordner.
+//
+//  Benutzername und E-Mail-Adresse sind getrennt: Der Benutzername dient
+//  nur der Anmeldung, die Adresse dem Versand („From“) und dem Erkennen
+//  der eigenen Adresse bei „Allen antworten“. In den Formularen ist die
+//  Adresse Pflicht und der Benutzername optional – leer heißt „Anmeldung
+//  mit der Adresse“ (`loginName`). Gespeichert wird immer der tatsächliche
+//  Anmeldename. Ältere Postfächer ohne Adressfeld laufen weiter:
+//  `senderAddress` fällt dann auf den Benutzernamen zurück.
 //
 //  Das Passwort gehört bewusst nicht dazu; es liegt im Schlüsselbund
 //  (KeychainService), referenziert über `id`. Verbindungen sind immer
@@ -35,9 +43,14 @@ struct MailAccount: Identifiable, Codable, Equatable {
     /// z. B. "Kim Sieber". nil = nur die Adresse wird gesendet.
     var senderName: String?
 
-    /// Für IMAP/SMTP-Login (bei manitu die volle E-Mail-Adresse).
-    /// Dient zugleich als Absenderadresse.
+    /// Tatsächlicher Anmeldename für IMAP und SMTP (bei manitu die volle
+    /// E-Mail-Adresse).
     var username: String
+
+    /// E-Mail-Adresse des Postfachs. Bei neu angelegten oder bearbeiteten
+    /// Postfächern immer gesetzt; `nil` nur bei älteren gespeicherten
+    /// Postfächern – dann ist der Benutzername die Adresse.
+    var emailAddress: String?
 
     /// IMAP-Server.
     var imapHost: String
@@ -65,7 +78,8 @@ struct MailAccount: Identifiable, Codable, Equatable {
     ///   - id: Kennung (neu, wenn nicht angegeben).
     ///   - displayName: Bezeichnung in der App.
     ///   - senderName: Name in der Absenderzeile.
-    ///   - username: Anmeldename, zugleich Absenderadresse.
+    ///   - username: Anmeldename.
+    ///   - emailAddress: Abweichende E-Mail-Adresse; leer wird zu `nil`.
     ///   - imapHost: IMAP-Server.
     ///   - imapPort: IMAP-Port.
     ///   - smtpHost: SMTP-Server.
@@ -77,6 +91,7 @@ struct MailAccount: Identifiable, Codable, Equatable {
         displayName: String,
         senderName: String? = nil,
         username: String,
+        emailAddress: String? = nil,
         imapHost: String,
         imapPort: Int = 993,
         smtpHost: String,
@@ -88,12 +103,33 @@ struct MailAccount: Identifiable, Codable, Equatable {
         self.displayName = displayName
         self.senderName = MailAccount.normalized(senderName)
         self.username = username
+        self.emailAddress = MailAccount.normalized(emailAddress)
         self.imapHost = imapHost
         self.imapPort = imapPort
         self.smtpHost = smtpHost
         self.smtpPort = smtpPort
         self.colorHex = colorHex
         self.spamFolder = spamFolder
+    }
+
+    /// Adresse für Versand und Erkennen der eigenen Adresse: die
+    /// E-Mail-Adresse, sonst der Benutzername, ohne Leerraum an den Rändern.
+    var senderAddress: String {
+        (emailAddress ?? username).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Anmeldename aus den Formularfeldern: der eingetragene Benutzername,
+    /// sonst die E-Mail-Adresse.
+    ///
+    /// - Parameters:
+    ///   - username: Eingabe im Feld Benutzername (darf leer sein).
+    ///   - emailAddress: Eingabe im Feld E-Mail-Adresse.
+    /// - Returns: Anmeldename ohne Leerraum an den Rändern.
+    static func loginName(username: String, emailAddress: String) -> String {
+        let login = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        return login.isEmpty
+            ? emailAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+            : login
     }
 
     /// Bereinigt einen Namen: Leerraum an den Rändern entfällt, ein leerer

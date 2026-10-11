@@ -3,7 +3,7 @@
 //  Mailwerk
 //
 //  Zweck: Postfachverwaltung – Liste der Postfächer mit Farbe, Name und
-//  Benutzername; Hinzufügen, Bearbeiten (Tipp) und Entfernen (Wischen);
+//  E-Mail-Adresse; Hinzufügen, Bearbeiten (Tipp) und Entfernen (Wischen);
 //  Wahl des Standard-Postfachs für neue Mails.
 //
 //  Ein Postfach zu entfernen löscht auch seinen gesamten Cache und sein
@@ -80,7 +80,7 @@ struct AccountListView: View {
 
     // MARK: - Abschnitte
 
-    /// Postfächer mit Farbpunkt, Name und Benutzername; Tipp bearbeitet,
+    /// Postfächer mit Farbpunkt, Name und E-Mail-Adresse; Tipp bearbeitet,
     /// Wischen entfernt (nach Rückfrage).
     private var accountSection: some View {
         Section {
@@ -97,7 +97,7 @@ struct AccountListView: View {
                         VStack(alignment: .leading) {
                             Text(account.displayName)
                                 .font(.headline)
-                            Text(account.username)
+                            Text(account.senderAddress)
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }

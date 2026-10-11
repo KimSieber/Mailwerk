@@ -116,7 +116,7 @@ final class ComposeViewModel {
         let replyingAccountID = original?.accountID ?? accountStore.defaultAccountID
         let ownAddress = accountStore.accounts
             .first { $0.id == replyingAccountID }?
-            .username
+            .senderAddress
             .lowercased()
         let ownAddresses = Set([ownAddress].compactMap { $0 })
 

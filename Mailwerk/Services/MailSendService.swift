@@ -132,7 +132,7 @@ enum MailSendService {
 
     /// Fehler, bei denen die Nachricht nicht (sicher) versendet wurde.
     enum SendError: LocalizedError, Equatable {
-        /// Die Absenderadresse (Benutzername des Postfachs) ist ungültig.
+        /// Die Absenderadresse des Postfachs (`senderAddress`) ist ungültig.
         case invalidSender(String)
         /// Kein Empfänger angegeben.
         case noRecipients
@@ -157,7 +157,7 @@ enum MailSendService {
         var errorDescription: String? {
             switch self {
             case .invalidSender(let address):
-                return "Die Absenderadresse „\(address)“ ist ungültig. Bitte den Benutzernamen des Postfachs prüfen."
+                return "Die Absenderadresse „\(address)“ ist ungültig. Bitte die E-Mail-Adresse des Postfachs prüfen."
             case .noRecipients:
                 return "Bitte mindestens einen Empfänger angeben."
             case .invalidRecipient(let address):
@@ -220,8 +220,8 @@ enum MailSendService {
         let account = credentials.account
         let password = credentials.password
 
-        // Absender prüfen – der Benutzername des Postfachs ist die Adresse
-        let senderAddress = account.username.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Absender prüfen – E-Mail-Adresse des Postfachs, sonst Benutzername
+        let senderAddress = account.senderAddress
         guard senderAddress.isValidEmail() else {
             throw SendError.invalidSender(senderAddress)
         }

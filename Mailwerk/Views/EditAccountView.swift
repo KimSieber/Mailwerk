@@ -3,16 +3,24 @@
 //  Mailwerk
 //
 //  Zweck: Formular zum Bearbeiten eines Postfachs – Bezeichnung,
-//  Absendername, Zugangsdaten, Server, Farbe – mit Verbindungstest. Ein
-//  leeres Passwortfeld lässt das gespeicherte Passwort unverändert.
-//  Scheitert das Speichern, bleibt das Formular offen und eine Meldung
-//  erklärt den Grund.
+//  Absendername, E-Mail-Adresse, Benutzername, Passwort, Server, Farbe –
+//  mit Verbindungstest. Jede Zeile zeigt ihre Beschriftung und ein
+//  Beispiel (LabeledInputField). Ein leeres Passwortfeld lässt das
+//  gespeicherte Passwort unverändert. Scheitert das Speichern, bleibt das
+//  Formular offen und eine Meldung erklärt den Grund.
+//
+//  Die E-Mail-Adresse ist Pflicht und muss gültig sein. Der Benutzername
+//  erscheint nur, wenn er von der Adresse abweicht; leer heißt „Anmeldung
+//  mit der E-Mail-Adresse“ (`MailAccount.loginName`). Ältere Postfächer
+//  ohne Adressfeld zeigen ihren Benutzernamen als Adresse und bekommen sie
+//  beim Sichern eingetragen.
 //
 //  Abgrenzung: Neues Postfach → AddAccountView; Speichern →
 //  AccountStore; Verbindungstest → MailConnectionTester.
 //
 //  Abhängigkeiten: SwiftUI, AccountStore, MailConnectionTester,
-//  ColorPickerGrid, Dialogs.
+//  ColorPickerGrid, MailAddress (Prüfung der Adresse), Dialogs,
+//  LabeledInputField, PlatformInputModifiers.
 //
 
 import SwiftUI
@@ -30,7 +38,9 @@ struct EditAccountView: View {
     @State private var displayName: String
     /// Absendername beim Empfänger.
     @State private var senderName: String
-    /// Benutzername bzw. Adresse.
+    /// E-Mail-Adresse (Pflicht).
+    @State private var emailAddress: String
+    /// Abweichender Anmeldename; leer = Anmeldung mit der E-Mail-Adresse.
     @State private var username: String
     /// Neues Passwort; leer = nicht ändern.
     @State private var password: String = ""
@@ -71,7 +81,8 @@ struct EditAccountView: View {
         self.account = account
         _displayName = State(initialValue: account.displayName)
         _senderName = State(initialValue: account.senderName ?? "")
-        _username = State(initialValue: account.username)
+        _emailAddress = State(initialValue: account.senderAddress)
+        _username = State(initialValue: account.username == account.senderAddress ? "" : account.username)
         _imapHost = State(initialValue: account.imapHost)
         _imapPort = State(initialValue: String(account.imapPort))
         _smtpHost = State(initialValue: account.smtpHost)
@@ -79,9 +90,19 @@ struct EditAccountView: View {
         _selectedColor = State(initialValue: AccountColor.from(hex: account.colorHex))
     }
 
-    /// Pflichtfelder gefüllt und Ports als Zahl lesbar.
+    /// Anmeldename: der eingetragene Benutzername, sonst die E-Mail-Adresse.
+    private var loginName: String {
+        MailAccount.loginName(username: username, emailAddress: emailAddress)
+    }
+
+    /// `true`, wenn die E-Mail-Adresse gültig ist.
+    private var hasValidEmailAddress: Bool {
+        MailAddress(address: emailAddress).isValid
+    }
+
+    /// Pflichtfelder gefüllt, Ports als Zahl lesbar und E-Mail-Adresse gültig.
     private var isValid: Bool {
-        !displayName.isEmpty && !username.isEmpty
+        !displayName.isEmpty && hasValidEmailAddress
             && !imapHost.isEmpty && !smtpHost.isEmpty
             && Int(imapPort) != nil && Int(smtpPort) != nil
     }
@@ -91,29 +112,46 @@ struct EditAccountView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("Bezeichnung", text: $displayName)
-                    TextField("Absendername", text: $senderName)
+                    LabeledInputField(label: "Bezeichnung", example: "z. B. Privat",
+                                      text: $displayName)
+                    LabeledInputField(label: "Absendername", example: "z. B. Max Müller",
+                                      text: $senderName)
                         .textContentType(.name)
-                    TextField("Benutzername / E-Mail", text: $username)
+                    LabeledInputField(label: "E-Mail-Adresse", example: "z. B. max.mueller@mail.org",
+                                      text: $emailAddress)
+                        .emailInput()
+                    LabeledInputField(label: "Benutzername", example: "leer = E-Mail-Adresse",
+                                      text: $username)
                         .plainTextInput()
-                    SecureField("Neues Passwort (leer = unverändert)", text: $password)
+                    LabeledInputField(label: "Passwort", example: "leer = unverändert",
+                                      text: $password, isSecure: true)
                 } header: {
                     Text("Konto")
                 } footer: {
-                    Text("Die Bezeichnung dient nur zur Anzeige in Mailwerk. Der Absendername erscheint beim Empfänger vor deiner Adresse.")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Die Bezeichnung dient nur zur Anzeige in Mailwerk, der Absendername erscheint beim Empfänger vor der Adresse. Den Benutzernamen nur eintragen, wenn sich der Anbieter nicht mit der E-Mail-Adresse anmeldet.")
+                        if !emailAddress.isEmpty && !hasValidEmailAddress {
+                            Text("Die E-Mail-Adresse ist ungültig.")
+                                .foregroundStyle(.red)
+                        }
+                    }
                 }
 
                 Section("IMAP (Empfang)") {
-                    TextField("Host", text: $imapHost)
+                    LabeledInputField(label: "Host", example: "z. B. imap.mail.org",
+                                      text: $imapHost)
                         .plainTextInput()
-                    TextField("Port", text: $imapPort)
+                    LabeledInputField(label: "Port", example: "z. B. 993",
+                                      text: $imapPort)
                         .numberInput()
                 }
 
                 Section("SMTP (Versand)") {
-                    TextField("Host", text: $smtpHost)
+                    LabeledInputField(label: "Host", example: "z. B. smtp.mail.org",
+                                      text: $smtpHost)
                         .plainTextInput()
-                    TextField("Port", text: $smtpPort)
+                    LabeledInputField(label: "Port", example: "z. B. 587",
+                                      text: $smtpPort)
                         .numberInput()
                 }
 
@@ -173,7 +211,8 @@ struct EditAccountView: View {
         var updated = account
         updated.displayName = displayName
         updated.senderName = MailAccount.normalized(senderName)
-        updated.username = username
+        updated.username = loginName
+        updated.emailAddress = MailAccount.normalized(emailAddress)
         updated.imapHost = imapHost
         updated.imapPort = Int(imapPort) ?? 993
         updated.smtpHost = smtpHost
@@ -193,7 +232,7 @@ struct EditAccountView: View {
 
     /// Prüft IMAP und SMTP mit den eingegebenen Werten.
     ///
-    /// Verarbeitung: Ohne neues Passwort wird das gespeicherte gelesen; ein
+    /// Verarbeitung: Angemeldet wird mit `loginName`. Ohne neues Passwort wird das gespeicherte gelesen; ein
     /// Fehler des Schlüsselbunds wird benannt, statt als „kein Passwort“
     /// zu erscheinen. Das Ergebnis steht in `testResult`.
     @MainActor
@@ -229,11 +268,11 @@ struct EditAccountView: View {
         do {
             try await MailConnectionTester.testIMAP(
                 host: imapHost, port: imapPortInt,
-                username: username, password: testPassword
+                username: loginName, password: testPassword
             )
             try await MailConnectionTester.testSMTP(
                 host: smtpHost, port: smtpPortInt,
-                username: username, password: testPassword
+                username: loginName, password: testPassword
             )
             testResult = .success
         } catch {

@@ -5,10 +5,15 @@
 //  Zweck: Eingaben, Prüfung und Verbindungstest des Formulars „Postfach
 //  hinzufügen“ sowie der Aufbau des neuen Postfachs.
 //
+//  Die E-Mail-Adresse ist Pflicht und muss gültig sein – sie ist der
+//  Absender beim Versand. Der Benutzername ist optional: Bleibt er leer,
+//  meldet sich Mailwerk mit der E-Mail-Adresse an (`loginName`).
+//
 //  Abgrenzung: Formular → AddAccountView; Speichern → AccountStore;
 //  Verbindungstest → MailConnectionTester.
 //
-//  Abhängigkeiten: Foundation, Observation, MailConnectionTester, MailAccount.
+//  Abhängigkeiten: Foundation, Observation, MailConnectionTester,
+//  MailAccount, MailAddress (Prüfung der Adresse).
 //
 
 import Foundation
@@ -21,7 +26,9 @@ final class AddAccountViewModel {
     var displayName = ""
     /// Name in der Absenderzeile.
     var senderName = ""
-    /// Anmeldename, zugleich Absenderadresse.
+    /// E-Mail-Adresse (Pflicht).
+    var emailAddress = ""
+    /// Anmeldename; leer = Anmeldung mit der E-Mail-Adresse.
     var username = ""
     /// Passwort (geht nur in den Schlüsselbund).
     var password = ""
@@ -42,13 +49,26 @@ final class AddAccountViewModel {
 
     /// Ergebnis eines Verbindungstests.
     enum TestResult: Equatable {
+        /// IMAP und SMTP erreichbar.
         case success
+        /// Fehlgeschlagen (mit Meldung).
         case failure(String)
     }
 
-    /// `true`, wenn alle Pflichtfelder gefüllt und die Ports Zahlen sind.
+    /// Anmeldename: der eingetragene Benutzername, sonst die E-Mail-Adresse.
+    var loginName: String {
+        MailAccount.loginName(username: username, emailAddress: emailAddress)
+    }
+
+    /// `true`, wenn die E-Mail-Adresse gültig ist.
+    var hasValidEmailAddress: Bool {
+        MailAddress(address: emailAddress).isValid
+    }
+
+    /// `true`, wenn alle Pflichtfelder gefüllt, die Ports Zahlen und die
+    /// E-Mail-Adresse gültig sind.
     var isValid: Bool {
-        !displayName.isEmpty && !username.isEmpty && !password.isEmpty
+        !displayName.isEmpty && hasValidEmailAddress && !password.isEmpty
             && !imapHost.isEmpty && !smtpHost.isEmpty
             && Int(imapPort) != nil && Int(smtpPort) != nil
     }
@@ -56,7 +76,8 @@ final class AddAccountViewModel {
     /// Prüft Anmeldung bei IMAP und SMTP mit den Eingaben.
     ///
     /// Verarbeitung: Ungültige Ports werden ohne Verbindungsversuch gemeldet;
-    /// das Ergebnis steht danach in `testResult`.
+    /// angemeldet wird mit `loginName`. Das Ergebnis steht danach in
+    /// `testResult`.
     @MainActor
     func testConnection() async {
         guard let imapPortInt = Int(imapPort), let smtpPortInt = Int(smtpPort) else {
@@ -68,10 +89,10 @@ final class AddAccountViewModel {
 
         do {
             try await MailConnectionTester.testIMAP(
-                host: imapHost, port: imapPortInt, username: username, password: password
+                host: imapHost, port: imapPortInt, username: loginName, password: password
             )
             try await MailConnectionTester.testSMTP(
-                host: smtpHost, port: smtpPortInt, username: username, password: password
+                host: smtpHost, port: smtpPortInt, username: loginName, password: password
             )
             testResult = .success
         } catch {
@@ -81,12 +102,14 @@ final class AddAccountViewModel {
 
     /// Baut das Postfach aus den Eingaben.
     ///
-    /// - Returns: Neues Postfach; ungültige Ports fallen auf 993 bzw. 587 zurück.
+    /// - Returns: Neues Postfach mit E-Mail-Adresse und tatsächlichem
+    ///   Anmeldenamen; ungültige Ports fallen auf 993 bzw. 587 zurück.
     func makeAccount() -> MailAccount {
         MailAccount(
             displayName: displayName,
             senderName: senderName,
-            username: username,
+            username: loginName,
+            emailAddress: emailAddress,
             imapHost: imapHost,
             imapPort: Int(imapPort) ?? 993,
             smtpHost: smtpHost,
