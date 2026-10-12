@@ -18,6 +18,10 @@
 //  Regel steht in der Datei selbst und gilt damit auch, wenn der
 //  Empfänger sie im Browser öffnet.
 //
+//  Eingebettete Bilder (`cid:`) folgen ebenfalls der Anzeige: Sie werden
+//  als `data:`-Adressen eingesetzt (InlineImages), die Datei ist damit in
+//  sich geschlossen.
+//
 //  Kopfdaten, Dateinamen und Textmails werden für HTML maskiert. Eine
 //  reine Textmail erscheint als vorformatierter Block. Breite Tabellen
 //  und Bilder werden auf die Seitenbreite begrenzt.
@@ -27,7 +31,8 @@
 //  Abgrenzung: Drucken → MailPrinter; Teilen-Menü → MessageDetailView
 //  (`ShareLink`); Anzeige der Mail → HTMLMailView.
 //
-//  Abhängigkeiten: CachedMessage, CachedAttachment, RemoteContentPolicy.
+//  Abhängigkeiten: CachedMessage, CachedAttachment, RemoteContentPolicy,
+//  InlineImages.
 //
 
 import Foundation
@@ -41,21 +46,26 @@ enum MailPrintFormatter {
     /// Vollständiges HTML-Dokument der Mail.
     ///
     /// Verarbeitung: Sicherheitsregeln im Kopf; Kopfdaten maskiert; Inhalt
-    /// als HTML-Teil oder – bei reinen Textmails – maskiert in `<pre>`; am
-    /// Ende die Anhangliste.
+    /// als HTML-Teil mit eingesetzten eingebetteten Bildern oder – bei
+    /// reinen Textmails – maskiert in `<pre>`; am Ende die Anhangliste.
     ///
     /// - Parameters:
     ///   - message: Mail.
     ///   - attachments: Anhänge für die Liste am Ende.
+    ///   - inlineImages: Anhänge der Mail, aus denen eingebettete Bilder
+    ///     eingesetzt werden.
     ///   - allowsRemoteContent: `true`, wenn externe Inhalte in der Anzeige
     ///     freigegeben sind; sonst bleiben sie gesperrt.
     /// - Returns: HTML-Dokument.
     static func html(
         for message: CachedMessage,
         attachments: [CachedAttachment] = [],
+        inlineImages: [CachedAttachment] = [],
         allowsRemoteContent: Bool = false
     ) -> String {
-        """
+        let body = message.htmlBody.map { InlineImages.resolve($0, images: inlineImages) }
+            ?? "<pre>\(escaped(message.textBody ?? ""))</pre>"
+        return """
         <!DOCTYPE html>
         <html>
         <head>
@@ -66,7 +76,7 @@ enum MailPrintFormatter {
         </head>
         <body>
         <div class="mail-header">\(header(for: message))</div>
-        \(message.htmlBody ?? "<pre>\(escaped(message.textBody ?? ""))</pre>")
+        \(body)
         \(attachmentSection(attachments))
         </body>
         </html>
@@ -81,6 +91,8 @@ enum MailPrintFormatter {
     /// - Parameters:
     ///   - message: Mail.
     ///   - attachments: Anhänge für die Liste am Ende.
+    ///   - inlineImages: Anhänge der Mail, aus denen eingebettete Bilder
+    ///     eingesetzt werden.
     ///   - allowsRemoteContent: `true`, wenn externe Inhalte in der Anzeige
     ///     freigegeben sind.
     /// - Returns: URL der Datei.
@@ -88,11 +100,15 @@ enum MailPrintFormatter {
     static func writeTemporaryFile(
         for message: CachedMessage,
         attachments: [CachedAttachment] = [],
+        inlineImages: [CachedAttachment] = [],
         allowsRemoteContent: Bool = false
     ) throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(filename(forSubject: message.subject) + ".html")
-        let document = html(for: message, attachments: attachments, allowsRemoteContent: allowsRemoteContent)
+        let document = html(
+            for: message, attachments: attachments,
+            inlineImages: inlineImages, allowsRemoteContent: allowsRemoteContent
+        )
         try Data(document.utf8).write(to: url, options: .atomic)
         return url
     }

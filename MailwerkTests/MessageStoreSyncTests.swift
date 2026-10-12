@@ -153,7 +153,7 @@ struct MessageStoreSyncTests {
         let state = FolderSyncState(uidValidity: 3, uidNext: 4)
         store.recordSync(accountID: account, folder: "INBOX", state: state)
         #expect(store.syncState(accountID: account, folder: "INBOX") == state)
-        #expect(userVersion(at: path) == 5)
+        #expect(userVersion(at: path) == 6)
     }
 
     /// Testhilfe: legt eine Datenbank im Zustand der Schema-Stufe 1 an

@@ -13,7 +13,8 @@
 //  „nicht vertrauenswürdig“ behandeln.
 //
 //  Abgrenzung: Speichern und Lesen → MessageStore; Befüllen beim Abruf →
-//  MailFetchService; Listeneinträge ohne Inhalt → MessageListItem.
+//  MailFetchService; Listeneinträge ohne Inhalt → MessageListItem;
+//  Regeln für eingebettete Bilder → InlineImages.
 //
 //  Abhängigkeiten: Foundation, SpamHeaderVerdict.
 //
@@ -99,6 +100,10 @@ struct CachedMessage: Identifiable {
 }
 
 /// Ein einzelner gecachter Anhang, referenziert über die messageID.
+///
+/// Eingebettete Bilder (Inline-Teile, im HTML per `cid:` angesprochen)
+/// liegen in derselben Tabelle mit `isInline` und ihrer Content-ID; ob sie
+/// in der Anhangliste erscheinen, entscheidet `InlineImages`.
 struct CachedAttachment: Identifiable {
     /// Kennung "<messageID>-<partSection>".
     let id: String
@@ -112,4 +117,19 @@ struct CachedAttachment: Identifiable {
     let sizeBytes: Int
     /// Inhalt; `nil` = noch nicht heruntergeladen oder lokal gelöscht.
     let data: Data?
+    /// Content-ID ohne spitze Klammern; `nil` = keine.
+    var contentID: String? = nil
+    /// `true` = eingebettetes Bild (Inline-Teil), kein echter Anhang.
+    var isInline: Bool = false
+
+    /// Derselbe Anhang mit anderen Daten (z. B. nach dem Nachladen).
+    ///
+    /// - Parameter data: Neue Daten.
+    /// - Returns: Kopie mit den Daten; die Größe folgt den Daten.
+    func with(data: Data) -> CachedAttachment {
+        CachedAttachment(
+            id: id, messageID: messageID, filename: filename, contentType: contentType,
+            sizeBytes: data.count, data: data, contentID: contentID, isInline: isInline
+        )
+    }
 }

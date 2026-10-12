@@ -32,7 +32,8 @@ import Foundation
 import SwiftMail
 import os
 
-/// Ein Anhang, der mitgesendet wird.
+/// Ein Anhang, der mitgesendet wird – oder, mit Content-ID, ein
+/// eingebettetes Bild, das das HTML per `cid:` anspricht.
 struct OutgoingAttachment: Equatable {
     /// Dateiname, wie er beim Empfänger erscheint.
     let filename: String
@@ -40,6 +41,9 @@ struct OutgoingAttachment: Equatable {
     let mimeType: String
     /// Inhalt des Anhangs.
     let data: Data
+    /// Content-ID ohne spitze Klammern; gesetzt = eingebettetes Bild
+    /// (Inline-Teil), `nil` = gewöhnlicher Anhang.
+    var contentID: String? = nil
 }
 
 /// Eine versandfertige Nachricht.
@@ -269,7 +273,7 @@ enum MailSendService {
     /// Baut aus der verfassten Nachricht das SwiftMail-Objekt.
     ///
     /// Verarbeitung: Übernimmt Empfänger, Betreff, Text- und HTML-Teil sowie
-    /// Anhänge. Erzeugt eine Message-ID aus der Absenderdomain, die für
+    /// Anhänge und eingebettete Bilder. Erzeugt eine Message-ID aus der Absenderdomain, die für
     /// Versand und Gesendet-Kopie gleich bleibt, und setzt die
     /// Threading-Header In-Reply-To und References.
     ///
@@ -283,8 +287,13 @@ enum MailSendService {
         account: MailAccount,
         senderAddress: String
     ) -> Email {
+        // Eingebettete Bilder als Inline-Teile mit ihrer Content-ID; SwiftMail
+        // fasst sie mit dem HTML in „multipart/related“ zusammen.
         let attachments = mail.attachments.map {
-            SwiftMail.Attachment(filename: $0.filename, mimeType: $0.mimeType, data: $0.data)
+            SwiftMail.Attachment(
+                filename: $0.filename, mimeType: $0.mimeType, data: $0.data,
+                contentID: $0.contentID, isInline: $0.contentID != nil
+            )
         }
         var email = Email(
             sender: SwiftMail.EmailAddress(name: account.senderName, address: senderAddress),

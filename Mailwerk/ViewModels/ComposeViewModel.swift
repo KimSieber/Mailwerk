@@ -7,6 +7,12 @@
 //
 //  - Vorbelegung über den ReplyBuilder bzw. aus einem mailto:-Link
 //  - Verwaltung eigener und übernommener Anhänge
+//  - Eingebettete Bilder des Zitats: Beim Antworten und Weiterleiten gehen
+//    die im zitierten HTML angesprochenen Bilder (`cid:`) als Inline-Teile
+//    mit derselben Content-ID mit, damit das Zitat beim Empfänger
+//    vollständig ist. Fehlende Bilder werden beim Senden nachgeladen
+//    (InlineImageLoader). In der Anhangliste erscheinen sie nicht; die
+//    Vorschau des Zitats zeigt sie eingesetzt.
 //  - Zusammenbau von HTML- und Textteil (eigener Text plus Zitat)
 //  - Versand über den MailSendService, inkl. Bezug auf die Originalmail
 //  - Erkennen ungespeicherter Eingaben beim Abbrechen
@@ -15,7 +21,8 @@
 //  Versand und die Nacharbeiten im MailSendService.
 //
 //  Abhängigkeiten: AccountStore, ReplyBuilder, RichTextHTML,
-//  MailSendService, AttachmentManager, MessageStore.
+//  MailSendService, AttachmentManager, MessageStore, InlineImages,
+//  InlineImageLoader.
 //
 
 import Foundation
@@ -74,8 +81,12 @@ final class ComposeViewModel {
     private let original: CachedMessage?
     /// Quelle für Postfächer und Passwörter.
     private let accountStore: AccountStore
-    /// Zitat bzw. weitergeleiteter Inhalt als HTML.
+    /// Zitat bzw. weitergeleiteter Inhalt als HTML (mit `cid:`-Verweisen,
+    /// so wird er gesendet).
     private(set) var quotedHTML: String?
+    /// Zitat für die Vorschau im Fenster, mit eingesetzten Bildern. Wird
+    /// nur bei geänderten Bildern neu gebildet, nicht bei jeder Eingabe.
+    private(set) var quotedPreviewHTML: String?
     /// Zitat bzw. weitergeleiteter Inhalt als Text.
     private(set) var quotedText: String?
     /// Message-ID der Originalnachricht für den Header In-Reply-To.
@@ -89,9 +100,11 @@ final class ComposeViewModel {
     /// Legt das Verfassen-Fenster an und belegt es vor.
     ///
     /// Verarbeitung: Ermittelt die Vorbelegung über den ReplyBuilder (die
-    /// eigene Adresse entfällt bei „Allen antworten“). Beim Weiterleiten
-    /// werden die Anhänge der Originalmail übernommen; noch nicht geladene
-    /// werden erst beim Senden nachgeladen. Ein mailto:-Link überschreibt
+    /// eigene Adresse entfällt bei „Allen antworten“). Beim Antworten und
+    /// Weiterleiten werden die vom Zitat angesprochenen Bilder vorgemerkt.
+    /// Beim Weiterleiten werden die Anhänge der Originalmail übernommen;
+    /// noch nicht geladene Anhänge und Bilder werden erst beim Senden
+    /// nachgeladen. Ein mailto:-Link überschreibt
     /// Empfänger, Betreff und Text. Erst ganz am Ende wird der
     /// Ausgangszustand für die Änderungserkennung festgehalten – einmal,
     /// aus den fertig vorbelegten Feldern.
@@ -135,10 +148,21 @@ final class ComposeViewModel {
         inReplyTo = prefill.inReplyTo
         references = prefill.references
 
+        if let original, kind != .new {
+            // Eingebettete Bilder, die das Zitat anspricht, gehen mit.
+            originalAttachments = MessageStore.shared.attachments(forMessage: original.id)
+            pendingInlineImages = quotedHTML == nil
+                ? []
+                : InlineImages.referencedImages(originalAttachments, html: original.htmlBody)
+            updateQuotedPreview()
+        }
+
         if kind == .forward, let original {
-            // Anhänge der Originalmail übernehmen; fehlende Daten werden
-            // erst beim Senden nachgeladen.
-            pendingOriginalAttachments = MessageStore.shared.attachments(forMessage: original.id)
+            // Anhänge der Originalmail übernehmen (ohne die Bilder im
+            // Text); fehlende Daten werden erst beim Senden nachgeladen.
+            pendingOriginalAttachments = InlineImages.visibleAttachments(
+                originalAttachments, html: original.htmlBody
+            )
             attachments = pendingOriginalAttachments.compactMap { attachment in
                 guard let data = attachment.data else { return nil }
                 return OutgoingAttachment(
@@ -196,6 +220,13 @@ final class ComposeViewModel {
 
     /// Anhänge der weitergeleiteten Mail (inkl. noch nicht geladener).
     private var pendingOriginalAttachments: [CachedAttachment] = []
+    /// Alle Anhänge der Originalmail aus dem Cache, einschließlich
+    /// eingebetteter Bilder.
+    private var originalAttachments: [CachedAttachment] = []
+    /// Vom Zitat angesprochene eingebettete Bilder (mit oder ohne Daten).
+    private var pendingInlineImages: [CachedAttachment] = []
+    /// Bilder, auf die der Nutzer nach einem Ladefehler verzichtet hat.
+    private var skippedInlineImageIDs: Set<String> = []
 
     // MARK: - Abgeleitete Werte
 
@@ -236,13 +267,15 @@ final class ComposeViewModel {
     /// Verzichtet auf einen Anhang der weitergeleiteten Mail, der sich
     /// nicht laden ließ.
     ///
-    /// Verarbeitung: Der Anhang wird aus den nachzuladenden entfernt; ein
-    /// erneutes Senden versucht ihn nicht mehr. Bereits geladene Anhänge
-    /// bleiben.
+    /// Verarbeitung: Der Anhang (oder das eingebettete Bild) wird aus den
+    /// nachzuladenden entfernt; ein erneutes Senden versucht ihn nicht
+    /// mehr. Bereits geladene Anhänge bleiben.
     ///
     /// - Parameter attachment: Nicht ladbarer Anhang.
     func skipAttachment(_ attachment: CachedAttachment) {
         pendingOriginalAttachments.removeAll { $0.id == attachment.id }
+        pendingInlineImages.removeAll { $0.id == attachment.id }
+        if attachment.isInline { skippedInlineImageIDs.insert(attachment.id) }
         attachmentFailure = nil
     }
 
@@ -283,10 +316,14 @@ final class ComposeViewModel {
         isSending = true
         defer { isSending = false; statusText = nil }
 
-        // Fehlende Anhänge der Originalmail nachladen
+        // Fehlende Anhänge und Bilder der Originalmail nachladen
         if missingAttachmentCount > 0 {
             statusText = "Anhänge werden geladen …"
             if !(await loadMissingAttachments()) { return false }
+        }
+        if needsInlineImageLoad {
+            statusText = "Bilder werden geladen …"
+            if !(await loadMissingInlineImages()) { return false }
         }
 
         statusText = "Nachricht wird gesendet …"
@@ -298,7 +335,7 @@ final class ComposeViewModel {
             subject: subject,
             htmlBody: composedHTML(),
             textBody: composedText(),
-            attachments: attachments,
+            attachments: attachments + outgoingInlineImages,
             inReplyTo: inReplyTo,
             references: references,
             origin: OutgoingMail.Origin(composeKind: kind, original: original)
@@ -338,6 +375,68 @@ final class ComposeViewModel {
         let own = RichTextHTML.plainText(from: body)
         guard let quotedText else { return own }
         return own + "\n\n" + quotedText
+    }
+
+    // MARK: - Eingebettete Bilder
+
+    /// Bildet die Vorschau des Zitats mit den vorhandenen Bildern neu.
+    private func updateQuotedPreview() {
+        quotedPreviewHTML = quotedHTML.map { InlineImages.resolve($0, images: pendingInlineImages) }
+    }
+
+    /// Geladene Bilder des Zitats als Inline-Teile zum Senden.
+    private var outgoingInlineImages: [OutgoingAttachment] {
+        pendingInlineImages.compactMap { image in
+            guard let data = image.data, let contentID = image.contentID else { return nil }
+            return OutgoingAttachment(
+                filename: image.filename, mimeType: image.contentType, data: data, contentID: contentID
+            )
+        }
+    }
+
+    /// `true`, wenn vor dem Senden Bilder nachzuladen sind: ein
+    /// angesprochenes Bild ohne Daten oder ein Verweis, zu dem noch kein
+    /// Eintrag im Cache liegt (Mail vor der Speicherung eingebetteter
+    /// Bilder geladen).
+    private var needsInlineImageLoad: Bool {
+        guard let original, quotedHTML != nil else { return false }
+        if pendingInlineImages.contains(where: { $0.data == nil }) { return true }
+        let known = Set(originalAttachments.compactMap { attachment -> String? in
+            guard attachment.isInline, let id = attachment.contentID else { return nil }
+            return InlineImages.normalizedContentID(id)
+        })
+        return !InlineImages.referencedContentIDs(in: original.htmlBody).isSubset(of: known)
+    }
+
+    /// Lädt fehlende Bilder des Zitats nach.
+    ///
+    /// Verarbeitung: Ein Durchgang über den InlineImageLoader; danach
+    /// gelten die angesprochenen Bilder ohne die übersprungenen. Fehlt
+    /// danach noch ein Bild, steht es in `attachmentFailure`; gesendet wird
+    /// dann nicht, die Ansicht fragt, ob ohne das Bild gesendet werden
+    /// soll. Scheitert schon der Abruf und gibt es kein benennbares Bild
+    /// (nur Verweise ohne Eintrag), wird ohne diese Bilder gesendet.
+    ///
+    /// - Returns: true, wenn gesendet werden kann; false bei einem Fehler.
+    @MainActor
+    private func loadMissingInlineImages() async -> Bool {
+        guard let original else { return true }
+        var reason = "Das Bild ist auf dem Server nicht zu finden."
+        do {
+            originalAttachments = try await InlineImageLoader.loadMissing(
+                for: original, existing: originalAttachments, accountStore: accountStore
+            )
+            pendingInlineImages = InlineImages.referencedImages(originalAttachments, html: original.htmlBody)
+                .filter { !skippedInlineImageIDs.contains($0.id) }
+            updateQuotedPreview()
+        } catch {
+            reason = error.localizedDescription
+        }
+        if let missing = pendingInlineImages.first(where: { $0.data == nil }) {
+            attachmentFailure = AttachmentFailure(attachment: missing, reason: reason)
+            return false
+        }
+        return true
     }
 
     /// Lädt fehlende Anhänge der weitergeleiteten Mail vom Server nach.

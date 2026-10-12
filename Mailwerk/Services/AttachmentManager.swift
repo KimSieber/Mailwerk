@@ -138,8 +138,10 @@ enum AttachmentManager {
     ///
     /// Verarbeitung: Meldet sich am Postfach der Nachricht an, wählt den
     /// **Ordner der Nachricht** und holt nur deren Struktur (ohne Inhalte)
-    /// über die UID. Der passende Teil wird über Dateiname und Content-Type
-    /// bestimmt; nur er wird geladen, dekodiert und im Cache abgelegt.
+    /// über die UID. Der passende Teil wird über seine Abschnittsnummer
+    /// bestimmt (Teil der Anhang-Kennung); passt keine, über Dateiname und
+    /// Content-Type. Nur dieser Teil wird geladen, dekodiert und im Cache
+    /// abgelegt. Gilt für Anhänge wie für eingebettete Bilder.
     ///
     /// - Parameters:
     ///   - attachment: Anhang, dessen Daten fehlen.
@@ -178,11 +180,16 @@ enum AttachmentManager {
                 threshold: 0
             )
 
-            // Passenden Part über Dateiname und Content-Type identifizieren
-            guard let part = plan.attachments.first(where: {
+            // Passenden Teil über die Abschnittsnummer in der Kennung finden,
+            // sonst über Dateiname und Content-Type.
+            let bySection = plan.structure.first {
+                "\(message.id)-\($0.section)" == attachment.id
+            }
+            let byName = plan.attachments.first {
                 $0.filename == attachment.filename
                     && $0.contentType == attachment.contentType
-            }) else {
+            }
+            guard let part = bySection ?? byName else {
                 throw AttachmentError.partNotFound
             }
 
@@ -191,15 +198,8 @@ enum AttachmentManager {
             )
         }
 
-        // Im Cache aktualisieren
-        let updated = CachedAttachment(
-            id: attachment.id,
-            messageID: attachment.messageID,
-            filename: attachment.filename,
-            contentType: attachment.contentType,
-            sizeBytes: data.count,
-            data: data
-        )
+        // Im Cache aktualisieren (Content-ID und Kennzeichen bleiben).
+        let updated = attachment.with(data: data)
         MessageStore.shared.saveAttachment(updated)
         return updated
     }

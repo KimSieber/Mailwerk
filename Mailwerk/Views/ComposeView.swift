@@ -19,7 +19,8 @@
 //
 //  Abgrenzung: Zustand, Versand und Vorbelegung → ComposeViewModel;
 //  Editor → RichTextEditor; Formatierungsleiste → FormattingToolbar;
-//  Darstellung des Zitats → HTMLMailView; Empfängerfelder → RecipientField.
+//  Darstellung des Zitats (mit eingesetzten Bildern) → HTMLMailView;
+//  Empfängerfelder → RecipientField.
 //
 //  Abhängigkeiten: SwiftUI, UniformTypeIdentifiers, PhotosUI (iOS), Dialogs.
 //
@@ -279,7 +280,7 @@ struct ComposeView: View {
             if let quoted = model.quotedHTML {
                 Divider()
                 DisclosureGroup(isExpanded: $showQuote) {
-                    HTMLMailView(html: quoted, contentHeight: $quoteHeight)
+                    HTMLMailView(html: model.quotedPreviewHTML ?? quoted, contentHeight: $quoteHeight)
                         .frame(height: max(120, quoteHeight))
                 } label: {
                     Label(
@@ -384,17 +385,21 @@ struct ComposeView: View {
         }
     }
 
-    /// Fragt nach, ob ohne den nicht ladbaren Anhang gesendet werden soll.
+    /// Fragt nach, ob ohne den nicht ladbaren Anhang bzw. das nicht
+    /// ladbare eingebettete Bild gesendet werden soll.
     ///
-    /// Verarbeitung: „Ohne Anhang senden“ verzichtet auf den Anhang und
-    /// sendet erneut; „Abbrechen“ lässt die Mail unverändert – ein späteres
-    /// Senden versucht den Anhang noch einmal.
+    /// Verarbeitung: „Ohne … senden“ verzichtet darauf und sendet erneut;
+    /// „Abbrechen“ lässt die Mail unverändert – ein späteres Senden
+    /// versucht es noch einmal.
     private func confirmSendWithoutFailedAttachment() {
         guard let failure = model.attachmentFailure else { return }
+        let isImage = failure.attachment.isInline
         activeConfirmation = ConfirmationRequest(
-            title: "Anhang nicht geladen",
-            message: "„\(failure.attachment.filename)“ konnte nicht geladen werden: \(failure.reason)\n\nOhne diesen Anhang senden?",
-            confirmLabel: "Ohne Anhang senden",
+            title: isImage ? "Bild nicht geladen" : "Anhang nicht geladen",
+            message: isImage
+                ? "Das eingebettete Bild „\(failure.attachment.filename)“ konnte nicht geladen werden: \(failure.reason)\n\nOhne dieses Bild senden?"
+                : "„\(failure.attachment.filename)“ konnte nicht geladen werden: \(failure.reason)\n\nOhne diesen Anhang senden?",
+            confirmLabel: isImage ? "Ohne Bild senden" : "Ohne Anhang senden",
             isDestructive: false,
             onCancel: { model.attachmentFailure = nil }
         ) {

@@ -4,7 +4,8 @@
 //
 //  Zweck: Tests für die HTML-Fassung einer Mail zum Drucken und Teilen –
 //  Maskierung, Textmails, Anhangliste, Dateiname aus dem Betreff,
-//  temporäre Datei zum Teilen und Sperre externer Inhalte.
+//  temporäre Datei zum Teilen, Sperre externer Inhalte und eingesetzte
+//  eingebettete Bilder.
 //
 
 import Foundation
@@ -79,5 +80,25 @@ struct MailPrintFormatterTests {
         defer { try? FileManager.default.removeItem(at: url) }
         #expect(url.lastPathComponent == "Teilen-Test.html")
         #expect(try String(contentsOf: url, encoding: .utf8).contains("<pre>Inhalt</pre>"))
+    }
+
+    /// Eingebettete Bilder stehen im Druck als data:-Adresse, die Anhangliste bleibt die übergebene.
+    @Test func embedsInlineImages() {
+        let base = message(subject: "Logo", text: "x")
+        let mail = CachedMessage(
+            id: base.id, accountID: base.accountID, accountDisplayName: base.accountDisplayName,
+            folder: base.folder, uid: base.uid, subject: base.subject, from: base.from, to: base.to,
+            date: nil, isUnread: false, isFlagged: false, isAnswered: false, isForwarded: false,
+            totalSizeBytes: 1_024, hasAttachments: false, textBody: nil,
+            htmlBody: #"<img src="cid:logo@x">"#, fetchedAt: Date(), headers: CachedMessageHeaders()
+        )
+        let logo = CachedAttachment(
+            id: "\(mail.id)-2", messageID: mail.id, filename: "logo.png", contentType: "image/png",
+            sizeBytes: 3, data: Data([1, 2, 3]), contentID: "logo@x", isInline: true
+        )
+        let html = MailPrintFormatter.html(for: mail, attachments: [], inlineImages: [logo])
+        #expect(html.contains("data:image/png;base64,AQID"))
+        #expect(!html.contains("cid:logo@x"))
+        #expect(!html.contains("Anlagen ("))
     }
 }

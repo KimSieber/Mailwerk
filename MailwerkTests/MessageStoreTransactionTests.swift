@@ -4,7 +4,7 @@
 //
 //  Zweck: Tests für die Schreibsicherheit des MessageStore – atomares
 //  Speichern von Nachricht und Anhängen, Rollback bei Fehlern,
-//  WAL-Modus und Schema-Version.
+//  WAL-Modus, Schema-Version und eingebettete Bilder (Stufe 6).
 //
 //  Jeder Test arbeitet auf einer eigenen Datei im Temp-Verzeichnis.
 //
@@ -131,12 +131,57 @@ struct MessageStoreTransactionTests {
         #expect(pragma("journal_mode", at: path) == "wal")
     }
 
-    /// Nach dem Öffnen steht die Schema-Version auf 5, auch nach erneutem Öffnen.
+    /// Nach dem Öffnen steht die Schema-Version auf 6, auch nach erneutem Öffnen.
     @Test func schemaVersionIsStored() {
         let path = temporaryPath()
         _ = MessageStore(path: path)
-        #expect(pragma("user_version", at: path) == "5")
+        #expect(pragma("user_version", at: path) == "6")
         _ = MessageStore(path: path)
-        #expect(pragma("user_version", at: path) == "5")
+        #expect(pragma("user_version", at: path) == "6")
+    }
+
+    /// Eingebettetes Bild: Content-ID und Kennzeichen „inline“ bleiben erhalten.
+    @Test func inlineImageRoundTrip() throws {
+        let store = MessageStore(path: temporaryPath())
+        let mail = message(uid: 1)
+        let image = CachedAttachment(
+            id: "\(mail.id)-2", messageID: mail.id, filename: "logo.png", contentType: "image/png",
+            sizeBytes: 3, data: Data([1, 2, 3]), contentID: "logo@example.org", isInline: true
+        )
+        #expect(store.saveMessageWithAttachments(mail, attachments: [attachment(messageID: mail.id, index: 0), image]))
+
+        let loaded = store.attachments(forMessage: mail.id)
+        let inline = try #require(loaded.first { $0.isInline })
+        #expect(inline.contentID == "logo@example.org")
+        #expect(inline.data == Data([1, 2, 3]))
+        let regular = try #require(loaded.first { !$0.isInline })
+        #expect(regular.contentID == nil)
+    }
+
+    /// Migration 5 → 6: Spalten für eingebettete Bilder kommen hinzu, bestehende Anhänge bleiben echte Anhänge.
+    @Test func migrationToVersion6AddsInlineColumns() throws {
+        let path = temporaryPath()
+        let mail = message(uid: 1)
+        do {
+            let store = MessageStore(path: path)
+            #expect(store.saveMessageWithAttachments(mail, attachments: [attachment(messageID: mail.id, index: 0)]))
+        }
+        var db: OpaquePointer?
+        #expect(sqlite3_open(path, &db) == SQLITE_OK)
+        for sql in [
+            "ALTER TABLE attachment DROP COLUMN contentID",
+            "ALTER TABLE attachment DROP COLUMN isInline",
+            "PRAGMA user_version = 5"
+        ] {
+            #expect(sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK, "\(sql)")
+        }
+        sqlite3_close(db)
+
+        let store = MessageStore(path: path)
+        let loaded = try #require(store.attachments(forMessage: mail.id).first)
+        #expect(!loaded.isInline)
+        #expect(loaded.contentID == nil)
+        #expect(loaded.data == Data([1, 2, 3]))
+        #expect(pragma("user_version", at: path) == "6")
     }
 }

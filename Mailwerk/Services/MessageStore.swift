@@ -127,7 +127,7 @@ final class MessageStore: @unchecked Sendable {
 
     /// Schema-Version, die diese App-Version erwartet. Wird nach den
     /// Migrationen in `PRAGMA user_version` geschrieben.
-    private static let schemaVersion: Int32 = 5
+    private static let schemaVersion: Int32 = 6
 
     /// Explizite Spaltenliste – Reihenfolge entspricht den Indizes in readMessage().
     private static let messageColumns = """
@@ -151,7 +151,7 @@ final class MessageStore: @unchecked Sendable {
 
     /// Spaltenliste der Anhänge – Reihenfolge entspricht readAttachment().
     private static let attachmentColumns =
-        "id, messageID, filename, contentType, sizeBytes, data"
+        "id, messageID, filename, contentType, sizeBytes, data, contentID, isInline"
 
     /// Name des Unterordners für die Ablage im Application-Support-Verzeichnis.
     static let cacheDirectoryName = "Cache"
@@ -440,6 +440,9 @@ final class MessageStore: @unchecked Sendable {
         if current < 5 {
             migrateToVersion5()
         }
+        if current < 6 {
+            migrateToVersion6()
+        }
 
         setUserVersion(Self.schemaVersion)
     }
@@ -568,6 +571,17 @@ final class MessageStore: @unchecked Sendable {
                 checkedAt REAL NOT NULL
             )
             """)
+    }
+
+    /// Stufe 6: eingebettete Bilder in der Anhang-Tabelle.
+    ///
+    /// Verarbeitung: Ergänzt `contentID` und `isInline`. Bestehende Zeilen
+    /// sind echte Anhänge (`isInline` 0, ohne Content-ID); eingebettete
+    /// Bilder wurden bis dahin nicht gespeichert. Fehlen sie beim Öffnen
+    /// einer Mail, lädt die Mailansicht sie nach (InlineImageLoader).
+    private func migrateToVersion6() {
+        addColumnIfMissing("contentID", "TEXT", in: "attachment")
+        addColumnIfMissing("isInline", "INTEGER NOT NULL DEFAULT 0", in: "attachment")
     }
 
     /// Schreibt die Kennungen von "<account>-<uid>" auf "<account>-INBOX-<uid>" um.
@@ -983,12 +997,14 @@ final class MessageStore: @unchecked Sendable {
         let sql = """
             INSERT INTO attachment
             (\(Self.attachmentColumns))
-            VALUES (?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 filename = excluded.filename,
                 contentType = excluded.contentType,
                 sizeBytes = excluded.sizeBytes,
-                data = excluded.data
+                data = excluded.data,
+                contentID = excluded.contentID,
+                isInline = excluded.isInline
             """
         try execute(sql, context: "insertAttachment \(a.id)") { stmt in
             bind(stmt, 1, a.id)
@@ -1003,6 +1019,12 @@ final class MessageStore: @unchecked Sendable {
             } else {
                 sqlite3_bind_null(stmt, 6)
             }
+            if let contentID = a.contentID {
+                bind(stmt, 7, contentID)
+            } else {
+                sqlite3_bind_null(stmt, 7)
+            }
+            sqlite3_bind_int(stmt, 8, a.isInline ? 1 : 0)
         }
     }
 
@@ -1664,7 +1686,7 @@ final class MessageStore: @unchecked Sendable {
         )
     }
 
-    /// Liest eine Zeile gemäß `attachmentColumns` (Indizes 0–5).
+    /// Liest eine Zeile gemäß `attachmentColumns` (Indizes 0–7).
     ///
     /// - Parameter s: Statement, das auf einer Ergebniszeile steht.
     /// - Returns: Der gelesene Anhang.
@@ -1681,7 +1703,9 @@ final class MessageStore: @unchecked Sendable {
             filename: str(s, 2),
             contentType: str(s, 3),
             sizeBytes: Int(sqlite3_column_int64(s, 4)),
-            data: data
+            data: data,
+            contentID: optStr(s, 6),
+            isInline: sqlite3_column_int(s, 7) != 0
         )
     }
 

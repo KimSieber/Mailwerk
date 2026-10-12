@@ -37,6 +37,14 @@
 //  Teilen-Blatt, auf dem Mac das Teilen-Untermenü des Systems. Die Dateien
 //  (Mail als HTML, geladene Anhänge) liegen dafür schon beim Öffnen bereit.
 //
+//  Eingebettete Bilder (`cid:`) erscheinen im Text: Das HTML wird mit den
+//  Bildern aus dem Cache aufgelöst (InlineImages), auch wenn externe
+//  Inhalte gesperrt sind – sie gehören zur Mail. Fehlen Bilder, lädt die
+//  Ansicht sie beim Öffnen im Hintergrund nach (InlineImageLoader); ohne
+//  Netz bleiben sie still leer. Die Anhangliste zeigt nur echte Anhänge und
+//  nicht angesprochene Inline-Bilder; „Anlagen lokal löschen“ lässt die
+//  Bilder im Text stehen. Drucken und Teilen folgen der Anzeige.
+//
 //  Ganz unten im Menü, abgesetzt, steht „Originalquelle“ (RawSourceView):
 //  die Mail als reiner Text mit allen Kopfzeilen, für Analysen. Mit
 //  Tastatur auch per ⌥⌘U, wie in Apple Mail.
@@ -45,7 +53,8 @@
 //  MessageActionDialogs, MessageDetailHeader, MessageAttachmentList,
 //  SpamFilterService,
 //  AttachmentManager, MessageStore, MailPrintFormatter, RemoteContentPolicy,
-//  RawSourceView, Dialogs, Log.
+//  RawSourceView, InlineImages, InlineImageLoader, NetworkMonitor, Dialogs,
+//  Log.
 //
 
 import SwiftUI
@@ -78,8 +87,13 @@ struct MessageDetailView: View {
     /// `true`, sobald über externe Inhalte entschieden ist; vorher wird
     /// der HTML-Inhalt nicht angezeigt.
     @State private var isRemoteContentDecided = false
-    /// Anhänge der Mail aus dem Cache.
+    /// Alle Anhänge der Mail aus dem Cache, einschließlich eingebetteter
+    /// Bilder.
     @State private var attachments: [CachedAttachment] = []
+    /// HTML der Mail mit eingesetzten eingebetteten Bildern; `nil`, solange
+    /// die Anhänge nicht gelesen sind. Wird nur bei geänderten Anhängen neu
+    /// gebildet, weil das Einsetzen großer Bilder Zeit kostet.
+    @State private var resolvedHTML: String?
     /// Datei für die QuickLook-Vorschau; `nil` = keine Vorschau offen.
     @State private var previewURL: URL?
     /// Temporäre Dateien der geladenen Anhänge zum Teilen, je Anhang-ID.
@@ -213,10 +227,10 @@ struct MessageDetailView: View {
                 MessageDetailHeader(message: message, isFlagged: isFlagged)
                 Divider()
                 messageBody
-                if !attachments.isEmpty {
+                if !visibleAttachments.isEmpty {
                     Divider()
                     MessageAttachmentList(
-                        attachments: attachments,
+                        attachments: visibleAttachments,
                         downloadingIDs: downloadingIDs,
                         shareURLs: shareURLs,
                         onTap: { handleTap($0) }
@@ -240,7 +254,7 @@ struct MessageDetailView: View {
                 RemoteContentNotice(onLoad: allowRemoteContent)
             }
             HTMLMailView(
-                html: html,
+                html: resolvedHTML ?? html,
                 contentHeight: $webViewHeight,
                 allowsRemoteContent: allowsRemoteContent,
                 onMailto: { mailtoRequest = $0 }
@@ -354,44 +368,86 @@ struct MessageDetailView: View {
         }
     }
 
+    /// Anhänge für Liste, Teilen, Drucken und lokales Löschen: echte
+    /// Anhänge und nicht angesprochene Inline-Bilder.
+    private var visibleAttachments: [CachedAttachment] {
+        InlineImages.visibleAttachments(attachments, html: message.htmlBody)
+    }
+
     /// Dateien zum Teilen: die Mail als HTML, danach die geladenen Anhänge
     /// in ihrer Reihenfolge.
     private var shareItems: [URL] {
-        [mailFileURL].compactMap { $0 } + attachments.compactMap { shareURLs[$0.id] }
+        [mailFileURL].compactMap { $0 } + visibleAttachments.compactMap { shareURLs[$0.id] }
     }
 
-    /// `true`, wenn mindestens ein Anhang lokale Daten hat, die gelöscht
-    /// werden könnten.
+    /// `true`, wenn mindestens ein sichtbarer Anhang lokale Daten hat, die
+    /// gelöscht werden könnten.
     private var hasLocalAttachmentData: Bool {
-        attachments.contains { $0.data != nil }
+        visibleAttachments.contains { $0.data != nil }
     }
 
     // MARK: - Beim Öffnen
 
-    /// Entscheidet über externe Inhalte, lädt die Anhänge, bereitet das
-    /// Teilen vor und markiert eine ungelesene Mail als gelesen.
+    /// Liest die Anhänge, setzt die eingebetteten Bilder ein, entscheidet
+    /// über externe Inhalte, bereitet das Teilen vor, markiert eine
+    /// ungelesene Mail als gelesen und lädt fehlende Bilder nach.
     ///
-    /// Verarbeitung: Die Entscheidung über externe Inhalte fällt nur
-    /// einmal je Anzeige – läuft die Aufgabe erneut (z. B. nach einer
-    /// Vorschau), bleibt eine Freigabe per Knopf erhalten. Scheitert das
-    /// Markieren, bleibt die Mail ungelesen; eine Meldung erscheint nicht,
-    /// weil der Nutzer nichts ausgelöst hat.
+    /// Verarbeitung: Anhänge und Bilder kommen vor der Entscheidung über
+    /// externe Inhalte, damit der HTML-Inhalt gleich mit Bildern erscheint
+    /// und nicht zweimal geladen wird. Die Entscheidung über externe
+    /// Inhalte fällt nur einmal je Anzeige – läuft die Aufgabe erneut
+    /// (z. B. nach einer Vorschau), bleibt eine Freigabe per Knopf
+    /// erhalten. Scheitert das Markieren, bleibt die Mail ungelesen; eine
+    /// Meldung erscheint nicht, weil der Nutzer nichts ausgelöst hat.
     @MainActor
     private func prepareOnOpen() async {
+        updateAttachments(MessageStore.shared.attachments(forMessage: message.id))
         if !isRemoteContentDecided {
             await decideRemoteContent()
         }
-        attachments = MessageStore.shared.attachments(forMessage: message.id)
-        prepareShareURLs()
         writeMailFile()
 
-        guard isUnread else { return }
+        if isUnread {
+            do {
+                try await MessageActions.setRead(true, for: target, accountStore: accountStore)
+                isUnread = false
+                onChange?()
+            } catch {
+                Log.actions.error("⚠️ Gelesen-Markierung fehlgeschlagen: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        await loadMissingInlineImages()
+    }
+
+    /// Übernimmt die Anhänge und bildet das HTML mit eingesetzten Bildern
+    /// neu; bereitet die Dateien zum Teilen vor.
+    ///
+    /// - Parameter all: Alle Anhänge der Mail aus dem Cache.
+    private func updateAttachments(_ all: [CachedAttachment]) {
+        attachments = all
+        resolvedHTML = message.htmlBody.map { InlineImages.resolve($0, images: all) }
+        prepareShareURLs()
+    }
+
+    /// Lädt angesprochene, noch fehlende eingebettete Bilder nach.
+    ///
+    /// Verarbeitung: Nur wenn Bilder fehlen und eine Verbindung besteht.
+    /// Ein Fehler wird nur protokolliert – die Mail bleibt lesbar, die
+    /// Bilder erscheinen leer. Danach werden Anzeige und Datei zum Teilen
+    /// erneuert.
+    @MainActor
+    private func loadMissingInlineImages() async {
+        guard InlineImages.hasMissingImages(attachments, html: message.htmlBody),
+              NetworkMonitor.shared.isOnline else { return }
         do {
-            try await MessageActions.setRead(true, for: target, accountStore: accountStore)
-            isUnread = false
-            onChange?()
+            let all = try await InlineImageLoader.loadMissing(
+                for: message, existing: attachments, accountStore: accountStore
+            )
+            updateAttachments(all)
+            writeMailFile()
         } catch {
-            Log.actions.error("⚠️ Gelesen-Markierung fehlgeschlagen: \(error.localizedDescription, privacy: .public)")
+            Log.view.error("⚠️ Eingebettete Bilder nicht nachgeladen: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -526,7 +582,8 @@ struct MessageDetailView: View {
         do {
             mailFileURL = try MailPrintFormatter.writeTemporaryFile(
                 for: message,
-                attachments: attachments,
+                attachments: visibleAttachments,
+                inlineImages: attachments,
                 allowsRemoteContent: allowsRemoteContent
             )
         } catch {
@@ -539,7 +596,8 @@ struct MessageDetailView: View {
     private func printMessage() {
         let html = MailPrintFormatter.html(
             for: message,
-            attachments: attachments,
+            attachments: visibleAttachments,
+            inlineImages: attachments,
             allowsRemoteContent: allowsRemoteContent
         )
         MailPrinter().print(html: html)
@@ -558,14 +616,16 @@ struct MessageDetailView: View {
         }
     }
 
-    /// Löscht die Daten aller Anhänge dieser Mail aus dem Cache; die
-    /// Einträge bleiben, die Daten lassen sich neu laden.
+    /// Löscht die Daten der sichtbaren Anhänge dieser Mail aus dem Cache;
+    /// die Einträge bleiben, die Daten lassen sich neu laden. Eingebettete
+    /// Bilder im Text bleiben – sie sind Inhalt der Mail.
     private func deleteLocalAttachments() {
-        for attachment in attachments {
+        for attachment in visibleAttachments {
             MessageStore.shared.deleteAttachmentData(id: attachment.id)
         }
-        attachments = MessageStore.shared.attachments(forMessage: message.id)
         shareURLs.removeAll()
+        updateAttachments(MessageStore.shared.attachments(forMessage: message.id))
+        writeMailFile()
     }
 
     // MARK: - Anhänge öffnen
@@ -616,10 +676,10 @@ struct MessageDetailView: View {
         }
     }
 
-    /// Schreibt alle geladenen Anhänge als temporäre Dateien, damit das
-    /// Teilen ohne Verzögerung bereitsteht.
+    /// Schreibt alle geladenen sichtbaren Anhänge als temporäre Dateien,
+    /// damit das Teilen ohne Verzögerung bereitsteht.
     private func prepareShareURLs() {
-        for attachment in attachments where attachment.data != nil && shareURLs[attachment.id] == nil {
+        for attachment in visibleAttachments where attachment.data != nil && shareURLs[attachment.id] == nil {
             if let url = try? AttachmentManager.writeTempFile(for: attachment) {
                 shareURLs[attachment.id] = url
             }

@@ -531,12 +531,13 @@ enum MailFetchService {
         return CacheResult(saved: savedCount, failed: failedCount)
     }
 
-    /// Lädt eine neue Mail samt Anhängen (≤ 5 MB) und speichert sie.
+    /// Lädt eine neue Mail samt Anhängen und eingebetteten Bildern (≤ 5 MB)
+    /// und speichert sie.
     ///
     /// Verarbeitung: Holt zuerst nur die Struktur der Mail, dann gezielt
-    /// Text- und HTML-Teil (`MessageContentPlan`). Anhänge werden einzeln
-    /// geladen, wenn die Mail die Schwelle nicht überschreitet; sonst nur
-    /// ihre Einträge gespeichert. Nachricht und Anhänge werden gemeinsam in
+    /// Text- und HTML-Teil (`MessageContentPlan`). Anhänge und eingebettete
+    /// Bilder werden einzeln geladen, wenn die Mail die Schwelle nicht
+    /// überschreitet; sonst nur ihre Einträge gespeichert. Nachricht und Anhänge werden gemeinsam in
     /// einer Transaktion gespeichert. Lässt sich ein einzelner Anhang nicht
     /// laden, wird nur sein Eintrag (ohne Daten) gespeichert; er kann
     /// später per Antippen nachgeladen werden.
@@ -602,50 +603,44 @@ enum MailFetchService {
             headers: headers(from: info)
         )
 
-        // Anhänge zuerst vollständig einsammeln, dann Nachricht und
-        // Anhänge gemeinsam speichern. Lässt sich ein einzelner Anhang
-        // nicht laden, wird nur sein Eintrag (ohne Daten) gespeichert;
-        // er kann dann per Antippen nachgeladen werden. So bleibt die
-        // Mail sichtbar und vollständig beschrieben.
+        // Anhänge und eingebettete Bilder zuerst vollständig einsammeln,
+        // dann Nachricht und Anhänge gemeinsam speichern. Lässt sich ein
+        // einzelner Teil nicht laden, wird nur sein Eintrag (ohne Daten)
+        // gespeichert; ein Anhang kann dann per Antippen, ein Bild beim
+        // Öffnen der Mail nachgeladen werden. So bleibt die Mail sichtbar
+        // und vollständig beschrieben. Größere Mails: nur Einträge, Daten
+        // erst bei Bedarf.
+        let parts = plan.attachments.map { ($0, false) } + plan.inlineImages.map { ($0, true) }
         var cachedAttachments: [CachedAttachment] = []
-        if plan.loadsAttachmentData {
-            // Anhänge bis 5 MB gleich mitladen
-            for attachment in plan.attachments {
-                var data: Data?
+        for (part, isInline) in parts {
+            var data: Data?
+            if plan.loadsAttachmentData {
                 do {
                     data = try await server.fetchAndDecodeMessagePartData(
-                        messageInfo: info, part: attachment
+                        messageInfo: info, part: part
                     )
                 } catch {
-                    Log.fetch.error("⚠️ Anhang \(attachment.section.description, privacy: .public) von Mail \(msgID, privacy: .public) nicht geladen, nur Eintrag gespeichert: \(error.localizedDescription, privacy: .public)")
+                    Log.fetch.error("⚠️ Teil \(part.section.description, privacy: .public) von Mail \(msgID, privacy: .public) nicht geladen, nur Eintrag gespeichert: \(error.localizedDescription, privacy: .public)")
                 }
-                cachedAttachments.append(CachedAttachment(
-                    id: "\(msgID)-\(attachment.section)",
-                    messageID: msgID,
-                    filename: attachment.filename ?? "Anhang",
-                    contentType: attachment.contentType,
-                    sizeBytes: data?.count ?? attachment.size ?? 0,
-                    data: data
-                ))
             }
-        } else {
-            // Größere Mails: nur Metadaten, Daten erst bei Bedarf
-            for attachment in plan.attachments {
-                cachedAttachments.append(CachedAttachment(
-                    id: "\(msgID)-\(attachment.section)",
-                    messageID: msgID,
-                    filename: attachment.filename ?? "Anhang",
-                    contentType: attachment.contentType,
-                    sizeBytes: attachment.size ?? 0,
-                    data: nil
-                ))
-            }
+            cachedAttachments.append(CachedAttachment(
+                id: "\(msgID)-\(part.section)",
+                messageID: msgID,
+                filename: part.filename ?? (isInline ? "Bild" : "Anhang"),
+                contentType: part.contentType,
+                sizeBytes: data?.count ?? part.size ?? 0,
+                data: data,
+                contentID: isInline
+                    ? MessageContentPlan.contentID(for: part)
+                    : InlineImages.storedContentID(part.contentId),
+                isInline: isInline
+            ))
         }
 
-        if !plan.attachments.isEmpty {
+        if !parts.isEmpty {
             let textKB = bodyData.values.reduce(0) { $0 + $1.count } / 1024
             let attachmentKB = cachedAttachments.reduce(0) { $0 + ($1.data?.count ?? 0) } / 1024
-            Log.fetch.debug("📎 [\(account.displayName, privacy: .private)] Mail \(uid.value): \(plan.attachments.count) Anhänge, Größe \(totalSize / 1024) KB, geladen: Text \(textKB) KB, Anhänge \(attachmentKB) KB")
+            Log.fetch.debug("📎 [\(account.displayName, privacy: .private)] Mail \(uid.value): \(plan.attachments.count) Anhänge, \(plan.inlineImages.count) eingebettete Bilder, Größe \(totalSize / 1024) KB, geladen: Text \(textKB) KB, Anhänge/Bilder \(attachmentKB) KB")
         }
 
         guard MessageStore.shared.saveMessageWithAttachments(cached, attachments: cachedAttachments) else {
