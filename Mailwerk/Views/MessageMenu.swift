@@ -17,6 +17,10 @@
 //  - zusätzliche Einträge des Aufrufers (in der Mailansicht Teilen,
 //    Drucken, Anlagen lokal löschen), zuletzt „Mail löschen“
 //
+//  Die Mailansicht hängt darunter noch einen eigenen Abschnitt
+//  „Originalquelle“ an (Beschriftung hier in `MessageMenuLabels.source`);
+//  im Kontextmenü der Liste fehlt er bewusst.
+//
 //  Das Menü löst nur aus; was geschieht, entscheidet der Aufrufer über
 //  `MessageMenuAction`. Beschriftungen und Symbole kommen aus
 //  `MessageMenuLabels`, damit sie an einer Stelle stehen und testbar sind.
@@ -130,6 +134,9 @@ enum MessageMenuLabels {
 
     /// Eintrag „Mail löschen“.
     static let delete = Entry(title: "Mail löschen", systemImage: "trash.fill", accessibility: "Mail löschen")
+
+    /// Eintrag „Originalquelle“ (nur in der Mailansicht, ganz unten).
+    static let source = Entry(title: "Originalquelle", systemImage: "doc.plaintext", accessibility: "Originalquelle der Mail anzeigen")
 
     /// Eintrag im Spam-Untermenü. Der Wert steht als Abschnittsüberschrift
     /// darüber; der Eintrag selbst bleibt kurz.

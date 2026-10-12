@@ -21,7 +21,7 @@
 //  HTML-Darstellung → HTMLMailView; Verfassen → ComposeView; Ordnerwahl →
 //  FolderMoveSheet; Anhang-Zeile → AttachmentRow; Druck → MailPrinter;
 //  HTML für Druck und Teilen → MailPrintFormatter; Regeln für externe
-//  Inhalte → RemoteContentPolicy.
+//  Inhalte → RemoteContentPolicy; Originalquelle → RawSourceView.
 //
 //  Externe Inhalte (Bilder, Stylesheets von fremden Servern) sind
 //  gesperrt. Ausnahme: Ist der Absender vertrauenswürdig (Whitelist und
@@ -37,11 +37,15 @@
 //  Teilen-Blatt, auf dem Mac das Teilen-Untermenü des Systems. Die Dateien
 //  (Mail als HTML, geladene Anhänge) liegen dafür schon beim Öffnen bereit.
 //
+//  Ganz unten im Menü, abgesetzt, steht „Originalquelle“ (RawSourceView):
+//  die Mail als reiner Text mit allen Kopfzeilen, für Analysen. Mit
+//  Tastatur auch per ⌥⌘U, wie in Apple Mail.
+//
 //  Abhängigkeiten: SwiftUI, QuickLook, MessageActions, MessageMenu,
 //  MessageActionDialogs, MessageDetailHeader, MessageAttachmentList,
 //  SpamFilterService,
 //  AttachmentManager, MessageStore, MailPrintFormatter, RemoteContentPolicy,
-//  Dialogs, Log.
+//  RawSourceView, Dialogs, Log.
 //
 
 import SwiftUI
@@ -93,6 +97,8 @@ struct MessageDetailView: View {
     @State private var isProcessingAction = false
     /// Ordnerwahl zum Verschieben sichtbar.
     @State private var showFolderPicker = false
+    /// Blatt „Originalquelle“ sichtbar.
+    @State private var showRawSource = false
     /// Zu verfassende Antwort bzw. Weiterleitung.
     @State private var composeRequest: ComposeRequest?
     /// Getippter mailto:-Link aus der Mail → neue Mail in Mailwerk.
@@ -173,9 +179,28 @@ struct MessageDetailView: View {
                     }
                 }
             }
+            .sheet(isPresented: $showRawSource) {
+                RawSourceView(message: message, accountStore: accountStore)
+            }
+            .background { rawSourceShortcut }
             .quickLookPreview($previewURL)
             .confirmationRequest($activeConfirmation)
             .task { await prepareOnOpen() }
+    }
+
+    /// Unsichtbarer Knopf für ⌥⌘U (Originalquelle).
+    ///
+    /// Verarbeitung: Die Einträge eines Menüs in der Symbolleiste entstehen
+    /// erst beim Öffnen; ein Tastenkürzel daran wirkte nur bei offenem
+    /// Menü. Deshalb trägt ein eigener, unsichtbarer Knopf das Kürzel.
+    private var rawSourceShortcut: some View {
+        Button("Originalquelle") {
+            showRawSource = true
+        }
+        .keyboardShortcut("u", modifiers: [.command, .option])
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
     }
 
     // MARK: - Inhalt
@@ -253,7 +278,8 @@ struct MessageDetailView: View {
     }
 
     /// Aktionsmenü der Mail: der gemeinsame Baustein, ergänzt um Teilen,
-    /// Drucken und Anlagen lokal löschen.
+    /// Drucken und Anlagen lokal löschen; ganz unten, als eigener
+    /// Abschnitt, die selten gebrauchte Originalquelle.
     private var messageMenu: some View {
         Menu {
             MessageMenuItems(context: menuContext, onAction: handleMenuAction) {
@@ -275,6 +301,14 @@ struct MessageDetailView: View {
                         Label("Anlagen lokal löschen", systemImage: "trash")
                     }
                 }
+            }
+            Section {
+                Button {
+                    showRawSource = true
+                } label: {
+                    Label(MessageMenuLabels.source.title, systemImage: MessageMenuLabels.source.systemImage)
+                }
+                .accessibilityLabel(MessageMenuLabels.source.accessibility)
             }
         } label: {
             Image(systemName: "ellipsis.circle")

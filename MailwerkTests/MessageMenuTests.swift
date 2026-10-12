@@ -87,4 +87,11 @@ struct MessageMenuTests {
         #expect(MessageActions.StateChange.flagged(true).reversed == .flagged(false))
         #expect(MessageActions.StateChange.read(false).reversed == .read(true))
     }
+
+    /// Originalquelle: kurzer Text, ausführliche Bezeichnung.
+    @Test func sourceEntry() {
+        #expect(MessageMenuLabels.source.title == "Originalquelle")
+        #expect(MessageMenuLabels.source.systemImage == "doc.plaintext")
+        #expect(MessageMenuLabels.source.accessibility == "Originalquelle der Mail anzeigen")
+    }
 }

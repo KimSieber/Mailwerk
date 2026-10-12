@@ -39,11 +39,23 @@
 //  der App, nicht der Mail; weder `allowsContentJavaScript = false` noch
 //  die CSP der Seite gelten dafür.
 //
+//  Dunkelmodus: Mails ohne eigene Farben übernehmen den Hintergrund der
+//  App und bekommen helle Schrift. Mails mit eigenen Farben
+//  (MailAppearance) bleiben hell – weißer Grund mit schmalem Innenrand,
+//  dunkle Standardschrift –, wie in Apple Mail.
+//
+//  Zoomen: Jede Mail lässt sich per Geste vergrößern, auch wenn ihr eigener
+//  Viewport das verbietet (iOS `ignoresViewportScaleLimits`, macOS
+//  `allowsMagnification`). Das Grundgerüst selbst begrenzt den Zoom nicht.
+//  Der Zoom gilt nur für die geöffnete Mail.
+//
 //  Abgrenzung: Aufbau der Mailansicht und Freigabe → MessageDetailView;
 //  Zitat in der Antwort → ComposeView (immer gesperrt); Einordnung von
-//  Links → MailLinkAction; Regeln für externe Inhalte → RemoteContentPolicy.
+//  Links → MailLinkAction; Regeln für externe Inhalte → RemoteContentPolicy;
+//  helle Darstellung → MailAppearance.
 //
-//  Abhängigkeiten: SwiftUI, WebKit, MailLinkAction, RemoteContentPolicy, Log.
+//  Abhängigkeiten: SwiftUI, WebKit, MailLinkAction, RemoteContentPolicy,
+//  MailAppearance, Log.
 //
 
 import SwiftUI
@@ -135,7 +147,8 @@ extension HTMLMailView {
     ///
     /// Verarbeitung: JavaScript aus der Mail ist aus, der Hintergrund
     /// transparent (Hell-/Dunkelmodus); auf iOS scrollt die umgebende
-    /// Ansicht, nicht die Web-Ansicht.
+    /// Ansicht, nicht die Web-Ansicht. Zoomen per Geste ist immer möglich,
+    /// auch wenn die Mail es in ihrem Viewport verbietet.
     ///
     /// - Returns: Neue Web-Ansicht.
     static func createWebView() -> WKWebView {
@@ -144,6 +157,11 @@ extension HTMLMailView {
         // selbst misst die Höhe weiter per evaluateJavaScript – das ist
         // davon nicht betroffen.
         config.defaultWebpagePreferences.allowsContentJavaScript = false
+        #if os(iOS)
+        // Zoomen per Geste auch bei Mails, deren Viewport es verbietet
+        // (user-scalable=no, maximum-scale=1).
+        config.ignoresViewportScaleLimits = true
+        #endif
         let webView = WKWebView(frame: .zero, configuration: config)
         // Transparenter Hintergrund, damit die Mail im Hell- und Dunkelmodus
         // den Hintergrund der App übernimmt. Die beiden Plattformen bieten
@@ -151,6 +169,8 @@ extension HTMLMailView {
         #if os(macOS)
         // Auf macOS ist `isOpaque` nur lesbar und `backgroundColor` fehlt.
         webView.setValue(false, forKey: "drawsBackground")
+        // Vergrößern per Trackpad-Geste.
+        webView.allowsMagnification = true
         #else
         webView.isOpaque = false
         webView.backgroundColor = .clear
@@ -174,7 +194,11 @@ extension HTMLMailView {
     /// Schrift, Farben und Breitenbegrenzung, darin das HTML der Mail.
     ///
     /// Verarbeitung: Die Meta-Zeilen aus `RemoteContentPolicy` stehen im
-    /// Kopf vor dem Inhalt der Mail, damit sie für alles darin gelten.
+    /// Kopf vor dem Inhalt der Mail, damit sie für alles darin gelten. Die
+    /// Farbregeln hängen davon ab, ob die Mail eigene Farben mitbringt
+    /// (`colorStyle(usesOwnColors:)`); solche Mails melden sich zusätzlich
+    /// als hell (`color-scheme`), damit auch Bedienelemente darin hell
+    /// bleiben. Der Viewport begrenzt den Zoom nicht.
     ///
     /// - Parameters:
     ///   - html: HTML-Body der Mail.
@@ -182,13 +206,15 @@ extension HTMLMailView {
     ///     werden dürfen.
     /// - Returns: HTML-Dokument zum Laden in die Web-Ansicht.
     static func document(for html: String, allowsRemoteContent: Bool) -> String {
-        """
+        let usesOwnColors = MailAppearance.usesOwnColors(html)
+        return """
             <!DOCTYPE html>
             <html>
             <head>
             <meta charset="utf-8">
             \(RemoteContentPolicy.headTags(allowsRemoteContent: allowsRemoteContent))
-            <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            \(usesOwnColors ? #"<meta name="color-scheme" content="light">"# : "")
             <style>
                 body {
                     font-family: -apple-system, sans-serif;
@@ -224,14 +250,40 @@ extension HTMLMailView {
                     max-width: 100%;
                     overflow-x: auto;
                 }
-                @media (prefers-color-scheme: dark) {
-                    body { color: #F0F0F0; }
-                    a { color: #0A84FF; }
-                }
+            \(colorStyle(usesOwnColors: usesOwnColors))
             </style>
             </head>
             <body>\(html)</body>
             </html>
+            """
+    }
+
+    /// Farbregeln für den Dunkelmodus.
+    ///
+    /// Verarbeitung: Ohne eigene Farben wird die Schrift im Dunkelmodus
+    /// hell, der Hintergrund bleibt der der App. Mit eigenen Farben bleibt
+    /// die Mail hell: weißer Grund für die ganze Fläche und ein schmaler
+    /// Innenrand, damit der Text im dunklen Umfeld nicht am Rand der
+    /// weißen Fläche klebt. Im Hellmodus ändert sich in beiden Fällen
+    /// nichts.
+    ///
+    /// - Parameter usesOwnColors: `true`, wenn die Mail eigene Farben
+    ///   mitbringt.
+    /// - Returns: CSS-Regeln zum Einfügen in den `<style>`-Block.
+    static func colorStyle(usesOwnColors: Bool) -> String {
+        if usesOwnColors {
+            return """
+                @media (prefers-color-scheme: dark) {
+                    html { background-color: #FFFFFF; }
+                    body { padding: 8px !important; }
+                }
+                """
+        }
+        return """
+            @media (prefers-color-scheme: dark) {
+                body { color: #F0F0F0; }
+                a { color: #0A84FF; }
+            }
             """
     }
 
