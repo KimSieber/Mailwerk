@@ -20,8 +20,13 @@
 //  Fläche unterhalb des Inhalts setzt die Schreibmarke ans Textende.
 //  Auf dem iPhone blendet Herunterwischen im Inhalt die Tastatur aus.
 //
-//  Meldungen und die Rückfrage „Entwurf verwerfen?“ laufen über je einen
-//  Kanal (siehe Dialogs.swift).
+//  Schließen mit Eingaben fragt nach: „Als Entwurf sichern“ (ohne
+//  Verbindung ausgegraut), „Verwerfen“ oder „Weiter bearbeiten“. Ohne
+//  Absender wird zuerst um die Wahl eines Absenders gebeten; fehlt der
+//  Entwürfe-Ordner, wird nach dem Anlegen gefragt.
+//
+//  Meldungen und Rückfragen laufen über je einen Kanal (siehe
+//  Dialogs.swift).
 //
 //  Abgrenzung: Zustand, Versand und Vorbelegung → ComposeViewModel;
 //  Editor → RichTextEditor; Formatierungsleiste → FormattingToolbar;
@@ -29,7 +34,7 @@
 //  Empfängerfelder → RecipientField; HTML-Signatur → SignatureBlockView.
 //
 //  Abhängigkeiten: SwiftUI, UniformTypeIdentifiers, PhotosUI (iOS), Dialogs,
-//  SignatureStore, SignatureBlockView.
+//  SignatureStore, SignatureBlockView, NetworkMonitor.
 //
 
 import SwiftUI
@@ -50,7 +55,7 @@ struct ComposeView: View {
     @Environment(SignatureStore.self) private var signatureStore
     /// Einziger Meldungskanal des Fensters (Fehler, Hinweise nach dem Versand).
     @State private var activeAlert: AlertItem?
-    /// Einziger Rückfragekanal des Fensters („Entwurf verwerfen?“).
+    /// Einziger Rückfragekanal des Fensters („Nachricht schließen?“ u. a.).
     @State private var activeConfirmation: ConfirmationRequest?
     /// Dateiauswahl sichtbar.
     @State private var showFileImporter = false
@@ -329,14 +334,14 @@ struct ComposeView: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .cancellationAction) {
             Button {
-                if model.hasContent { confirmDiscard() } else { dismiss() }
+                if model.hasContent { confirmClose() } else { dismiss() }
             } label: {
                 Image(systemName: "xmark")
             }
-            .disabled(model.isSending)
+            .disabled(model.isSending || model.isSavingDraft)
         }
         ToolbarItem(placement: .primaryAction) {
-            if model.isSending {
+            if model.isSending || model.isSavingDraft {
                 ProgressView()
             } else {
                 Button {
@@ -400,15 +405,58 @@ struct ComposeView: View {
 
     // MARK: - Aktionen
 
-    /// Fragt vor dem Verwerfen eines Entwurfs nach.
-    private func confirmDiscard() {
-        activeConfirmation = ConfirmationRequest(
-            title: "Entwurf verwerfen?",
-            message: "Die Nachricht wurde noch nicht gesendet und geht verloren.",
+    /// Fragt beim Schließen nach: als Entwurf sichern, verwerfen oder
+    /// weiter bearbeiten.
+    ///
+    /// Verarbeitung: Ohne Verbindung ist „Als Entwurf sichern“ ausgegraut
+    /// und der Text weist darauf hin.
+    private func confirmClose() {
+        let isOnline = NetworkMonitor.shared.isOnline
+        var request = ConfirmationRequest(
+            title: "Nachricht schließen?",
+            message: isOnline
+                ? "Die Nachricht wurde noch nicht gesendet. Du kannst sie als Entwurf sichern oder verwerfen."
+                : "Die Nachricht wurde noch nicht gesendet. Ohne Verbindung kann kein Entwurf gesichert werden.",
             confirmLabel: "Verwerfen",
             cancelLabel: "Weiter bearbeiten"
         ) {
             dismiss()
+        }
+        request.secondary = .init(label: "Als Entwurf sichern", isEnabled: isOnline) {
+            Task { await saveDraft() }
+        }
+        activeConfirmation = request
+    }
+
+    /// Sichert die Nachricht als Entwurf und schließt das Fenster.
+    ///
+    /// Verarbeitung: Ohne Absender erscheint zuerst ein Hinweis. Fehlt der
+    /// Entwürfe-Ordner, wird nach dem Anlegen gefragt und danach erneut
+    /// gesichert. Bei einem Fehler bleibt das Fenster offen.
+    ///
+    /// - Parameter createFolder: `true` = fehlenden Entwürfe-Ordner anlegen.
+    private func saveDraft(createFolder: Bool = false) async {
+        guard model.accountID != nil else {
+            activeAlert = AlertItem(
+                title: "Kein Absender",
+                message: "Bitte zuerst einen Absender wählen, damit der Entwurf im richtigen Postfach gesichert wird."
+            )
+            return
+        }
+        switch await model.saveDraft(createFolder: createFolder) {
+        case .saved:
+            dismiss()
+        case .needsDraftsFolder:
+            activeConfirmation = ConfirmationRequest(
+                title: "Ordner „Entwürfe“ anlegen?",
+                message: "Das Postfach hat noch keinen Ordner für Entwürfe. Mailwerk legt ihn an und sichert den Entwurf dort.",
+                confirmLabel: "Anlegen und sichern",
+                isDestructive: false
+            ) {
+                Task { await saveDraft(createFolder: true) }
+            }
+        case .failed(let message):
+            activeAlert = AlertItem(title: "Entwurf nicht gesichert", message: message)
         }
     }
 
@@ -419,7 +467,9 @@ struct ComposeView: View {
     /// „Abbrechen“ lässt die Mail unverändert – ein späteres Senden
     /// versucht es noch einmal.
     private func confirmSendWithoutFailedAttachment() {
-        guard let failure = model.attachmentFailure else { return }
+        // Beim Sichern eines Entwurfs gilt die Rückfrage nicht (der Entwurf
+        // meldet den Fehler selbst).
+        guard !model.isSavingDraft, let failure = model.attachmentFailure else { return }
         let isImage = failure.attachment.isInline
         activeConfirmation = ConfirmationRequest(
             title: isImage ? "Bild nicht geladen" : "Anhang nicht geladen",

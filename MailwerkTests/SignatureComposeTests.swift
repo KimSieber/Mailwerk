@@ -3,7 +3,8 @@
 //  MailwerkTests
 //
 //  Zweck: Tests für das Einsetzen und Austauschen der einfachen Signatur
-//  im Mailtext (SignatureEditing.replacingSignature, markedSignature).
+//  im Mailtext (SignatureEditing.replacingSignature, markedSignature) und
+//  für das Zerlegen beim Entwurf (split).
 //
 
 import Foundation
@@ -58,6 +59,23 @@ struct SignatureComposeTests {
         let result = SignatureEditing.replacingSignature(signature("Viele Grüße, Team"), in: edited)
         #expect(result.hadSignature)
         #expect(result.text.string == "Hallo\n\nViele Grüße, Team")
+    }
+
+    /// Zerlegen für Entwürfe: Text davor, Signatur, Text danach.
+    @Test("Zerlegen an der Signatur: davor, Signatur, danach")
+    func splitAtSignature() {
+        let body = NSMutableAttributedString(
+            attributedString: SignatureEditing.replacingSignature(signature("Gruß"), in: plain("Hallo")).text
+        )
+        body.append(plain("\nPS"))
+        let split = SignatureEditing.split(body)
+        #expect(split.before.string == "Hallo\n\n")
+        #expect(split.signature?.string == "Gruß")
+        #expect(split.after.string == "\nPS")
+
+        let none = SignatureEditing.split(plain("Nur Text"))
+        #expect(none.signature == nil)
+        #expect(none.before.string == "Nur Text")
     }
 
     /// Ohne neue Signatur wird die alte entfernt; ohne Markierung bleibt alles.

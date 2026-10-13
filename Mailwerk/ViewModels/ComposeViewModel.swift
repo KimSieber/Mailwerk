@@ -24,6 +24,9 @@
 //    Fingertipp).
 //  - Zusammenbau von HTML- und Textteil (eigener Text, Signatur, Zitat)
 //  - Versand über den MailSendService, inkl. Bezug auf die Originalmail
+//  - Als Entwurf sichern (DraftService): gleicher Inhalt wie beim Senden,
+//    im HTML mit Entwurfs-Marken (DraftFormat), damit Text, Signatur und
+//    Zitat beim Weiterbearbeiten getrennt zurückkommen
 //  - Erkennen ungespeicherter Eingaben beim Abbrechen
 //
 //  Abgrenzung: Die Darstellung liegt in ComposeView, der eigentliche
@@ -31,7 +34,8 @@
 //
 //  Abhängigkeiten: AccountStore, ReplyBuilder, RichTextHTML,
 //  MailSendService, AttachmentManager, MessageStore, InlineImages,
-//  InlineImageLoader, SignatureStore, SignatureEditing, HTMLSignatureBlock.
+//  InlineImageLoader, SignatureStore, SignatureEditing, HTMLSignatureBlock,
+//  DraftService, DraftFormat.
 //
 
 import Foundation
@@ -66,6 +70,8 @@ final class ComposeViewModel {
 
     /// true, solange der Versand läuft.
     var isSending = false
+    /// true, solange ein Entwurf gesichert wird.
+    var isSavingDraft = false
     /// Fortschrittstext während des Versands.
     var statusText: String?
     /// Fehlermeldung für die Anzeige; `nil` = kein Fehler.
@@ -433,6 +439,138 @@ final class ComposeViewModel {
         } catch {
             errorMessage = error.localizedDescription
             return false
+        }
+    }
+
+    // MARK: - Entwurf
+
+    /// Ergebnis beim Sichern eines Entwurfs.
+    enum DraftOutcome: Equatable {
+        /// Gesichert; das Fenster kann schließen.
+        case saved
+        /// Das Postfach hat keinen Entwürfe-Ordner – nachfragen und mit
+        /// `createFolder: true` erneut sichern.
+        case needsDraftsFolder
+        /// Fehlgeschlagen (Meldungstext); das Fenster bleibt offen.
+        case failed(String)
+    }
+
+    /// Sichert die Nachricht als Entwurf im Ordner „Entwürfe“ des
+    /// Absende-Postfachs.
+    ///
+    /// Verarbeitung: Lädt wie beim Senden fehlende Anhänge und Bilder der
+    /// Originalmail nach – gelingt das nicht, wird nicht gesichert (der
+    /// Entwurf wäre sonst unvollständig). Danach Ablage mit demselben Inhalt
+    /// wie beim Senden, das HTML mit Entwurfs-Marken (`draftHTML`). Auf
+    /// Wunsch wird zuvor der Entwürfe-Ordner angelegt.
+    ///
+    /// - Parameter createFolder: `true` = fehlenden Entwürfe-Ordner anlegen.
+    /// - Returns: Ergebnis für die Ansicht.
+    @MainActor
+    func saveDraft(createFolder: Bool = false) async -> DraftOutcome {
+        guard let accountID else { return .failed("Bitte zuerst einen Absender wählen.") }
+        isSavingDraft = true
+        defer { isSavingDraft = false; statusText = nil }
+
+        if missingAttachmentCount > 0 {
+            statusText = "Anhänge werden geladen …"
+            if !(await loadMissingAttachments()) { return failedLoad() }
+        }
+        if needsInlineImageLoad {
+            statusText = "Bilder werden geladen …"
+            if !(await loadMissingInlineImages()) { return failedLoad() }
+        }
+
+        statusText = "Entwurf wird gesichert …"
+        let mail = OutgoingMail(
+            accountID: accountID,
+            to: to,
+            cc: cc,
+            bcc: bcc,
+            subject: subject,
+            htmlBody: draftHTML(),
+            textBody: composedText(),
+            attachments: attachments + outgoingInlineImages + RichTextHTML.images(in: body)
+                + (htmlSignature?.attachments ?? []),
+            inReplyTo: inReplyTo,
+            references: references
+        )
+
+        do {
+            if createFolder {
+                try await DraftService.createDraftsFolder(accountID: accountID, accountStore: accountStore)
+            }
+            _ = try await DraftService.save(mail, accountStore: accountStore)
+            return .saved
+        } catch DraftService.DraftError.draftsFolderMissing {
+            return .needsDraftsFolder
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
+
+    /// Ergebnis, wenn ein Anhang oder Bild für den Entwurf nicht geladen
+    /// werden konnte. Die Rückfrage „ohne … senden“ gehört nur zum Versand
+    /// und wird deshalb zurückgenommen.
+    ///
+    /// - Returns: Fehlschlag mit Grund.
+    private func failedLoad() -> DraftOutcome {
+        let failure = attachmentFailure
+        attachmentFailure = nil
+        let name = failure?.attachment.filename ?? "Ein Anhang"
+        let reason = failure?.reason ?? ""
+        return .failed("„\(name)“ konnte nicht geladen werden; der Entwurf wurde nicht gesichert. \(reason)")
+    }
+
+    /// HTML des Entwurfs mit Marken für Text, Signatur und Zitat.
+    ///
+    /// Verarbeitung: Der Mailtext wird an der eingesetzten einfachen
+    /// Signatur geteilt (Text davor, Signatur, Text danach); eine
+    /// HTML-Signatur steht als Signatur-Teil. Der Datenblock hält Art,
+    /// Bcc, Bezug zur Originalmail, Threading und die Art der Signatur.
+    ///
+    /// - Returns: HTML des Entwurfs (DraftFormat).
+    func draftHTML() -> String {
+        let split = SignatureEditing.split(body)
+        var signatureHTML: String?
+        var signatureKind = DraftMetadata.SignatureKind.none
+        if let signature = split.signature {
+            signatureHTML = RichTextHTML.html(from: signature)
+            signatureKind = .simple
+        } else if let htmlSignature {
+            signatureHTML = htmlSignature.sendHTML
+            signatureKind = .html
+        }
+
+        let metadata = DraftMetadata(
+            kind: Self.draftKind(kind),
+            bcc: bcc.map(\.displayString),
+            origin: kind == .new ? nil : original.map {
+                DraftMetadata.Origin(cachedMessageID: $0.id, accountID: $0.accountID, folder: $0.folder, uid: $0.uid)
+            },
+            inReplyTo: inReplyTo,
+            references: references,
+            signature: signatureKind
+        )
+        return DraftFormat.html(DraftParts(
+            metadata: metadata,
+            textBefore: RichTextHTML.html(from: split.before),
+            signature: signatureHTML,
+            textAfter: split.after.length > 0 ? RichTextHTML.html(from: split.after) : "",
+            quote: quotedHTML
+        ))
+    }
+
+    /// Art des Verfassens im Datenblock des Entwurfs.
+    ///
+    /// - Parameter kind: Art des Verfassens.
+    /// - Returns: Entsprechender Wert.
+    static func draftKind(_ kind: ComposeKind) -> DraftMetadata.Kind {
+        switch kind {
+        case .new:      return .new
+        case .reply:    return .reply
+        case .replyAll: return .replyAll
+        case .forward:  return .forward
         }
     }
 

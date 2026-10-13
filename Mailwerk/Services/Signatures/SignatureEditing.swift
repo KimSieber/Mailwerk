@@ -107,6 +107,41 @@ enum SignatureEditing {
         return Replacement(text: result, hadSignature: false)
     }
 
+    /// Teile des Mailtexts rund um die eingesetzte Signatur.
+    struct Split {
+        /// Text vor der Signatur.
+        let before: NSAttributedString
+        /// Die Signatur; `nil`, wenn keine markiert ist.
+        let signature: NSAttributedString?
+        /// Text nach der Signatur.
+        let after: NSAttributedString
+    }
+
+    /// Zerlegt den Mailtext an der markierten Signatur (für Entwürfe).
+    ///
+    /// Verarbeitung: Der Bereich vom ersten bis zum letzten markierten
+    /// Zeichen ist die Signatur; ohne Markierung ist alles „vorher“.
+    ///
+    /// - Parameter body: Mailtext.
+    /// - Returns: Text vorher, Signatur, Text nachher.
+    static func split(_ body: NSAttributedString) -> Split {
+        var first: Int?
+        var last = 0
+        body.enumerateAttribute(.mailwerkSignature, in: NSRange(location: 0, length: body.length), options: []) { value, range, _ in
+            guard (value as? Bool) == true else { return }
+            if first == nil { first = range.location }
+            last = NSMaxRange(range)
+        }
+        guard let first else {
+            return Split(before: body, signature: nil, after: NSAttributedString())
+        }
+        return Split(
+            before: body.attributedSubstring(from: NSRange(location: 0, length: first)),
+            signature: body.attributedSubstring(from: NSRange(location: first, length: last - first)),
+            after: body.attributedSubstring(from: NSRange(location: last, length: body.length - last))
+        )
+    }
+
     // MARK: - Pflege-Seite
 
     /// Logo als Bild für den Editor.

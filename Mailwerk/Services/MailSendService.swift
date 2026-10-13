@@ -21,6 +21,7 @@
 //
 //  Abgrenzung: Zusammenstellen des Inhalts (Zitat, HTML, Anhänge) erledigt
 //  der ComposeViewModel; hier wird nur geprüft, versendet und nachgearbeitet.
+//  Entwürfe → DraftService (nutzt `makeEmail` und `addingBccHeader`).
 //
 //  Abhängigkeiten: SwiftMail (SMTP/IMAP), MailServerFactory (TLS-Vorgaben
 //  für SMTP), MailSession (IMAP-Verbindung und Zugangsdaten), AccountStore,
@@ -282,7 +283,7 @@ enum MailSendService {
     ///   - account: Absende-Postfach (liefert den Absendernamen).
     ///   - senderAddress: Geprüfte Absenderadresse.
     /// - Returns: Versandfertiges `Email`-Objekt.
-    private static func makeEmail(
+    static func makeEmail(
         _ mail: OutgoingMail,
         account: MailAccount,
         senderAddress: String
@@ -407,12 +408,7 @@ enum MailSendService {
         bcc: [MailAddress],
         credentials: MailCredentials
     ) async throws -> String {
-        var copy = email
-        if !bcc.isEmpty {
-            var headers = copy.additionalHeaders ?? [:]
-            headers["Bcc"] = bcc.map { $0.emailAddress.description }.joined(separator: ", ")
-            copy.additionalHeaders = headers
-        }
+        let copy = addingBccHeader(email, bcc: bcc)
 
         return try await MailSession.withIMAP(credentials) { imap in
             let folder = try await sentFolderPath(imap)
@@ -420,6 +416,24 @@ enum MailSendService {
             Log.send.info("📤 [\(credentials.account.displayName, privacy: .private)] Kopie abgelegt in \(folder, privacy: .public)")
             return folder
         }
+    }
+
+    /// Ergänzt einen Bcc-Header für eine eigene Kopie (Gesendet, Entwurf).
+    ///
+    /// Verarbeitung: Beim Versand bleiben Bcc-Empfänger unsichtbar; in der
+    /// eigenen Kopie sollen sie erkennbar sein.
+    ///
+    /// - Parameters:
+    ///   - email: Nachricht.
+    ///   - bcc: Blindkopie-Empfänger; leer = unverändert.
+    /// - Returns: Nachricht mit Bcc-Header.
+    static func addingBccHeader(_ email: Email, bcc: [MailAddress]) -> Email {
+        guard !bcc.isEmpty else { return email }
+        var copy = email
+        var headers = copy.additionalHeaders ?? [:]
+        headers["Bcc"] = bcc.map { $0.emailAddress.description }.joined(separator: ", ")
+        copy.additionalHeaders = headers
+        return copy
     }
 
     /// Ermittelt den Gesendet-Ordner des Postfachs.

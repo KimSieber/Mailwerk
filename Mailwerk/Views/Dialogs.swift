@@ -6,7 +6,8 @@
 //
 //  - `AlertItem`: Hinweis oder Fehlermeldung mit „OK“.
 //  - `ConfirmationRequest`: Rückfrage vor einer Aktion mit Bestätigen und
-//    Abbrechen.
+//    Abbrechen, auf Wunsch mit einem dritten Knopf (z. B. „Als Entwurf
+//    sichern“), der sich auch ausgegraut zeigen lässt.
 //
 //  Beide erscheinen als `alert` – mittig, mit beiden Knöpfen sichtbar,
 //  auf iPhone, iPad und Mac gleich. Ein `confirmationDialog` erschiene auf
@@ -80,6 +81,18 @@ struct ConfirmationRequest: Identifiable {
     let onConfirm: () -> Void
     /// Wird nach dem Abbrechen ausgeführt; sonst `nil`.
     let onCancel: (() -> Void)?
+    /// Dritter Knopf (z. B. „Als Entwurf sichern“); `nil` = keiner.
+    var secondary: SecondaryAction?
+
+    /// Dritter Knopf einer Rückfrage.
+    struct SecondaryAction {
+        /// Beschriftung.
+        let label: String
+        /// `false` = ausgegraut (z. B. ohne Verbindung).
+        var isEnabled = true
+        /// Wird beim Tippen ausgeführt.
+        let action: () -> Void
+    }
 
     /// Legt eine Rückfrage an.
     ///
@@ -138,8 +151,9 @@ extension View {
 
     /// Zeigt eine Rückfrage, solange `request` gesetzt ist.
     ///
-    /// Verarbeitung: Beide Knöpfe schließen die Rückfrage (setzt `request`
-    /// zurück) und führen danach ihre Aktion aus.
+    /// Verarbeitung: Jeder Knopf schließt die Rückfrage (setzt `request`
+    /// zurück) und führt danach seine Aktion aus. Ein dritter Knopf steht
+    /// zuoberst; „Abbrechen“ ordnet das System selbst an.
     ///
     /// - Parameter request: Bindung an die Rückfrage der Ansicht.
     /// - Returns: Ansicht mit Rückfrage.
@@ -152,6 +166,10 @@ extension View {
             ),
             presenting: request.wrappedValue
         ) { current in
+            if let secondary = current.secondary {
+                Button(secondary.label) { secondary.action() }
+                    .disabled(!secondary.isEnabled)
+            }
             Button(current.cancelLabel, role: .cancel) { current.onCancel?() }
             Button(current.confirmLabel, role: current.isDestructive ? .destructive : nil) {
                 current.onConfirm()
