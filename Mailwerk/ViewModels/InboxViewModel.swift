@@ -190,7 +190,8 @@ final class InboxViewModel {
         #if DEBUG
         let started = Date()
         #endif
-        let accountIDs = accountStore.accounts.map(\.id)
+        // Sammelsichten nur mit Postfächern, deren Abruf eingeschaltet ist.
+        let accountIDs = accountStore.fetchingAccounts.map(\.id)
         syncState = currentSyncState()
         switch selection {
         case .allInboxes:
@@ -276,14 +277,14 @@ final class InboxViewModel {
     /// Stand der gewählten Ansicht.
     ///
     /// Verarbeitung: Sammelansichten sind so aktuell wie der älteste
-    /// beteiligte Posteingang.
+    /// beteiligte Posteingang; ausgeschaltete Postfächer zählen nicht mit.
     ///
-    /// - Returns: Stand oder `nil`, wenn kein Postfach eingerichtet ist.
+    /// - Returns: Stand oder `nil`, wenn kein (beteiligtes) Postfach eingerichtet ist.
     private func currentSyncState() -> SyncState? {
-        let accounts = accountStore.accounts
-        guard !accounts.isEmpty else { return nil }
         switch selection {
         case .allInboxes, .flagged:
+            let accounts = accountStore.fetchingAccounts
+            guard !accounts.isEmpty else { return nil }
             return .oldest(accounts.map {
                 MessageStore.shared.lastSync(accountID: $0.id, folder: MailFolder.inboxPath)
             })
@@ -295,12 +296,12 @@ final class InboxViewModel {
     // MARK: - Ältere Nachrichten
 
     /// Ordner, deren Fenster die aktuelle Ansicht bilden: bei einem Ordner
-    /// dieser allein, bei „Alle Eingänge" die Posteingänge aller Postfächer.
-    /// Die Kennzeichen-Sicht lädt nicht nach.
+    /// dieser allein, bei „Alle Eingänge" die Posteingänge aller
+    /// eingeschalteten Postfächer. Die Kennzeichen-Sicht lädt nicht nach.
     private var olderTargets: [(account: MailAccount, folder: String)] {
         switch selection {
         case .allInboxes:
-            return accountStore.accounts.map { ($0, MailFolder.inboxPath) }
+            return accountStore.fetchingAccounts.map { ($0, MailFolder.inboxPath) }
         case .flagged:
             return []
         case .folder(let accountID, let path, _):
@@ -437,7 +438,7 @@ final class InboxViewModel {
         viewQueryCount += 1
         #endif
         return MessageStore.shared.flaggedInboxCount(
-            accountIDs: accountStore.accounts.map(\.id)
+            accountIDs: accountStore.fetchingAccounts.map(\.id)
         )
     }
 
@@ -495,6 +496,9 @@ final class InboxViewModel {
     ///
     /// Verarbeitung: Ohne Netz bleibt es beim Cache; sonst wird der Ordner
     /// vom Server geholt und die Liste danach aus dem Cache neu geladen.
+    /// Beim Posteingang eines ausgeschalteten Postfachs ersetzt dieser
+    /// Abruf die Runde über „Alle Eingänge“: Spamfilter, Posteingang und
+    /// Spam-Ordner (`refreshAccount`).
     ///
     /// - Parameters:
     ///   - accountID: Postfach.
@@ -521,11 +525,23 @@ final class InboxViewModel {
         defer { isLoading = false }
 
         connectionFailed = false
-        do {
-            try await MailFetchService.refreshAndCache(credentials, folder: path)
-        } catch {
-            if let message = classify(error, context: account.displayName) {
-                alert = AlertItem(title: "Fehler beim Abrufen", message: message)
+        let kind = FetchSelection.folderRefresh(
+            isInbox: path == MailFolder.inboxPath,
+            isPaused: !accountStore.isFetchEnabled(accountID)
+        )
+        switch kind {
+        case .fullAccount:
+            let errors = await refreshAccount(account)
+            if !errors.isEmpty {
+                alert = AlertItem(title: "Fehler beim Abrufen", message: errors.joined(separator: "\n"))
+            }
+        case .folderOnly:
+            do {
+                try await MailFetchService.refreshAndCache(credentials, folder: path)
+            } catch {
+                if let message = classify(error, context: account.displayName) {
+                    alert = AlertItem(title: "Fehler beim Abrufen", message: message)
+                }
             }
         }
         loadFromCache()
@@ -568,7 +584,7 @@ final class InboxViewModel {
 
     /// Ruft alle Posteingänge vom Server ab.
     ///
-    /// Verarbeitung: Ruft die Postfächer nacheinander ab
+    /// Verarbeitung: Ruft die eingeschalteten Postfächer nacheinander ab
     /// (`refreshAccount`) und lädt die Liste nach jedem Postfach neu, damit
     /// sie schrittweise wächst. Kommen während des Abrufs Postfächer hinzu,
     /// werden sie in derselben Runde mit abgerufen – so geht keines
@@ -590,12 +606,13 @@ final class InboxViewModel {
         defer { isLoading = false }
         connectionFailed = false
 
-        let accountCount = accountStore.accounts.count
-        Log.fetch.info("🔄 Refresh gestartet für \(accountCount) Konten")
+        let accountCount = accountStore.fetchingAccounts.count
+        let pausedCount = accountStore.accounts.count - accountCount
+        Log.fetch.info("🔄 Refresh gestartet für \(accountCount) Konten (\(pausedCount) ausgeschaltet)")
 
         var errors: [String] = []
         var processed: Set<UUID> = []
-        while let account = accountStore.accounts.first(where: { !processed.contains($0.id) }) {
+        while let account = accountStore.fetchingAccounts.first(where: { !processed.contains($0.id) }) {
             processed.insert(account.id)
             errors += await refreshAccount(account)
             loadFromCache()

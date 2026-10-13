@@ -8,6 +8,10 @@
 //  Jedes Postfach hat seinen eigenen Zustand: Scheitert eines, zeigen die
 //  anderen trotzdem ihre Ordner.
 //
+//  Ausgeschaltete Postfächer („Abruf“ aus, siehe FetchSelection) zeigen
+//  nur ihren gespeicherten Baum; vom Server geladen wird er erst, wenn
+//  einer ihrer Ordner geöffnet wird (`retry`).
+//
 //  Offline verfügbar: Ein gespeicherter Baum (`CachedLoader`)
 //  erscheint sofort, danach wird einmal je Sitzung vom Server geladen.
 //  Scheitert ein Abruf, bleibt ein vorhandener Baum stehen – ohne
@@ -91,27 +95,32 @@ final class FolderCatalog {
     /// dieser Sitzung noch kein Abruf lief. Zustände entfernter Postfächer
     /// werden dabei verworfen.
     ///
-    /// - Parameter accounts: Eingerichtete Postfächer.
-    func loadIfNeeded(_ accounts: [MailAccount]) async {
+    /// - Parameters:
+    ///   - accounts: Eingerichtete Postfächer.
+    ///   - paused: Ausgeschaltete Postfächer – nur gespeicherter Baum, kein Abruf.
+    func loadIfNeeded(_ accounts: [MailAccount], paused: Set<UUID> = []) async {
         prune(keeping: accounts)
         for account in accounts where state(for: account.id) == .idle {
             if let tree = cached(account) {
                 states[account.id] = .loaded(tree)
             }
         }
-        await load(accounts.filter { !attempted.contains($0.id) })
+        await load(accounts.filter { !attempted.contains($0.id) && !paused.contains($0.id) })
     }
 
-    /// Lädt alle Postfächer neu (Pull-to-Refresh). Bereits geladene
-    /// Ordner bleiben bis zum Ergebnis sichtbar.
+    /// Lädt alle eingeschalteten Postfächer neu (Pull-to-Refresh). Bereits
+    /// geladene Ordner bleiben bis zum Ergebnis sichtbar.
     ///
-    /// - Parameter accounts: Eingerichtete Postfächer.
-    func reload(_ accounts: [MailAccount]) async {
+    /// - Parameters:
+    ///   - accounts: Eingerichtete Postfächer.
+    ///   - paused: Ausgeschaltete Postfächer – werden nicht geladen.
+    func reload(_ accounts: [MailAccount], paused: Set<UUID> = []) async {
         prune(keeping: accounts)
-        await load(accounts)
+        await load(accounts.filter { !paused.contains($0.id) })
     }
 
-    /// Lädt ein einzelnes Postfach erneut, etwa nach einem Fehler.
+    /// Lädt ein einzelnes Postfach erneut, etwa nach einem Fehler oder beim
+    /// Öffnen eines Ordners eines ausgeschalteten Postfachs.
     ///
     /// - Parameter account: Postfach.
     func retry(_ account: MailAccount) async {

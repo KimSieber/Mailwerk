@@ -10,6 +10,11 @@
 //  Kontodaten: Er bezeichnet einen Ordner auf dem Server und ist auf allen
 //  Geräten derselbe. Geschrieben wird nur, wenn er sich ändert.
 //
+//  Ob ein Postfach abgerufen wird („Abruf“ ein/aus), gilt dagegen nur für
+//  dieses Gerät: Die ausgeschalteten Postfächer liegen in den lokalen
+//  Einstellungen (UserDefaults), nicht in iCloud. So lässt sich ein
+//  Postfach etwa nur am Mac abrufen. Regeln → FetchSelection.
+//
 //  Fehler beim Lesen oder Schreiben der Kontoliste werden protokolliert.
 //  Lässt sich die gespeicherte Liste nicht lesen (etwa weil ein anderes
 //  Gerät mit neuerer App-Version sie geschrieben hat), bleiben die
@@ -22,8 +27,9 @@
 //  (`credentials(for:)` als Erweiterung dort); Cache je Postfach →
 //  MessageStore.
 //
-//  Abhängigkeiten: NSUbiquitousKeyValueStore, KeychainService,
-//  MessageStore (Cache beim Entfernen leeren), MailAccount, Log.
+//  Abhängigkeiten: NSUbiquitousKeyValueStore, UserDefaults, KeychainService,
+//  MessageStore (Cache beim Entfernen leeren), MailAccount, FetchSelection,
+//  Log.
 //
 
 import Foundation
@@ -41,6 +47,14 @@ final class AccountStore {
     private static let defaultAccountKey = "mailwerk.defaultAccountID"
     /// iCloud Key-Value-Store.
     private let store = NSUbiquitousKeyValueStore.default
+    /// Schlüssel der ausgeschalteten Postfächer in den lokalen Einstellungen.
+    private static let pausedAccountsKey = "mailwerk.fetchPausedAccounts"
+    /// Lokale Einstellungen dieses Geräts (nicht über iCloud abgeglichen).
+    private let localDefaults: UserDefaults
+
+    /// Postfächer, die auf diesem Gerät nicht über „Alle Eingänge“
+    /// abgerufen werden.
+    private(set) var pausedAccountIDs: Set<UUID> = []
 
     /// Eingerichtete Postfächer.
     private(set) var accounts: [MailAccount] = []
@@ -56,10 +70,17 @@ final class AccountStore {
 
     /// Lädt die Postfächer und beobachtet Änderungen von anderen Geräten.
     ///
-    /// Verarbeitung: Liest den lokalen Stand, meldet sich für
+    /// Verarbeitung: Liest den lokalen Stand und die ausgeschalteten
+    /// Postfächer dieses Geräts, meldet sich für
     /// `didChangeExternallyNotification` an und stößt den Abgleich mit
     /// iCloud an.
-    init() {
+    ///
+    /// - Parameter localDefaults: Lokale Einstellungen; Tests übergeben eigene.
+    init(localDefaults: UserDefaults = .standard) {
+        self.localDefaults = localDefaults
+        pausedAccountIDs = FetchSelection.pausedIDs(
+            from: localDefaults.stringArray(forKey: Self.pausedAccountsKey)
+        )
         load()
         NotificationCenter.default.addObserver(
             self,
@@ -108,6 +129,7 @@ final class AccountStore {
         if defaultAccountID == account.id {
             setDefaultAccount(nil)
         }
+        setFetchEnabled(true, for: account.id)
     }
 
     /// Ändert ein Postfach und – falls angegeben – sein Passwort.
@@ -149,6 +171,39 @@ final class AccountStore {
               accounts[index].spamFolder != folder else { return }
         accounts[index].spamFolder = folder
         saveAccounts()
+    }
+
+    // MARK: - Abruf je Postfach (nur dieses Gerät)
+
+    /// Postfächer, die über „Alle Eingänge“ abgerufen und in den
+    /// Sammelsichten gezeigt werden – in ihrer Reihenfolge.
+    var fetchingAccounts: [MailAccount] {
+        let active = Set(FetchSelection.activeIDs(accounts.map(\.id), paused: pausedAccountIDs))
+        return accounts.filter { active.contains($0.id) }
+    }
+
+    /// `true`, wenn das Postfach auf diesem Gerät abgerufen wird.
+    ///
+    /// - Parameter accountID: Postfach.
+    /// - Returns: `false`, wenn der Abruf ausgeschaltet ist.
+    func isFetchEnabled(_ accountID: UUID) -> Bool {
+        !pausedAccountIDs.contains(accountID)
+    }
+
+    /// Schaltet den Abruf eines Postfachs auf diesem Gerät ein oder aus.
+    ///
+    /// Verarbeitung: Gespeichert wird nur in den lokalen Einstellungen;
+    /// unveränderte Werte werden nicht geschrieben.
+    ///
+    /// - Parameters:
+    ///   - enabled: `true` = abrufen (Standard), `false` = ausschalten.
+    ///   - accountID: Postfach.
+    func setFetchEnabled(_ enabled: Bool, for accountID: UUID) {
+        var updated = pausedAccountIDs
+        if enabled { updated.remove(accountID) } else { updated.insert(accountID) }
+        guard updated != pausedAccountIDs else { return }
+        pausedAccountIDs = updated
+        localDefaults.set(FetchSelection.storedValue(updated), forKey: Self.pausedAccountsKey)
     }
 
     // MARK: - Standard-Postfach

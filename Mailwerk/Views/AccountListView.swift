@@ -4,7 +4,9 @@
 //
 //  Zweck: Postfachverwaltung – Liste der Postfächer mit Farbe, Name und
 //  E-Mail-Adresse; Hinzufügen, Bearbeiten (Tipp) und Entfernen (Wischen);
-//  Wahl des Standard-Postfachs für neue Mails.
+//  je Postfach der Schalter „Abruf“ (nur dieses Gerät; aus = nicht über
+//  „Alle Eingänge“ abrufen, Pause-Zeichen vor dem Namen); Wahl des
+//  Standard-Postfachs für neue Mails.
 //
 //  Ein Postfach zu entfernen löscht auch seinen gesamten Cache, sein
 //  Passwort aus dem Schlüsselbund und seine Signatur. Deshalb gibt es davor eine Rückfrage –
@@ -14,7 +16,8 @@
 //  Abgrenzung: Anlegen → AddAccountView; Bearbeiten → EditAccountView;
 //  Speichern und Entfernen → AccountStore.
 //
-//  Abhängigkeiten: SwiftUI, AccountStore, SignatureStore, Dialogs, Log.
+//  Abhängigkeiten: SwiftUI, AccountStore, SignatureStore, Dialogs, Log,
+//  FetchPausedBadge.
 //
 
 import SwiftUI
@@ -83,30 +86,49 @@ struct AccountListView: View {
 
     // MARK: - Abschnitte
 
-    /// Postfächer mit Farbpunkt, Name und E-Mail-Adresse; Tipp bearbeitet,
-    /// Wischen entfernt (nach Rückfrage).
+    /// Postfächer mit Farbpunkt, Name und E-Mail-Adresse sowie Schalter
+    /// „Abruf“; Tipp auf den Namen bearbeitet, Wischen entfernt (nach
+    /// Rückfrage).
+    ///
+    /// Verarbeitung: Knopf und Schalter liegen in derselben Zeile; der
+    /// Knopf ist randlos, damit die Liste jedem seine eigenen Tipps gibt.
     private var accountSection: some View {
         Section {
             ForEach(accountStore.accounts) { account in
-                Button {
-                    editingAccount = account
-                } label: {
-                    HStack(spacing: 10) {
-                        if let colorHex = account.colorHex {
-                            Circle()
-                                .fill(Color(hex: colorHex))
-                                .frame(width: 12, height: 12)
+                HStack(spacing: 10) {
+                    Button {
+                        editingAccount = account
+                    } label: {
+                        HStack(spacing: 10) {
+                            if let colorHex = account.colorHex {
+                                Circle()
+                                    .fill(Color(hex: colorHex))
+                                    .frame(width: 12, height: 12)
+                            }
+                            VStack(alignment: .leading) {
+                                HStack(spacing: 6) {
+                                    if !accountStore.isFetchEnabled(account.id) {
+                                        FetchPausedBadge(font: .headline)
+                                    }
+                                    Text(account.displayName)
+                                        .font(.headline)
+                                }
+                                Text(account.senderAddress)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
                         }
-                        VStack(alignment: .leading) {
-                            Text(account.displayName)
-                                .font(.headline)
-                            Text(account.senderAddress)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.borderless)
+                    .tint(.primary)
+
+                    Toggle("Abruf", isOn: fetchBinding(for: account.id))
+                        .labelsHidden()
+                        .help("Abruf über „Alle Eingänge“ (nur dieses Gerät)")
+                        .accessibilityLabel("Abruf \(account.displayName)")
                 }
-                .tint(.primary)
             }
             .onDelete { offsets in
                 // Die Indizes gelten nur jetzt – die Postfächer gleich merken.
@@ -128,6 +150,17 @@ struct AccountListView: View {
         } footer: {
             Text("Wird beim Verfassen einer neuen Mail als Absender vorbelegt.")
         }
+    }
+
+    /// Bindung an den Schalter „Abruf“ eines Postfachs.
+    ///
+    /// - Parameter accountID: Postfach.
+    /// - Returns: Bindung an `AccountStore.isFetchEnabled`.
+    private func fetchBinding(for accountID: UUID) -> Binding<Bool> {
+        Binding(
+            get: { accountStore.isFetchEnabled(accountID) },
+            set: { accountStore.setFetchEnabled($0, for: accountID) }
+        )
     }
 
     /// Bindung an das Standard-Postfach des AccountStore.

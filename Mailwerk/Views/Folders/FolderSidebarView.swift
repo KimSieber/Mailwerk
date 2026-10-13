@@ -6,6 +6,10 @@
 //  Ansicht, ein Tipp darauf schließt die Leiste – und „Mit Kennzeichnung“.
 //  Darunter je Postfach ein aufklappbarer Abschnitt mit dem Ordnerbaum.
 //
+//  Ein Postfach, dessen Abruf auf diesem Gerät ausgeschaltet ist, trägt
+//  vor dem Namen ein orangefarbenes Pause-Zeichen (FetchPausedBadge);
+//  seine Ordnerliste wird nicht von selbst geladen (siehe FolderCatalog).
+//
 //  Ordner sind auswählbar: Ein Tipp zeigt den Ordnerinhalt. Unterordner
 //  sind immer sichtbar und nur durch Einrückung erkennbar; auf- und
 //  zuklappen lassen sich nur die Postfächer.
@@ -25,7 +29,8 @@
 //  (`onCreateFolder`, `onDeleteFolder`); den Ordnerbaum liefert der
 //  FolderCatalog.
 //
-//  Abhängigkeiten: SwiftUI, FolderCatalog, FolderNode, FolderLabel, Dialogs.
+//  Abhängigkeiten: SwiftUI, FolderCatalog, FolderNode, FolderLabel, Dialogs,
+//  FetchPausedBadge.
 //
 
 import SwiftUI
@@ -34,6 +39,8 @@ import SwiftUI
 struct FolderSidebarView: View {
     /// Eingerichtete Postfächer.
     let accounts: [MailAccount]
+    /// Postfächer, deren Abruf auf diesem Gerät ausgeschaltet ist.
+    var pausedAccountIDs: Set<UUID> = []
     /// Ordnerbäume der Postfächer.
     let catalog: FolderCatalog
     /// Aufgeklappte Postfächer. Liegt beim Aufrufer, damit der Zustand
@@ -93,6 +100,7 @@ struct FolderSidebarView: View {
                     ForEach(accounts) { account in
                         AccountFolderSection(
                             account: account,
+                            isPaused: pausedAccountIDs.contains(account.id),
                             state: catalog.state(for: account.id),
                             isBusy: busyAccountID == account.id,
                             isExpanded: expansionBinding(for: account.id),
@@ -119,10 +127,10 @@ struct FolderSidebarView: View {
             .padding(.vertical, 8)
         }
         .refreshable {
-            await catalog.reload(accounts)
+            await catalog.reload(accounts, paused: pausedAccountIDs)
         }
         .task {
-            await catalog.loadIfNeeded(accounts)
+            await catalog.loadIfNeeded(accounts, paused: pausedAccountIDs)
         }
         .alert(
             creation?.title ?? "",
@@ -255,6 +263,8 @@ struct FolderSidebarView: View {
 private struct AccountFolderSection: View {
     /// Postfach.
     let account: MailAccount
+    /// `true`, wenn der Abruf des Postfachs auf diesem Gerät ausgeschaltet ist.
+    var isPaused = false
     /// Ladezustand des Ordnerbaums.
     let state: FolderCatalog.State
     /// Eine Aktion im Postfach läuft (etwa: Ordner wird angelegt).
@@ -283,8 +293,8 @@ private struct AccountFolderSection: View {
         }
     }
 
-    /// Kopfzeile: Pfeil, Farbpunkt, Name, Ladeanzeige; Kontextmenü
-    /// „Neuer Ordner …“.
+    /// Kopfzeile: Pfeil, Farbpunkt, Pause-Zeichen (Abruf aus), Name,
+    /// Ladeanzeige; Kontextmenü „Neuer Ordner …“.
     private var header: some View {
         Button {
             withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
@@ -298,6 +308,9 @@ private struct AccountFolderSection: View {
                 Circle()
                     .fill(account.colorHex.map { Color(hex: $0) } ?? Color.secondary)
                     .frame(width: 8, height: 8)
+                if isPaused {
+                    FetchPausedBadge(font: .subheadline)
+                }
                 Text(account.displayName)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)

@@ -4,8 +4,9 @@
 //
 //  Zweck: Formular zum Bearbeiten eines Postfachs – Bezeichnung,
 //  Absendername, E-Mail-Adresse, Benutzername, Passwort, Server, Farbe,
-//  Signatur – mit Verbindungstest. Die Zeile „Signatur“ öffnet deren
-//  Pflege-Seite; sie speichert unabhängig von „Sichern“ dieses Formulars. Jede Zeile zeigt ihre Beschriftung und ein
+//  Signatur, Abruf – mit Verbindungstest. Die Zeile „Signatur“ öffnet
+//  deren Pflege-Seite; sie speichert unabhängig von „Sichern“ dieses
+//  Formulars. Ebenso wirkt der Schalter „Abruf“ sofort (nur dieses Gerät). Jede Zeile zeigt ihre Beschriftung und ein
 //  Beispiel (LabeledInputField). Ein leeres Passwortfeld lässt das
 //  gespeicherte Passwort unverändert. Scheitert das Speichern, bleibt das
 //  Formular offen und eine Meldung erklärt den Grund.
@@ -186,6 +187,17 @@ struct EditAccountView: View {
                     Text("Signatur")
                 } footer: {
                     Text("Erscheint beim Verfassen unter dem eigenen Text, bei Antworten und Weiterleitungen über dem Zitat. Wird über iCloud auf allen Geräten abgeglichen.")
+                }
+
+                Section {
+                    Toggle("Abruf über „Alle Eingänge“", isOn: Binding(
+                        get: { accountStore.isFetchEnabled(account.id) },
+                        set: { accountStore.setFetchEnabled($0, for: account.id) }
+                    ))
+                } header: {
+                    Text("Abruf")
+                } footer: {
+                    Text("Gilt nur auf diesem Gerät. Ausgeschaltet wird das Postfach nur abgerufen, wenn du einen seiner Ordner öffnest; seine Mails erscheinen dann nicht in „Alle Eingänge“.")
                 }
 
                 Section {

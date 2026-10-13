@@ -13,7 +13,9 @@
 //  Ordnerleiste sowie Einstellungen und Verfassen. Aktualisiert wird auf
 //  iPhone/iPad durch Herunterziehen, auf dem Mac per Knopf bzw. ⌘R.
 //  Kommen Postfächer hinzu (beim ersten Start aus iCloud oder neu
-//  eingerichtet), wird automatisch abgerufen.
+//  eingerichtet) oder wird der Abruf eines Postfachs wieder
+//  eingeschaltet, wird automatisch abgerufen. Ein Ordner eines
+//  ausgeschalteten Postfachs lädt beim Öffnen auch dessen Ordnerliste.
 //
 //  Die Liste arbeitet mit Listeneinträgen ohne Mailinhalt
 //  (`MessageListItem`). Erst beim Öffnen einer Mail lädt
@@ -246,7 +248,19 @@ struct InboxView: View {
                 // Hintergrund vom Server nachladen.
                 if case .folder(let accountID, let path, _) = newSelection {
                     Task { await viewModel.refreshFolder(accountID: accountID, path: path) }
+                    // Ausgeschaltetes Postfach: Ordnerliste jetzt mit laden.
+                    if !accountStore.isFetchEnabled(accountID),
+                       let account = accountStore.accounts.first(where: { $0.id == accountID }) {
+                        Task { await folderCatalog.retry(account) }
+                    }
                 }
+            }
+            .onChange(of: accountStore.pausedAccountIDs) { oldPaused, newPaused in
+                // Abruf ein-/ausgeschaltet: Sammelsichten neu zusammenstellen;
+                // wieder eingeschaltete Postfächer gleich abrufen.
+                viewModel.loadFromCache()
+                guard !oldPaused.isSubset(of: newPaused) else { return }
+                Task { await viewModel.refresh() }
             }
             .sheet(isPresented: $showingAccounts) {
                 AccountListView(accountStore: accountStore)
@@ -307,6 +321,7 @@ struct InboxView: View {
         .sideDrawer(isPresented: $showingFolders) {
             FolderSidebarView(
                 accounts: accountStore.accounts,
+                pausedAccountIDs: accountStore.pausedAccountIDs,
                 catalog: folderCatalog,
                 expandedAccounts: $expandedFolderAccounts,
                 selection: $viewModel.selection,
