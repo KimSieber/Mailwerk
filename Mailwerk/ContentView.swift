@@ -14,7 +14,7 @@
 //  Abgrenzung: Aufbau der Objekte → MailwerkApp; Nachrichtenliste →
 //  InboxView.
 //
-//  Abhängigkeiten: InboxView, AppObjects.
+//  Abhängigkeiten: InboxView, AppObjects, SignatureStore.
 //
 
 import SwiftUI
@@ -33,6 +33,8 @@ struct ContentView: View {
             viewModel: objects.inbox,
             folderCatalog: objects.folderCatalog
         )
+        // Signaturen für alle Ansichten (Postfach bearbeiten, Verfassen)
+        .environment(objects.signatures)
     }
 }
 
@@ -52,6 +54,8 @@ final class AppObjects {
     let inbox: InboxViewModel
     /// Ordnerbäume der Postfächer für die Ordnerleiste.
     let folderCatalog: FolderCatalog
+    /// Signaturen der Postfächer.
+    let signatures: SignatureStore
 
     /// Legt alle Objekte in der nötigen Reihenfolge an.
     ///
@@ -59,12 +63,15 @@ final class AppObjects {
     /// ViewModel (zeigt sofort den Cache) und der Ordnerkatalog, die beide
     /// darauf aufbauen.
     ///
-    /// - Parameter filterLists: Speicher der Filterlisten.
-    init(filterLists: any FilterListRepository) {
+    /// - Parameters:
+    ///   - filterLists: Speicher der Filterlisten.
+    ///   - signatures: Speicher der Signaturen.
+    init(filterLists: any FilterListRepository, signatures: SignatureStore) {
         let accountStore = AccountStore()
         let spamSettings = SpamSettings()
         self.accountStore = accountStore
         self.filterLists = filterLists
+        self.signatures = signatures
         self.spamSettings = spamSettings
         self.inbox = InboxViewModel(
             accountStore: accountStore,
@@ -76,5 +83,8 @@ final class AppObjects {
 }
 
 #Preview {
-    ContentView(objects: AppObjects(filterLists: InMemoryFilterListRepository()))
+    ContentView(objects: AppObjects(
+        filterLists: InMemoryFilterListRepository(),
+        signatures: SignatureStore(storage: InMemorySignatureStorage(), observesCloud: false)
+    ))
 }

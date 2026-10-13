@@ -2,8 +2,9 @@
 //  MailwerkApp.swift
 //  Mailwerk
 //
-//  Zweck: Einstiegspunkt der App. Richtet den Filterlisten-Speicher ein
-//  (bevorzugt mit iCloud-Abgleich, sonst lokal, notfalls im Speicher),
+//  Zweck: Einstiegspunkt der App. Richtet den gemeinsamen Speicher für
+//  Filterlisten und Signaturen ein (bevorzugt mit iCloud-Abgleich, sonst
+//  lokal, notfalls im Speicher),
 //  räumt beim Start temporäre Dateien auf und zeigt einmalig einen
 //  Hinweis, falls der lokale Mail-Speicher beim Start neu angelegt
 //  werden musste oder nicht verfügbar ist.
@@ -16,7 +17,8 @@
 //  Abgrenzung: Wurzelansicht → ContentView.
 //
 //  Abhängigkeiten: SwiftUI, SwiftData, AttachmentManager (Aufräumen),
-//  MessageStore (Starthinweis), AppObjects, Dialogs, Log.
+//  MessageStore (Starthinweis), AppObjects, FilterEntry, AccountSignature,
+//  SignatureStore, Dialogs, Log.
 //
 
 import SwiftUI
@@ -26,7 +28,7 @@ import os
 @main
 struct MailwerkApp: App {
 
-    /// Speicher der Filterlisten. Bevorzugt mit iCloud-Abgleich; ist der
+    /// Speicher der Filterlisten und Signaturen. Bevorzugt mit iCloud-Abgleich; ist der
     /// nicht verfügbar (kein iCloud-Konto, Gerät offline eingerichtet),
     /// arbeitet die App lokal weiter, statt den Start zu verweigern.
     private let modelContainer: ModelContainer
@@ -39,13 +41,14 @@ struct MailwerkApp: App {
 
     /// Richtet Speicher und Objekte einmalig beim Start ein.
     ///
-    /// Verarbeitung: Erzeugt den Filterlisten-Speicher, darauf aufbauend
+    /// Verarbeitung: Erzeugt den gemeinsamen Speicher, darauf aufbauend
     /// alle langlebigen Objekte, und räumt temporäre Anhang-Dateien auf.
     init() {
         let container = Self.makeContainer()
         modelContainer = container
         objects = AppObjects(
-            filterLists: SwiftDataFilterListRepository(context: container.mainContext)
+            filterLists: SwiftDataFilterListRepository(context: container.mainContext),
+            signatures: SignatureStore(storage: SwiftDataSignatureStorage(context: container.mainContext))
         )
 
         // Temporäre Anhang-Dateien aus der letzten Sitzung entfernen.
@@ -71,10 +74,10 @@ struct MailwerkApp: App {
 
     // MARK: - Container
 
-    /// CloudKit-Container für den Abgleich der Filterlisten.
+    /// CloudKit-Container für den Abgleich der Filterlisten und Signaturen.
     private static let cloudContainerID = "iCloud.de.sieber-bw.Mailwerk"
 
-    /// Erzeugt den Filterlisten-Speicher in absteigender Präferenz.
+    /// Erzeugt den Speicher für Filterlisten und Signaturen in absteigender Präferenz.
     ///
     /// Verarbeitung: Versucht zuerst iCloud (CloudKit), dann eine lokale
     /// Datei, zuletzt einen flüchtigen Speicher im RAM. Der erste
@@ -83,7 +86,7 @@ struct MailwerkApp: App {
     ///
     /// - Returns: Funktionierender `ModelContainer`.
     private static func makeContainer() -> ModelContainer {
-        let schema = Schema([FilterEntry.self])
+        let schema = Schema([FilterEntry.self, AccountSignature.self])
 
         let candidates: [(String, ModelConfiguration)] = [
             ("iCloud", ModelConfiguration(
@@ -106,14 +109,14 @@ struct MailwerkApp: App {
         for (name, configuration) in candidates {
             do {
                 let container = try ModelContainer(for: schema, configurations: configuration)
-                Log.spam.info("🗂️ Filterlisten-Speicher: \(name, privacy: .public)")
+                Log.spam.info("🗂️ Speicher für Filterlisten und Signaturen: \(name, privacy: .public)")
                 return container
             } catch {
-                Log.spam.error("⚠️ Filterlisten-Speicher \(name, privacy: .public) nicht verfügbar: \(error.localizedDescription, privacy: .public)")
+                Log.spam.error("⚠️ Speicher für Filterlisten und Signaturen \(name, privacy: .public) nicht verfügbar: \(error.localizedDescription, privacy: .public)")
             }
         }
 
         // Alle drei Varianten gescheitert – dann stimmt etwas Grundlegendes nicht.
-        fatalError("Kein Speicher für die Filterlisten verfügbar")
+        fatalError("Kein Speicher für Filterlisten und Signaturen verfügbar")
     }
 }

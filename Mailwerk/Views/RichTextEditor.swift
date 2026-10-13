@@ -8,7 +8,10 @@
 //
 //  Bewusst unterstützt wird nur, was sich später verlustfrei nach HTML
 //  übersetzen lässt: Fett, Kursiv, Unterstrichen, drei Schriftgrößen,
-//  Textfarbe, Aufzählung und nummerierte Liste.
+//  Textfarbe, Aufzählung, nummerierte Liste, Links (Web- und
+//  E-Mail-Adressen) und Bilder. Eingefügte oder hineingezogene Bilder
+//  werden nach jeder Änderung als `MailImageAttachment` aufbereitet
+//  (EditorImages), damit sie mitgesendet werden.
 //
 //  Der Editor scrollt nicht selbst, sondern wächst mit seinem Text. So
 //  scrollt die Antwortansicht als Ganzes – Kopfbereich, eigener Text und
@@ -24,7 +27,8 @@
 //  Abgrenzung: Bedienleiste → FormattingToolbar; Aufbau des
 //  Verfassen-Fensters → ComposeView; Umwandlung nach HTML → ComposeViewModel.
 //
-//  Abhängigkeiten: SwiftUI, UIKit (iOS) bzw. AppKit (macOS).
+//  Abhängigkeiten: SwiftUI, UIKit (iOS) bzw. AppKit (macOS), EditorImages,
+//  LinkInput.
 //
 
 import SwiftUI
@@ -115,6 +119,8 @@ final class RichTextController {
     private(set) var size: RichTextSize = .normal
     /// Listenart des Absatzes an der Schreibmarke, `nil` = keine Liste.
     private(set) var listStyle: RichTextListStyle?
+    /// Link-Ziel an der Schreibmarke bzw. am Anfang der Markierung, `nil` = kein Link.
+    private(set) var link: String?
 
     /// Gesteuerte Textansicht (schwach, gehört der SwiftUI-Ansicht).
     @ObservationIgnored weak var textView: PlatformTextView?
@@ -205,6 +211,68 @@ final class RichTextController {
         }
     }
 
+    /// Setzt, ändert oder entfernt einen Link.
+    ///
+    /// Verarbeitung:
+    /// - Mit Markierung erhält der markierte Text den Link (bzw. verliert ihn).
+    /// - Ohne Markierung, aber in einem Link, gilt die Änderung dem ganzen Link.
+    /// - Ohne Markierung und ohne Link wird die Adresse als verlinkter Text
+    ///   eingefügt (E-Mail-Adressen ohne „mailto:“); weitergetippt wird
+    ///   danach ohne Link.
+    /// Jede Änderung ist ein eigener Rückgängig-Schritt.
+    ///
+    /// - Parameter target: Geprüftes Link-Ziel (`LinkInput.normalize`);
+    ///   `nil` entfernt den Link.
+    func setLink(_ target: String?) {
+        guard textView != nil else { return }
+        let range = selectedRange
+        let url = target.flatMap { URL(string: $0) }
+
+        if let editRange = range.length > 0 ? range : linkAtSelection()?.range {
+            performAttributeEdit(in: editRange, actionName: url == nil ? "Link entfernen" : "Link") { storage in
+                if let url {
+                    storage.addAttribute(.link, value: url, range: editRange)
+                } else {
+                    storage.removeAttribute(.link, range: editRange)
+                }
+            }
+            return
+        }
+        guard let target, let url else { return }
+        insertLinkedText(LinkInput.displayText(for: target), url: url, at: range)
+    }
+
+    /// Setzt ein Bild an der Schreibmarke ein (ersetzt eine Markierung).
+    ///
+    /// Verarbeitung: Das Einsetzen ist ein Rückgängig-Schritt. iOS: Das
+    /// Platzhalterzeichen für Anhänge wird über die Textansicht eingefügt
+    /// und erhält dann das Bild. macOS: Die Textansicht fügt das Bild
+    /// direkt ein. Die Marke steht danach hinter dem Bild.
+    ///
+    /// - Parameter image: Einzusetzendes Bild.
+    func insertImage(_ image: MailImageAttachment) {
+        guard let textView else { return }
+        let range = selectedRange
+        removeLinkFromTypingAttributes()
+        #if os(iOS)
+        guard let start = textView.position(from: textView.beginningOfDocument, offset: range.location),
+              let end = textView.position(from: start, offset: range.length),
+              let textRange = textView.textRange(from: start, to: end) else { return }
+        textView.replace(textRange, withText: RichTextHTML.attachmentCharacter)
+        let inserted = NSRange(location: range.location, length: 1)
+        performAttributeEdit(in: inserted, actionName: "Bild") { storage in
+            storage.addAttribute(.attachment, value: image, range: inserted)
+        }
+        textView.selectedRange = NSRange(location: NSMaxRange(inserted), length: 0)
+        #else
+        let piece = NSMutableAttributedString(attachment: image)
+        piece.addAttributes(textView.typingAttributes, range: NSRange(location: 0, length: piece.length))
+        textView.insertText(piece, replacementRange: range)
+        #endif
+        onChange?()
+        updateState()
+    }
+
     /// Setzt die Schreibmarke an das Textende und aktiviert den Editor.
     ///
     /// Verarbeitung: Wird aufgerufen, wenn unterhalb des Textes in die
@@ -245,6 +313,7 @@ final class RichTextController {
 
         let paragraph = attributes[.paragraphStyle] as? NSParagraphStyle
         listStyle = RichTextListStyle.from(markerFormat: paragraph?.textLists.first?.markerFormat)
+        link = linkAtSelection()?.target
     }
 
     // MARK: Interna
@@ -271,6 +340,75 @@ final class RichTextController {
             return storage.attributes(at: range.location, effectiveRange: nil)
         }
         return textView.typingAttributes
+    }
+
+    /// Link an der Markierung samt seinem ganzen Bereich.
+    ///
+    /// Verarbeitung: Ohne Markierung zählt das Zeichen vor der Marke – eine
+    /// Marke direkt hinter einem Link gilt als „im Link“, wie in Apple-Apps.
+    ///
+    /// - Returns: Link-Ziel und Bereich oder `nil`.
+    private func linkAtSelection() -> (target: String, range: NSRange)? {
+        guard let storage = textView?.mwTextStorage, storage.length > 0 else { return nil }
+        let range = selectedRange
+        let location = range.length == 0 ? max(range.location - 1, 0) : range.location
+        guard location < storage.length else { return nil }
+        var effective = NSRange(location: 0, length: 0)
+        let value = storage.attribute(
+            .link, at: location, longestEffectiveRange: &effective,
+            in: NSRange(location: 0, length: storage.length)
+        )
+        switch value {
+        case let url as URL:       return (url.absoluteString, effective)
+        case let string as String: return (string, effective)
+        default:                   return nil
+        }
+    }
+
+    /// Fügt verlinkten Text an der Markierung ein.
+    ///
+    /// Verarbeitung: Der Text wird über die Textansicht eingefügt (damit ist
+    /// das Einfügen ein Rückgängig-Schritt), dann erhält er den Link. Die
+    /// Marke steht danach hinter dem Text, die Eingabe ist ohne Link.
+    ///
+    /// - Parameters:
+    ///   - text: Einzufügender Text.
+    ///   - url: Link-Ziel.
+    ///   - range: Ersetzte Markierung (leer = Einfügestelle).
+    private func insertLinkedText(_ text: String, url: URL, at range: NSRange) {
+        guard let textView else { return }
+        removeLinkFromTypingAttributes()
+        #if os(iOS)
+        guard let start = textView.position(from: textView.beginningOfDocument, offset: range.location),
+              let end = textView.position(from: start, offset: range.length),
+              let textRange = textView.textRange(from: start, to: end) else { return }
+        textView.replace(textRange, withText: text)
+        #else
+        textView.insertText(text, replacementRange: range)
+        #endif
+
+        let inserted = NSRange(location: range.location, length: (text as NSString).length)
+        performAttributeEdit(in: inserted, actionName: "Link") { storage in
+            storage.addAttribute(.link, value: url, range: inserted)
+        }
+        let caret = NSRange(location: NSMaxRange(inserted), length: 0)
+        #if os(iOS)
+        textView.selectedRange = caret
+        #else
+        textView.setSelectedRange(caret)
+        #endif
+        removeLinkFromTypingAttributes()
+        onChange?()
+        updateState()
+    }
+
+    /// Entfernt den Link aus den Eingabeattributen, damit Weitergetipptes
+    /// nicht zum Link gehört.
+    private func removeLinkFromTypingAttributes() {
+        guard let textView else { return }
+        var attributes = textView.typingAttributes
+        attributes.removeValue(forKey: .link)
+        textView.typingAttributes = attributes
     }
 
     /// Schaltet ein Schriftmerkmal (Fett/Kursiv) um.
@@ -563,9 +701,13 @@ private struct RichTextViewRepresentable {
 
         /// Übernimmt den Text der Ansicht in die Bindung und misst neu.
         ///
+        /// Verarbeitung: Vorher werden eingefügte Bilder aufbereitet
+        /// (EditorImages), damit die Bindung nur versendbare Bilder enthält.
+        ///
         /// - Parameter textView: Textansicht.
         func pushText(from textView: PlatformTextView) {
             guard let storage = textView.mwTextStorage else { return }
+            EditorImages.normalize(storage)
             text = NSAttributedString(attributedString: storage)
             updateHeight(of: textView)
         }
@@ -776,6 +918,7 @@ extension RichTextViewRepresentable: NSViewRepresentable {
     func makeNSView(context: Context) -> GrowingNSTextView {
         let textView = GrowingNSTextView(usingTextLayoutManager: true)
         textView.isRichText = true
+        textView.importsGraphics = true
         textView.isEditable = true
         textView.isSelectable = true
         textView.allowsUndo = true

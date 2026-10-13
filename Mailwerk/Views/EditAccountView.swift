@@ -3,8 +3,9 @@
 //  Mailwerk
 //
 //  Zweck: Formular zum Bearbeiten eines Postfachs – Bezeichnung,
-//  Absendername, E-Mail-Adresse, Benutzername, Passwort, Server, Farbe –
-//  mit Verbindungstest. Jede Zeile zeigt ihre Beschriftung und ein
+//  Absendername, E-Mail-Adresse, Benutzername, Passwort, Server, Farbe,
+//  Signatur – mit Verbindungstest. Die Zeile „Signatur“ öffnet deren
+//  Pflege-Seite; sie speichert unabhängig von „Sichern“ dieses Formulars. Jede Zeile zeigt ihre Beschriftung und ein
 //  Beispiel (LabeledInputField). Ein leeres Passwortfeld lässt das
 //  gespeicherte Passwort unverändert. Scheitert das Speichern, bleibt das
 //  Formular offen und eine Meldung erklärt den Grund.
@@ -16,11 +17,13 @@
 //  beim Sichern eingetragen.
 //
 //  Abgrenzung: Neues Postfach → AddAccountView; Speichern →
-//  AccountStore; Verbindungstest → MailConnectionTester.
+//  AccountStore; Verbindungstest → MailConnectionTester; Signatur →
+//  SignatureEditorView.
 //
 //  Abhängigkeiten: SwiftUI, AccountStore, MailConnectionTester,
 //  ColorPickerGrid, MailAddress (Prüfung der Adresse), Dialogs,
-//  LabeledInputField, PlatformInputModifiers.
+//  LabeledInputField, PlatformInputModifiers, SignatureStore,
+//  SignatureEditorView.
 //
 
 import SwiftUI
@@ -28,6 +31,8 @@ import SwiftUI
 /// Formular „Postfach bearbeiten“.
 struct EditAccountView: View {
     @Environment(\.dismiss) private var dismiss
+    /// Speicher der Signaturen.
+    @Environment(SignatureStore.self) private var signatureStore
     /// Quelle für Postfächer und Passwörter.
     let accountStore: AccountStore
     /// Bearbeitetes Postfach (Stand beim Öffnen).
@@ -100,6 +105,15 @@ struct EditAccountView: View {
         MailAddress(address: emailAddress).isValid
     }
 
+    /// Art der gespeicherten Signatur für die Zeile „Signatur“.
+    private var signatureSummary: String {
+        switch signatureStore.signature(for: account.id)?.kind {
+        case .simple: return "Einfach"
+        case .html:   return "HTML"
+        case nil:     return "Keine"
+        }
+    }
+
     /// Pflichtfelder gefüllt, Ports als Zahl lesbar und E-Mail-Adresse gültig.
     private var isValid: Bool {
         !displayName.isEmpty && hasValidEmailAddress
@@ -157,6 +171,21 @@ struct EditAccountView: View {
 
                 Section("Farbe") {
                     ColorPickerGrid(selection: $selectedColor)
+                }
+
+                Section {
+                    NavigationLink {
+                        SignatureEditorView(
+                            account: account,
+                            signature: signatureStore.signature(for: account.id)
+                        )
+                    } label: {
+                        LabeledContent("Signatur", value: signatureSummary)
+                    }
+                } header: {
+                    Text("Signatur")
+                } footer: {
+                    Text("Erscheint beim Verfassen unter dem eigenen Text, bei Antworten und Weiterleitungen über dem Zitat. Wird über iCloud auf allen Geräten abgeglichen.")
                 }
 
                 Section {

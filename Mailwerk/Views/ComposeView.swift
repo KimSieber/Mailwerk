@@ -4,8 +4,14 @@
 //
 //  Zweck: Verfassen-Fenster für neue Mails, Antworten und Weiterleitungen.
 //  Aufbau von oben nach unten: Absender, An, Cc (immer sichtbar), Bcc auf
-//  Knopfdruck, Betreff, Anhänge, Editor und darunter der zitierte
-//  Originaltext (schreibgeschützt, aufklappbar).
+//  Knopfdruck, Betreff, Anhänge, Editor, gegebenenfalls der Block der
+//  HTML-Signatur und darunter der zitierte Originaltext (schreibgeschützt,
+//  aufklappbar).
+//
+//  Signatur: Beim Erscheinen setzt das ViewModel die Signatur des
+//  Absende-Postfachs ein, beim Wechsel des Postfachs tauscht es sie aus.
+//  Eine einfache Signatur steht im Editor, eine HTML-Signatur als eigener,
+//  bearbeitbarer Block darunter (SignatureBlockView).
 //
 //  Alles oberhalb der unteren Leiste scrollt gemeinsam, wie in Apple Mail:
 //  Der Editor wächst mit seinem Text, das Zitat erscheint in voller Höhe.
@@ -20,9 +26,10 @@
 //  Abgrenzung: Zustand, Versand und Vorbelegung → ComposeViewModel;
 //  Editor → RichTextEditor; Formatierungsleiste → FormattingToolbar;
 //  Darstellung des Zitats (mit eingesetzten Bildern) → HTMLMailView;
-//  Empfängerfelder → RecipientField.
+//  Empfängerfelder → RecipientField; HTML-Signatur → SignatureBlockView.
 //
-//  Abhängigkeiten: SwiftUI, UniformTypeIdentifiers, PhotosUI (iOS), Dialogs.
+//  Abhängigkeiten: SwiftUI, UniformTypeIdentifiers, PhotosUI (iOS), Dialogs,
+//  SignatureStore, SignatureBlockView.
 //
 
 import SwiftUI
@@ -39,6 +46,8 @@ struct ComposeView: View {
     private let onSent: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    /// Speicher der Signaturen.
+    @Environment(SignatureStore.self) private var signatureStore
     /// Einziger Meldungskanal des Fensters (Fehler, Hinweise nach dem Versand).
     @State private var activeAlert: AlertItem?
     /// Einziger Rückfragekanal des Fensters („Entwurf verwerfen?“).
@@ -97,6 +106,8 @@ struct ComposeView: View {
             .toolbar { toolbarContent }
             .interactiveDismissDisabled(model.hasContent)
             .confirmationRequest($activeConfirmation)
+            .task { model.attachSignatures(signatureStore) }
+            .onChange(of: model.accountID) { _, _ in model.accountDidChange() }
             .onChange(of: model.errorMessage) { _, message in
                 // Fehler des ViewModels in den Meldungskanal übernehmen.
                 guard let message else { return }
@@ -268,14 +279,30 @@ struct ComposeView: View {
 
     // MARK: - Editor und Zitat
 
-    /// Editor und, falls vorhanden, das aufklappbare Zitat.
+    /// Editor, gegebenenfalls die HTML-Signatur und das aufklappbare Zitat.
     ///
-    /// Verarbeitung: Beide erscheinen in voller Höhe; gescrollt wird im
-    /// umgebenden Scrollbereich. Das Zitat ist mindestens 120 Punkte hoch,
-    /// solange seine Höhe noch nicht gemessen ist.
+    /// Verarbeitung: Alle erscheinen in voller Höhe; gescrollt wird im
+    /// umgebenden Scrollbereich. Die HTML-Signatur schließt direkt an den
+    /// Text an. Das Zitat ist mindestens 120 Punkte hoch, solange seine
+    /// Höhe noch nicht gemessen ist.
     private var editor: some View {
         VStack(spacing: 0) {
-            RichTextEditor(text: $model.body, controller: model.controller)
+            // Mit HTML-Signatur ist der Editor anfangs niedriger, damit der
+            // Block direkt unter dem Text steht statt unter einer Leerfläche.
+            RichTextEditor(
+                text: $model.body,
+                controller: model.controller,
+                minHeight: model.htmlSignature == nil ? 160 : 72
+            )
+
+            if let signature = model.htmlSignature {
+                SignatureBlockView(
+                    block: signature,
+                    onChange: { model.updateHTMLSignature($0) },
+                    onRemove: { model.removeHTMLSignature() }
+                )
+                .padding(.bottom, 8)
+            }
 
             if let quoted = model.quotedHTML {
                 Divider()

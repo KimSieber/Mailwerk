@@ -6,23 +6,26 @@
 //  E-Mail-Adresse; Hinzufügen, Bearbeiten (Tipp) und Entfernen (Wischen);
 //  Wahl des Standard-Postfachs für neue Mails.
 //
-//  Ein Postfach zu entfernen löscht auch seinen gesamten Cache und sein
-//  Passwort aus dem Schlüsselbund. Deshalb gibt es davor eine Rückfrage –
+//  Ein Postfach zu entfernen löscht auch seinen gesamten Cache, sein
+//  Passwort aus dem Schlüsselbund und seine Signatur. Deshalb gibt es davor eine Rückfrage –
 //  auch beim Wischen. Meldungen und Rückfragen laufen über je einen Kanal
 //  (siehe Dialogs.swift).
 //
 //  Abgrenzung: Anlegen → AddAccountView; Bearbeiten → EditAccountView;
 //  Speichern und Entfernen → AccountStore.
 //
-//  Abhängigkeiten: SwiftUI, AccountStore, Dialogs.
+//  Abhängigkeiten: SwiftUI, AccountStore, SignatureStore, Dialogs, Log.
 //
 
 import SwiftUI
+import os
 
 /// Postfachverwaltung.
 struct AccountListView: View {
     /// Quelle und Ablage der Postfächer.
     let accountStore: AccountStore
+    /// Speicher der Signaturen (wird beim Entfernen eines Postfachs bereinigt).
+    @Environment(SignatureStore.self) private var signatureStore
     /// Dialog „Postfach hinzufügen“ sichtbar.
     @State private var showingAddAccount = false
     /// Gerade bearbeitetes Postfach; `nil` = keines.
@@ -154,10 +157,12 @@ struct AccountListView: View {
         }
     }
 
-    /// Entfernt die Postfächer samt Cache und Passwort.
+    /// Entfernt die Postfächer samt Cache, Passwort und Signatur.
     ///
     /// Verarbeitung: Scheitert ein Postfach, werden die übrigen trotzdem
-    /// entfernt; die Fehler erscheinen gesammelt.
+    /// entfernt; die Fehler erscheinen gesammelt. Lässt sich die Signatur
+    /// nicht löschen, wird das nur protokolliert – das Postfach ist dann
+    /// schon entfernt, die Signatur bleibt ohne Wirkung.
     ///
     /// - Parameter accounts: Zu entfernende Postfächer.
     private func removeAccounts(_ accounts: [MailAccount]) {
@@ -165,6 +170,11 @@ struct AccountListView: View {
         for account in accounts {
             do {
                 try accountStore.removeAccount(account)
+                do {
+                    try signatureStore.remove(accountID: account.id)
+                } catch {
+                    Log.store.error("⚠️ Signatur nicht entfernt: \(error.localizedDescription, privacy: .public)")
+                }
             } catch {
                 failures.append("„\(account.displayName)“: \(error.localizedDescription)")
             }

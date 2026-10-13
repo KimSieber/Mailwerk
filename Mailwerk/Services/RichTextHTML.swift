@@ -10,13 +10,19 @@
 //  maskiert, damit daraus kein Markup entstehen kann.
 //
 //  Unterstützt genau die Formate des Editors: Fett, Kursiv, Unterstrichen,
-//  Schriftgröße, Textfarbe, Aufzählung, nummerierte Liste und Links.
+//  Schriftgröße, Textfarbe, Aufzählung, nummerierte Liste, Links und
+//  Bilder. Bilder (`MailImageAttachment`) werden als `<img>` mit Breite und
+//  Höhe ausgegeben; ihre Quelle ist beim Versand `cid:<Content-ID>`
+//  (`images(in:)` liefert die passenden Inline-Teile), für das HTML einer
+//  Signatur ihr Platzhalter. Der Rückweg HTML → Editor liegt in
+//  RichTextImport.
 //
 //  Abgrenzung: Editor und Formatierung → RichTextEditor, RichTextController;
 //  Zusammenbau der Mail → ComposeViewModel.
 //
 //  Abhängigkeiten: Foundation, UIKit bzw. AppKit, RichTextListStyle,
-//  RichTextSize, RichTextController, ReplyBuilder (Maskierung).
+//  RichTextSize, RichTextController, ReplyBuilder (Maskierung),
+//  MailImageAttachment, OutgoingAttachment.
 //
 
 import Foundation
@@ -30,6 +36,19 @@ import AppKit
 /// Umwandlung des Editor-Inhalts in HTML und Text.
 enum RichTextHTML {
 
+    /// Zeichen, das im Text für einen Anhang (Bild) steht.
+    static let attachmentCharacter = "\u{FFFC}"
+
+    /// Quelle eines Bildes im erzeugten HTML.
+    ///
+    /// Parameter: Bild im Editor. Ergebnis: Wert für `src`; `nil` = das
+    /// Bild entfällt im HTML (z. B. ein Bild ohne Platzhalter in einer
+    /// Signatur).
+    typealias ImageSource = (MailImageAttachment) -> String?
+
+    /// Quelle beim Versand: die Content-ID des Inline-Teils.
+    static let cidSource: ImageSource = { "cid:" + $0.contentID }
+
     // MARK: - HTML
 
     /// HTML-Fassung des Editor-Inhalts.
@@ -38,9 +57,14 @@ enum RichTextHTML {
     /// Listenzeilen gleicher Art werden zu `<ul>` bzw. `<ol>` zusammengefasst,
     /// leere Absätze als `<br>` erhalten.
     ///
-    /// - Parameter attributed: Formatierter Text des Editors.
+    /// - Parameters:
+    ///   - attributed: Formatierter Text des Editors.
+    ///   - imageSource: Quelle der Bilder im HTML; Standard `cid:`.
     /// - Returns: HTML-Inhalt ohne Dokument-Hülle.
-    static func html(from attributed: NSAttributedString) -> String {
+    static func html(
+        from attributed: NSAttributedString,
+        imageSource: ImageSource = cidSource
+    ) -> String {
         let blocks = blocks(of: attributed)
         var result = ""
         var index = 0
@@ -49,13 +73,13 @@ enum RichTextHTML {
             if let style = blocks[index].listStyle {
                 var items: [String] = []
                 while index < blocks.count, blocks[index].listStyle == style {
-                    items.append("<li>\(inlineHTML(of: attributed, in: blocks[index].range))</li>")
+                    items.append("<li>\(inlineHTML(of: attributed, in: blocks[index].range, imageSource: imageSource))</li>")
                     index += 1
                 }
                 let tag = style == .numbered ? "ol" : "ul"
                 result += "<\(tag)>\(items.joined())</\(tag)>"
             } else {
-                let content = inlineHTML(of: attributed, in: blocks[index].range)
+                let content = inlineHTML(of: attributed, in: blocks[index].range, imageSource: imageSource)
                 result += "<p>\(content.isEmpty ? "<br>" : content)</p>"
                 index += 1
             }
@@ -68,7 +92,7 @@ enum RichTextHTML {
     /// Nur-Text-Fassung des Editor-Inhalts.
     ///
     /// Verarbeitung: Aufzählungen mit „•“, nummerierte Listen mit
-    /// fortlaufender Nummer je Liste.
+    /// fortlaufender Nummer je Liste. Bilder entfallen.
     ///
     /// - Parameter attributed: Formatierter Text des Editors.
     /// - Returns: Text für den Textteil der Mail.
@@ -80,6 +104,7 @@ enum RichTextHTML {
 
         for block in blocks(of: attributed) {
             let content = text.substring(with: block.range)
+                .replacingOccurrences(of: attachmentCharacter, with: "")
             switch block.listStyle {
             case .bulleted:
                 lines.append("• " + content)
@@ -93,6 +118,47 @@ enum RichTextHTML {
             previousStyle = block.listStyle
         }
         return lines.joined(separator: "\n")
+    }
+
+    // MARK: - Bilder
+
+    /// Inline-Teile für die Bilder im Text.
+    ///
+    /// Verarbeitung: Jedes Bild einmal (gleiche Content-ID nur einmal),
+    /// in der Reihenfolge im Text, mit fortlaufendem Dateinamen.
+    ///
+    /// - Parameter attributed: Formatierter Text des Editors.
+    /// - Returns: Inline-Teile mit Content-ID.
+    static func images(in attributed: NSAttributedString) -> [OutgoingAttachment] {
+        var result: [OutgoingAttachment] = []
+        var seen: Set<String> = []
+        attributed.enumerateAttribute(
+            .attachment, in: NSRange(location: 0, length: attributed.length), options: []
+        ) { value, _, _ in
+            guard let image = value as? MailImageAttachment, seen.insert(image.contentID).inserted else { return }
+            result.append(OutgoingAttachment(
+                filename: image.filename(number: result.count + 1),
+                mimeType: image.mimeType,
+                data: image.imageData,
+                contentID: image.contentID
+            ))
+        }
+        return result
+    }
+
+    /// HTML eines Bildes.
+    ///
+    /// - Parameters:
+    ///   - image: Bild im Editor.
+    ///   - imageSource: Quelle im HTML.
+    /// - Returns: `<img>` mit Quelle, Breite und Höhe; leer, wenn die
+    ///   Quelle `nil` ist.
+    private static func imageHTML(_ image: MailImageAttachment, imageSource: ImageSource) -> String {
+        guard let rawSource = imageSource(image) else { return "" }
+        let width = Int(image.bounds.width.rounded())
+        let height = Int(image.bounds.height.rounded())
+        let source = ReplyBuilder.escapeHTML(rawSource)
+        return "<img src=\"\(source)\" width=\"\(width)\" height=\"\(height)\" alt=\"\">"
     }
 
     // MARK: - Absätze
@@ -146,13 +212,19 @@ enum RichTextHTML {
     /// Verarbeitung: Je Abschnitt gleicher Formatierung ein maskierter Text,
     /// bei Bedarf in `<span style>` (fett, kursiv, Größe, Unterstreichung,
     /// Farbe) und `<a href>`. Standardgröße und Standardfarbe erzeugen keinen
-    /// Stil.
+    /// Stil. Ein Bild wird zu `<img>` (ein Link darum bleibt); andere
+    /// Anhänge entfallen.
     ///
     /// - Parameters:
     ///   - attributed: Formatierter Text.
     ///   - range: Bereich eines Absatzes.
+    ///   - imageSource: Quelle der Bilder im HTML.
     /// - Returns: HTML des Bereichs.
-    private static func inlineHTML(of attributed: NSAttributedString, in range: NSRange) -> String {
+    private static func inlineHTML(
+        of attributed: NSAttributedString,
+        in range: NSRange,
+        imageSource: ImageSource
+    ) -> String {
         guard range.length > 0 else { return "" }
         let text = attributed.string as NSString
         var result = ""
@@ -160,6 +232,20 @@ enum RichTextHTML {
         attributed.enumerateAttributes(in: range, options: []) { attributes, subRange, _ in
             let raw = text.substring(with: subRange)
             guard !raw.isEmpty else { return }
+
+            if attributes[.attachment] != nil {
+                var piece = ""
+                if let image = attributes[.attachment] as? MailImageAttachment {
+                    let count = raw.components(separatedBy: attachmentCharacter).count - 1
+                    piece = String(repeating: imageHTML(image, imageSource: imageSource), count: count)
+                }
+                if !piece.isEmpty, let link = linkURL(attributes[.link]) {
+                    piece = "<a href=\"\(ReplyBuilder.escapeHTML(link))\">\(piece)</a>"
+                }
+                result += piece
+                return
+            }
+
             var piece = ReplyBuilder.escapeHTML(raw)
 
             var styles: [String] = []

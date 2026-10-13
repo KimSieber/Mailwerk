@@ -13,7 +13,16 @@
 //    vollständig ist. Fehlende Bilder werden beim Senden nachgeladen
 //    (InlineImageLoader). In der Anhangliste erscheinen sie nicht; die
 //    Vorschau des Zitats zeigt sie eingesetzt.
-//  - Zusammenbau von HTML- und Textteil (eigener Text plus Zitat)
+//  - Bilder im eigenen Text (z. B. eingefügtes Foto, später Logo der
+//    Signatur) gehen ebenfalls als Inline-Teile mit; das HTML spricht sie
+//    per `cid:` an (RichTextHTML).
+//  - Signatur des Absende-Postfachs: Eine einfache Signatur steht
+//    markiert im Mailtext (frei bearbeitbar), eine HTML-Signatur als
+//    eigener Block darunter (Text änderbar, Gestaltung bleibt). Beim
+//    Wechsel des Postfachs wird sie ausgetauscht – auch wenn darin etwas
+//    geändert oder sie ganz gelöscht wurde (erneutes Löschen ist ein
+//    Fingertipp).
+//  - Zusammenbau von HTML- und Textteil (eigener Text, Signatur, Zitat)
 //  - Versand über den MailSendService, inkl. Bezug auf die Originalmail
 //  - Erkennen ungespeicherter Eingaben beim Abbrechen
 //
@@ -22,7 +31,7 @@
 //
 //  Abhängigkeiten: AccountStore, ReplyBuilder, RichTextHTML,
 //  MailSendService, AttachmentManager, MessageStore, InlineImages,
-//  InlineImageLoader.
+//  InlineImageLoader, SignatureStore, SignatureEditing, HTMLSignatureBlock.
 //
 
 import Foundation
@@ -50,6 +59,8 @@ final class ComposeViewModel {
     var body = NSAttributedString(string: "", attributes: RichTextController.defaultAttributes)
     /// Mitzusendende Anhänge (eigene und übernommene).
     var attachments: [OutgoingAttachment] = []
+    /// HTML-Signatur als eigener Block unter dem Mailtext; `nil` = keiner.
+    var htmlSignature: HTMLSignatureBlock?
 
     // MARK: Zustand
 
@@ -96,6 +107,14 @@ final class ComposeViewModel {
 
     /// Steuerung des Formatierungs-Editors (Fett, Listen, Schriftgröße …).
     let controller = RichTextController()
+
+    // MARK: Signatur
+
+    /// Speicher der Signaturen; gesetzt, sobald das Fenster erscheint.
+    private var signatureStore: SignatureStore?
+    /// Signatur-Block direkt nach dem Einsetzen; unverändert zählt er beim
+    /// Abbrechen nicht als Eingabe.
+    private var initialSignatureHTML: String?
 
     /// Legt das Verfassen-Fenster an und belegt es vor.
     ///
@@ -246,9 +265,12 @@ final class ComposeViewModel {
     }
 
     /// true, wenn der Nutzer etwas geändert hat, das beim Abbrechen verloren
-    /// ginge. Eine reine Vorbelegung (Antworten, Weiterleiten) zählt nicht.
+    /// ginge. Eine reine Vorbelegung (Antworten, Weiterleiten, Signatur)
+    /// zählt nicht.
     var hasContent: Bool {
-        (body.length > 0 && !body.isEqual(to: initialBody)) || currentState != initialState
+        (body.length > 0 && !body.isEqual(to: initialBody))
+            || currentState != initialState
+            || htmlSignature?.editedHTML != initialSignatureHTML
     }
 
     /// Gesamtgröße aller geladenen Anhänge in Bytes.
@@ -260,6 +282,67 @@ final class ComposeViewModel {
     var missingAttachmentCount: Int {
         guard kind == .forward else { return 0 }
         return pendingOriginalAttachments.filter { $0.data == nil }.count
+    }
+
+    // MARK: - Signatur
+
+    /// Verbindet das Fenster mit dem Signatur-Speicher und setzt die
+    /// Signatur des vorbelegten Postfachs ein.
+    ///
+    /// Verarbeitung: Nur beim ersten Aufruf. Danach gilt der Text samt
+    /// Signatur als Ausgangszustand – eine unveränderte Signatur zählt beim
+    /// Abbrechen nicht als Eingabe.
+    ///
+    /// - Parameter store: Speicher der Signaturen.
+    func attachSignatures(_ store: SignatureStore) {
+        guard signatureStore == nil else { return }
+        signatureStore = store
+        applySignature()
+        initialBody = body
+        initialSignatureHTML = htmlSignature?.editedHTML
+    }
+
+    /// Tauscht die Signatur nach einem Wechsel des Absende-Postfachs aus.
+    func accountDidChange() {
+        guard signatureStore != nil else { return }
+        applySignature()
+    }
+
+    /// Übernimmt den geänderten Inhalt des HTML-Signatur-Blocks.
+    ///
+    /// - Parameter html: Aktuelles HTML aus der Web-Ansicht.
+    func updateHTMLSignature(_ html: String) {
+        htmlSignature?.editedHTML = html
+    }
+
+    /// Entfernt den HTML-Signatur-Block (Knopf ✕).
+    func removeHTMLSignature() {
+        htmlSignature = nil
+    }
+
+    /// Setzt die Signatur des gewählten Postfachs ein bzw. tauscht sie aus.
+    ///
+    /// Verarbeitung: Die bisherige Signatur (markierter Text bzw. Block)
+    /// wird entfernt und die Signatur des Postfachs eingesetzt – immer, auch
+    /// wenn der Nutzer die vorige gelöscht hatte. Eine einfache kommt an die
+    /// Stelle der alten (bzw. nach einer Leerzeile ans Ende), eine
+    /// HTML-Signatur als Block unter den Text.
+    private func applySignature() {
+        guard let signatureStore else { return }
+        let signature = accountID.flatMap { signatureStore.signature(for: $0) }
+        let removed = SignatureEditing.replacingSignature(nil, in: body)
+
+        htmlSignature = nil
+        switch signature?.kind {
+        case .simple?:
+            let marked = SignatureEditing.markedSignature(html: signature?.html ?? "", logoData: signature?.logoData)
+            body = SignatureEditing.replacingSignature(marked, in: body).text
+        case .html?:
+            if removed.hadSignature { body = removed.text }
+            if let signature { htmlSignature = HTMLSignatureBlock(signature: signature) }
+        case nil:
+            if removed.hadSignature { body = removed.text }
+        }
     }
 
     // MARK: - Anhänge
@@ -304,7 +387,8 @@ final class ComposeViewModel {
     ///
     /// Verarbeitung: Lädt zuerst fehlende Anhänge der weitergeleiteten Mail
     /// nach, baut dann die versandfertige Nachricht samt Bezug auf die
-    /// Originalmail (Postfach, Ordner, UID) und übergibt sie dem
+    /// Originalmail (Postfach, Ordner, UID) und den Bildern des eigenen
+    /// Texts als Inline-Teile und übergibt sie dem
     /// MailSendService. Warnungen der Nacharbeiten landen in `warnings`,
     /// Fehler in `errorMessage`. Lässt sich ein Anhang nicht laden, steht
     /// er in `attachmentFailure`; gesendet wird dann nicht.
@@ -335,7 +419,8 @@ final class ComposeViewModel {
             subject: subject,
             htmlBody: composedHTML(),
             textBody: composedText(),
-            attachments: attachments + outgoingInlineImages,
+            attachments: attachments + outgoingInlineImages + RichTextHTML.images(in: body)
+                + (htmlSignature?.attachments ?? []),
             inReplyTo: inReplyTo,
             references: references,
             origin: OutgoingMail.Origin(composeKind: kind, original: original)
@@ -355,24 +440,30 @@ final class ComposeViewModel {
 
     /// Baut den HTML-Teil der Nachricht.
     ///
-    /// Verarbeitung: Wandelt den eigenen Text in HTML und hängt das Zitat
-    /// bzw. den weitergeleiteten Inhalt darunter an.
+    /// Verarbeitung: Wandelt den eigenen Text (samt einfacher Signatur) in
+    /// HTML, hängt einen HTML-Signatur-Block direkt an und darunter das
+    /// Zitat bzw. den weitergeleiteten Inhalt.
     ///
     /// - Returns: Vollständiger HTML-Body.
     func composedHTML() -> String {
-        let own = RichTextHTML.html(from: body)
+        var own = RichTextHTML.html(from: body)
+        if let htmlSignature { own += "<div>" + htmlSignature.sendHTML + "</div>" }
         guard let quotedHTML else { return own }
         return own + "<br>" + quotedHTML
     }
 
     /// Baut den Textteil der Nachricht.
     ///
-    /// Verarbeitung: Wandelt den eigenen Text in reinen Text und hängt das
-    /// Zitat bzw. den weitergeleiteten Inhalt nach einer Leerzeile an.
+    /// Verarbeitung: Wandelt den eigenen Text in reinen Text, hängt eine
+    /// HTML-Signatur als Text an und darunter nach einer Leerzeile das
+    /// Zitat bzw. den weitergeleiteten Inhalt.
     ///
     /// - Returns: Vollständige Nur-Text-Alternative.
     func composedText() -> String {
-        let own = RichTextHTML.plainText(from: body)
+        var own = RichTextHTML.plainText(from: body)
+        if let signatureText = htmlSignature?.plainText, !signatureText.isEmpty {
+            own += "\n" + signatureText
+        }
         guard let quotedText else { return own }
         return own + "\n\n" + quotedText
     }
