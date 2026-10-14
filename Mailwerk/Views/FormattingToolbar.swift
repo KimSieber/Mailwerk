@@ -7,6 +7,16 @@
 //  Kursiv, Unterstrichen, Schriftgröße, Farbe, Link, Aufzählung und
 //  nummerierte Liste.
 //
+//  Gestaltung (Liquid Glass, iOS/macOS 26): nur Symbole, gleich große
+//  Tippflächen, die Knöpfe in Gruppen als Glas-Kapseln
+//  (`GlassEffectContainer`, `glassEffect`). Aktive Formate sind farbig
+//  hinterlegt. Reihenfolge nach Häufigkeit: Anhang und Link | Fett,
+//  Kursiv, Unterstrichen | Listen | Schriftgröße und Farbe (am seltensten,
+//  ganz rechts, auf dem iPhone erst nach Scrollen). Eigene Knöpfe des
+//  Aufrufers vorn (`leading`, z. B. Anhang) stehen in der Gruppe mit dem
+//  Link, hinten (`trailing`, z. B. Logo) als eigene Gruppe; dafür gibt es
+//  das gemeinsame Symbol `FormatIcon`.
+//
 //  „Link“ öffnet einen Eingabedialog für eine Web- oder E-Mail-Adresse
 //  (vorbelegt, wenn die Marke in einem Link steht, dann auch mit „Link
 //  entfernen“). Eine ungültige Adresse wird mit einem Hinweis abgelehnt.
@@ -19,10 +29,36 @@
 
 import SwiftUI
 
+/// Symbol eines Knopfs der Formatierungsleiste – einheitliche Größe und
+/// Tippfläche, farbig hinterlegt, wenn das Format aktiv ist.
+struct FormatIcon: View {
+    /// SF-Symbol.
+    let symbol: String
+    /// `true`, wenn das Format aktiv ist.
+    var isOn = false
+
+    /// Symbol mit Tippfläche.
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 17, weight: .medium))
+            .foregroundStyle(isOn ? Color.accentColor : Color.primary)
+            .frame(width: 40, height: 36)
+            .background(
+                isOn ? Color.accentColor.opacity(0.18) : .clear,
+                in: Capsule()
+            )
+            .contentShape(Capsule())
+    }
+}
+
 /// Leiste mit den Formatierungs-Knöpfen.
-struct FormattingToolbar: View {
+struct FormattingToolbar<Leading: View, Trailing: View>: View {
     /// Steuerung des Editors; liefert die aktiven Formate.
     let controller: RichTextController
+    /// Eigene Knöpfe vor der Formatierung (in der Gruppe mit dem Link).
+    private let leading: Leading
+    /// Eigene Knöpfe nach der Formatierung (eigene Gruppe).
+    private let trailing: Trailing
 
     /// `true`, solange der Link-Dialog offen ist.
     @State private var isLinkDialogShown = false
@@ -31,74 +67,80 @@ struct FormattingToolbar: View {
     /// `true`, solange der Hinweis auf eine ungültige Adresse offen ist.
     @State private var isInvalidLinkShown = false
 
+    /// Legt die Leiste mit eigenen Knöpfen vorn und hinten an.
+    ///
+    /// - Parameters:
+    ///   - controller: Steuerung des Editors.
+    ///   - leading: Knöpfe vor der Formatierung.
+    ///   - trailing: Knöpfe nach der Formatierung.
+    init(
+        controller: RichTextController,
+        @ViewBuilder leading: () -> Leading,
+        @ViewBuilder trailing: () -> Trailing
+    ) {
+        self.controller = controller
+        self.leading = leading()
+        self.trailing = trailing()
+    }
+
     /// Auswahlfarben – bewusst wenige, damit die Leiste schmal bleibt.
     /// Der farbige Punkt ist ein Emoji: Systemmenüs stellen SF-Symbole
     /// grundsätzlich einfarbig dar.
-    private static let colors: [(name: String, swatch: String, color: Color)] = [
-        ("Standard", "",    .primary),
-        ("Rot",      "🔴", .red),
-        ("Orange",   "🟠", .orange),
-        ("Grün",     "🟢", .green),
-        ("Blau",     "🔵", .blue),
-        ("Violett",  "🟣", .purple)
-    ]
+    private static var colors: [(name: String, swatch: String, color: Color)] {
+        [
+            ("Standard", "",    .primary),
+            ("Rot",      "🔴", .red),
+            ("Orange",   "🟠", .orange),
+            ("Grün",     "🟢", .green),
+            ("Blau",     "🔵", .blue),
+            ("Violett",  "🟣", .purple)
+        ]
+    }
 
-    /// Waagerecht scrollbare Leiste mit Knöpfen und Menüs.
+    /// Waagerecht scrollbare Leiste mit Glas-Gruppen.
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                toggle("Fett", "bold", isOn: controller.isBold) {
-                    controller.toggleBold()
-                }
-                toggle("Kursiv", "italic", isOn: controller.isItalic) {
-                    controller.toggleItalic()
-                }
-                toggle("Unterstrichen", "underline", isOn: controller.isUnderlined) {
-                    controller.toggleUnderline()
-                }
-
-                Divider().frame(height: 20)
-
-                Menu {
-                    Picker("Schriftgröße", selection: sizeBinding) {
-                        ForEach(RichTextSize.allCases) { size in
-                            Text(size.label).tag(size)
+            GlassEffectContainer(spacing: 8) {
+                HStack(spacing: 8) {
+                    // Reihenfolge nach Häufigkeit: das Seltenste ganz rechts,
+                    // dort muss auf dem iPhone gescrollt werden.
+                    group {
+                        leading
+                        toggle("Link", "link", isOn: controller.link != nil) {
+                            linkInput = controller.link.map(LinkInput.displayText(for:)) ?? ""
+                            isLinkDialogShown = true
                         }
                     }
-                } label: {
-                    Label("Schriftgröße", systemImage: "textformat.size")
-                }
-                .fixedSize()
-
-                Menu {
-                    ForEach(Self.colors, id: \.name) { entry in
-                        Button {
-                            controller.setColor(platformColor(entry.color))
-                        } label: {
-                            Text(entry.swatch.isEmpty ? entry.name : "\(entry.swatch) \(entry.name)")
+                    group {
+                        toggle("Fett", "bold", isOn: controller.isBold) {
+                            controller.toggleBold()
+                        }
+                        toggle("Kursiv", "italic", isOn: controller.isItalic) {
+                            controller.toggleItalic()
+                        }
+                        toggle("Unterstrichen", "underline", isOn: controller.isUnderlined) {
+                            controller.toggleUnderline()
                         }
                     }
-                } label: {
-                    Label("Farbe", systemImage: "paintpalette")
+                    group {
+                        toggle("Aufzählung", "list.bullet", isOn: controller.listStyle == .bulleted) {
+                            controller.toggleList(.bulleted)
+                        }
+                        toggle("Nummerierte Liste", "list.number", isOn: controller.listStyle == .numbered) {
+                            controller.toggleList(.numbered)
+                        }
+                    }
+                    group {
+                        sizeMenu
+                        colorMenu
+                    }
+                    if Trailing.self != EmptyView.self {
+                        group { trailing }
+                    }
                 }
-                .fixedSize()
-
-                toggle("Link", "link", isOn: controller.link != nil) {
-                    linkInput = controller.link.map(LinkInput.displayText(for:)) ?? ""
-                    isLinkDialogShown = true
-                }
-
-                Divider().frame(height: 20)
-
-                toggle("Aufzählung", "list.bullet", isOn: controller.listStyle == .bulleted) {
-                    controller.toggleList(.bulleted)
-                }
-                toggle("Nummerierte Liste", "list.number", isOn: controller.listStyle == .numbered) {
-                    controller.toggleList(.numbered)
-                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
         }
         .scrollBounceBehavior(.basedOnSize)
         .alert("Link", isPresented: $isLinkDialogShown) {
@@ -122,6 +164,44 @@ struct FormattingToolbar: View {
         }
     }
 
+    /// Menü „Schriftgröße“ – nur Symbol.
+    private var sizeMenu: some View {
+        Menu {
+            Picker("Schriftgröße", selection: sizeBinding) {
+                ForEach(RichTextSize.allCases) { size in
+                    Text(size.label).tag(size)
+                }
+            }
+        } label: {
+            FormatIcon(symbol: "textformat.size")
+        }
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help("Schriftgröße")
+        .accessibilityLabel("Schriftgröße")
+    }
+
+    /// Menü „Farbe“ – nur Symbol.
+    private var colorMenu: some View {
+        Menu {
+            ForEach(Self.colors, id: \.name) { entry in
+                Button {
+                    controller.setColor(platformColor(entry.color))
+                } label: {
+                    Text(entry.swatch.isEmpty ? entry.name : "\(entry.swatch) \(entry.name)")
+                }
+            }
+        } label: {
+            FormatIcon(symbol: "paintpalette")
+        }
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help("Farbe")
+        .accessibilityLabel("Farbe")
+    }
+
     /// Übernimmt die Eingabe des Link-Dialogs.
     ///
     /// Verarbeitung: Gültige Adressen werden ergänzt (https://, mailto:)
@@ -143,6 +223,17 @@ struct FormattingToolbar: View {
 
     // MARK: - Bausteine
 
+    /// Gruppe von Knöpfen als Glas-Kapsel.
+    ///
+    /// - Parameter content: Knöpfe der Gruppe.
+    /// - Returns: Gruppe mit Glas-Hintergrund.
+    private func group<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 2) { content() }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .glassEffect(.regular.interactive(), in: .capsule)
+    }
+
     /// Umschalt-Knopf mit Symbol, hinterlegt, wenn das Format aktiv ist.
     ///
     /// - Parameters:
@@ -158,16 +249,12 @@ struct FormattingToolbar: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .frame(width: 28, height: 24)
-                .background(
-                    isOn ? Color.accentColor.opacity(0.2) : .clear,
-                    in: RoundedRectangle(cornerRadius: 6)
-                )
+            FormatIcon(symbol: symbol, isOn: isOn)
         }
         .buttonStyle(.plain)
         .help(title)
         .accessibilityLabel(title)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 
     /// Bindung der Schriftgröße an den Controller.
@@ -187,6 +274,39 @@ struct FormattingToolbar: View {
         color == .primary
             ? RichTextController.defaultTextColor
             : PlatformColor(color)
+    }
+}
+
+// MARK: - Bequeme Initialisierer
+
+extension FormattingToolbar where Leading == EmptyView, Trailing == EmptyView {
+    /// Leiste ohne eigene Knöpfe.
+    ///
+    /// - Parameter controller: Steuerung des Editors.
+    init(controller: RichTextController) {
+        self.init(controller: controller, leading: { EmptyView() }, trailing: { EmptyView() })
+    }
+}
+
+extension FormattingToolbar where Trailing == EmptyView {
+    /// Leiste mit eigenen Knöpfen vorn.
+    ///
+    /// - Parameters:
+    ///   - controller: Steuerung des Editors.
+    ///   - leading: Knöpfe vor der Formatierung.
+    init(controller: RichTextController, @ViewBuilder leading: () -> Leading) {
+        self.init(controller: controller, leading: leading, trailing: { EmptyView() })
+    }
+}
+
+extension FormattingToolbar where Leading == EmptyView {
+    /// Leiste mit eigenen Knöpfen hinten.
+    ///
+    /// - Parameters:
+    ///   - controller: Steuerung des Editors.
+    ///   - trailing: Knöpfe nach der Formatierung.
+    init(controller: RichTextController, @ViewBuilder trailing: () -> Trailing) {
+        self.init(controller: controller, leading: { EmptyView() }, trailing: trailing)
     }
 }
 

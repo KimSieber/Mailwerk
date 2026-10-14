@@ -160,21 +160,17 @@ struct SignatureEditorView: View {
             VStack(spacing: 0) {
                 RichTextEditor(text: $text, controller: controller, minHeight: 140)
                 Divider()
-                HStack(spacing: 0) {
-                    FormattingToolbar(controller: controller)
-                    Divider().frame(height: 20)
+                FormattingToolbar(controller: controller, trailing: {
                     Button {
                         insertLogo()
                     } label: {
-                        Image(systemName: "photo")
-                            .frame(width: 28, height: 24)
+                        FormatIcon(symbol: "photo")
                     }
                     .buttonStyle(.plain)
                     .disabled(logoData == nil)
                     .help("Logo einsetzen")
                     .accessibilityLabel("Logo einsetzen")
-                    .padding(.horizontal, 8)
-                }
+                })
             }
             .background(RoundedRectangle(cornerRadius: 8).stroke(.separator))
             Text("Das Logo erscheint an der Stelle der Schreibmarke (Knopf mit dem Bild-Symbol).")

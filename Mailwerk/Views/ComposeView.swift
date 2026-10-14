@@ -125,7 +125,6 @@ struct ComposeView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 scrollingContent
-                Divider()
                 bottomBar
             }
             .navigationTitle(title)
@@ -385,14 +384,10 @@ struct ComposeView: View {
         }
     }
 
-    /// Untere Leiste: Anhänge links, Formatierung rechts (scrollt bei Bedarf).
+    /// Untere Leiste: Anhang als erste Gruppe, dahinter die Formatierung
+    /// (scrollt bei Bedarf).
     private var bottomBar: some View {
-        HStack(spacing: 4) {
-            attachmentMenu
-                .padding(.leading, 8)
-            Divider().frame(height: 20)
-            FormattingToolbar(controller: model.controller)
-        }
+        FormattingToolbar(controller: model.controller, leading: { attachmentMenu })
     }
 
     /// Menü zum Anhängen von Dateien und (iOS) Fotos.
@@ -412,8 +407,12 @@ struct ComposeView: View {
             }
             #endif
         } label: {
-            Image(systemName: "paperclip")
+            FormatIcon(symbol: "paperclip")
         }
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .help("Anhängen")
+        .accessibilityLabel("Anhängen")
         .disabled(model.isSending)
         #if os(iOS)
         .photosPicker(isPresented: $showPhotoPicker, selection: $photoItem, matching: .images)
