@@ -19,6 +19,9 @@
 //  statt eines Fehlers, damit der Nutzer nicht fälschlich erneut sendet.
 //  Versendete Nachricht und Gesendet-Kopie tragen dieselbe Message-ID.
 //
+//  Zeilenenden: `makeEmail` bringt Text und HTML auf CRLF (MailLineEndings),
+//  damit Versand, Gesendet-Kopie und Entwurf kein einzelnes LF enthalten.
+//
 //  Abgrenzung: Zusammenstellen des Inhalts (Zitat, HTML, Anhänge) erledigt
 //  der ComposeViewModel; hier wird nur geprüft, versendet und nachgearbeitet.
 //  Entwürfe → DraftService (nutzt `makeEmail` und `addingBccHeader`).
@@ -26,7 +29,7 @@
 //  Abhängigkeiten: SwiftMail (SMTP/IMAP), MailServerFactory (TLS-Vorgaben
 //  für SMTP), MailSession (IMAP-Verbindung und Zugangsdaten), AccountStore,
 //  MessageStore (Cache-Markierung), FlagState (Keyword `$Forwarded`),
-//  Log.
+//  MailLineEndings (Zeilenenden), Log.
 //
 
 import Foundation
@@ -274,9 +277,12 @@ enum MailSendService {
     /// Baut aus der verfassten Nachricht das SwiftMail-Objekt.
     ///
     /// Verarbeitung: Übernimmt Empfänger, Betreff, Text- und HTML-Teil sowie
-    /// Anhänge und eingebettete Bilder. Erzeugt eine Message-ID aus der Absenderdomain, die für
-    /// Versand und Gesendet-Kopie gleich bleibt, und setzt die
-    /// Threading-Header In-Reply-To und References.
+    /// Anhänge und eingebettete Bilder. Text und HTML bekommen einheitlich
+    /// CRLF als Zeilenende (`MailLineEndings`) – sonst sendet SwiftMail bei
+    /// 8BITMIME einzelne LF, die strenge Server ablehnen. Erzeugt eine
+    /// Message-ID aus der Absenderdomain, die für Versand und Gesendet-Kopie
+    /// gleich bleibt, und setzt die Threading-Header In-Reply-To und
+    /// References.
     ///
     /// - Parameters:
     ///   - mail: Verfasste Nachricht.
@@ -302,8 +308,8 @@ enum MailSendService {
             ccRecipients: mail.cc.map(\.emailAddress),
             bccRecipients: mail.bcc.map(\.emailAddress),
             subject: mail.subject,
-            textBody: mail.textBody,
-            htmlBody: mail.htmlBody,
+            textBody: MailLineEndings.crlf(mail.textBody),
+            htmlBody: MailLineEndings.crlf(mail.htmlBody),
             attachments: attachments.isEmpty ? nil : attachments
         )
 
