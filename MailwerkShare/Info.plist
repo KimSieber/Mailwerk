@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSContactsUsageDescription</key>
+	<string>Mailwerk schlägt beim Verfassen passende Empfänger aus deinen Kontakten vor. Deine Kontakte verlassen das Gerät nicht.</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<key>NSExtensionActivationRule</key>
+			<string>SUBQUERY (
+    extensionItems, $extensionItem,
+    SUBQUERY (
+        $extensionItem.attachments, $attachment,
+        ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.data"
+        || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.url"
+        || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.vcard"
+    ).@count &gt;= 1
+).@count &gt;= 1</string>
+		</dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.share-services</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).ShareViewController</string>
+	</dict>
+</dict>
+</plist>

@@ -26,7 +26,9 @@
 //  neu vermessen.
 //
 //  Sicherheit: JavaScript aus der Mail ist abgeschaltet; die Mail kann
-//  nicht wegnavigieren. Links öffnen extern bzw. als neue Mail.
+//  nicht wegnavigieren. Links öffnen extern bzw. als neue Mail. Extern
+//  geöffnet wird über `openURL` aus der SwiftUI-Umgebung – das gibt es
+//  auch in der Teilen-Erweiterung, `UIApplication.shared` dagegen nicht.
 //  Externe Inhalte (Bilder, Stylesheets, Schriften von fremden Servern)
 //  sperrt eine Content-Security-Policy im Kopf des Grundgerüsts, solange
 //  `allowsRemoteContent` nicht gesetzt ist (RemoteContentPolicy). Die
@@ -95,6 +97,7 @@ struct HTMLMailView: NSViewRepresentable {
     ///   - context: Kontext mit dem Coordinator.
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.parent = self
+        context.coordinator.openURL = context.environment.openURL
         context.coordinator.loadIfChanged(
             LoadedContent(html: html, allowsRemoteContent: allowsRemoteContent),
             in: webView
@@ -134,6 +137,7 @@ struct HTMLMailView: UIViewRepresentable {
     ///   - context: Kontext mit dem Coordinator.
     func updateUIView(_ webView: WKWebView, context: Context) {
         context.coordinator.parent = self
+        context.coordinator.openURL = context.environment.openURL
         context.coordinator.loadIfChanged(
             LoadedContent(html: html, allowsRemoteContent: allowsRemoteContent),
             in: webView
@@ -301,6 +305,9 @@ extension HTMLMailView {
     class Coordinator: NSObject, WKNavigationDelegate {
         /// Aktuelle Fassung der Ansicht (für Binding und Rückrufe).
         var parent: HTMLMailView
+        /// Öffnet Links außerhalb der App (aus der SwiftUI-Umgebung);
+        /// `nil`, bis die Ansicht das erste Mal aktualisiert wurde.
+        var openURL: OpenURLAction?
         /// Zuletzt geladener Inhalt; `nil` = noch nichts geladen.
         private var loaded: LoadedContent?
 
@@ -346,11 +353,7 @@ extension HTMLMailView {
             if navigationAction.navigationType == .linkActivated {
                 switch MailLinkAction(url: url) {
                 case .openExternally(let target):
-                    #if os(macOS)
-                    _ = NSWorkspace.shared.open(target)
-                    #else
-                    _ = await UIApplication.shared.open(target)
-                    #endif
+                    openURL?(target)
                 case .compose(let link):
                     parent.onMailto?(link)
                 case .ignore:

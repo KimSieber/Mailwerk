@@ -25,7 +25,7 @@
 import Foundation
 
 /// Art einer Signatur.
-nonisolated enum SignatureKind: String, CaseIterable, Sendable {
+nonisolated enum SignatureKind: String, CaseIterable, Codable, Sendable {
     /// Im Editor gestaltet (Formate, Links, Logo); beim Verfassen frei bearbeitbar.
     case simple
     /// Als HTML-Code gepflegt (beliebige Gestaltung, z. B. Tabellen).
@@ -33,7 +33,8 @@ nonisolated enum SignatureKind: String, CaseIterable, Sendable {
 }
 
 /// Signatur eines Postfachs als Wert – für Oberfläche, Tests und Versand.
-nonisolated struct SignatureItem: Equatable, Sendable {
+/// Kodierbar für die Abschrift der Teilen-Erweiterung (ShareContext).
+nonisolated struct SignatureItem: Equatable, Codable, Sendable {
     /// Kennung des Postfachs.
     var accountID: UUID
     /// Art der Signatur.

@@ -23,13 +23,18 @@
 //  die Liste später, gehen die Postfächer des anderen Geräts so nicht
 //  verloren.
 //
+//  Teilen-Erweiterung: Dort gibt es keinen Zugriff auf den iCloud-Key-
+//  Value-Speicher der App. `init(shareContext:)` legt einen nur lesenden
+//  Store aus der Abschrift der App an (ShareContext); Änderungen werden
+//  dann nicht nach iCloud geschrieben.
+//
 //  Abgrenzung: Zugangsdaten für Verbindungen → MailSession
 //  (`credentials(for:)` als Erweiterung dort); Cache je Postfach →
 //  MessageStore.
 //
 //  Abhängigkeiten: NSUbiquitousKeyValueStore, UserDefaults, KeychainService,
 //  MessageStore (Cache beim Entfernen leeren), MailAccount, FetchSelection,
-//  Log.
+//  ShareContext, Log.
 //
 
 import Foundation
@@ -45,8 +50,9 @@ final class AccountStore {
     private static let unreadableAccountsKey = "mailwerk.accounts.unreadable"
     /// Schlüssel des Standard-Postfachs im Key-Value-Store.
     private static let defaultAccountKey = "mailwerk.defaultAccountID"
-    /// iCloud Key-Value-Store.
-    private let store = NSUbiquitousKeyValueStore.default
+    /// iCloud Key-Value-Store; `nil` im nur lesenden Store der
+    /// Teilen-Erweiterung.
+    private let store: NSUbiquitousKeyValueStore?
     /// Schlüssel der ausgeschalteten Postfächer in den lokalen Einstellungen.
     private static let pausedAccountsKey = "mailwerk.fetchPausedAccounts"
     /// Lokale Einstellungen dieses Geräts (nicht über iCloud abgeglichen).
@@ -78,6 +84,8 @@ final class AccountStore {
     /// - Parameter localDefaults: Lokale Einstellungen; Tests übergeben eigene.
     init(localDefaults: UserDefaults = .standard) {
         self.localDefaults = localDefaults
+        let store = NSUbiquitousKeyValueStore.default
+        self.store = store
         pausedAccountIDs = FetchSelection.pausedIDs(
             from: localDefaults.stringArray(forKey: Self.pausedAccountsKey)
         )
@@ -89,6 +97,25 @@ final class AccountStore {
             object: store
         )
         store.synchronize()
+    }
+
+    /// Legt einen nur lesenden Store aus der Abschrift der App an
+    /// (Teilen-Erweiterung).
+    ///
+    /// Verarbeitung: Übernimmt Postfächer und Standard-Postfach der
+    /// Abschrift; ein Standard-Postfach, das es nicht (mehr) gibt, entfällt.
+    /// Es gibt keine Verbindung zu iCloud und keine Beobachtung.
+    ///
+    /// - Parameters:
+    ///   - shareContext: Abschrift der App.
+    ///   - localDefaults: Lokale Einstellungen; Tests übergeben eigene.
+    init(shareContext: ShareContext, localDefaults: UserDefaults = .standard) {
+        self.localDefaults = localDefaults
+        store = nil
+        accounts = shareContext.accounts
+        defaultAccountID = shareContext.defaultAccountID.flatMap { id in
+            shareContext.accounts.contains(where: { $0.id == id }) ? id : nil
+        }
     }
 
     /// Meldet die Beobachtung der iCloud-Änderungen ab.
@@ -217,6 +244,7 @@ final class AccountStore {
             return
         }
         defaultAccountID = id
+        guard let store else { return }
         if let id {
             store.set(id.uuidString, forKey: Self.defaultAccountKey)
         } else {
@@ -248,6 +276,7 @@ final class AccountStore {
     /// stehen – kommen die Konten per iCloud später an, greift er beim
     /// nächsten Laden.
     private func load() {
+        guard let store else { return }
         if let data = store.data(forKey: Self.accountsKey) {
             do {
                 accounts = try JSONDecoder().decode([MailAccount].self, from: data)
@@ -273,7 +302,7 @@ final class AccountStore {
     ///
     /// - Parameter data: Unlesbare Daten der Kontoliste.
     private func preserveUnreadable(_ data: Data) {
-        guard store.data(forKey: Self.unreadableAccountsKey) == nil else { return }
+        guard let store, store.data(forKey: Self.unreadableAccountsKey) == nil else { return }
         store.set(data, forKey: Self.unreadableAccountsKey)
     }
 
@@ -282,6 +311,7 @@ final class AccountStore {
     /// Verarbeitung: Ein Kodierfehler wird protokolliert; der gespeicherte
     /// Stand bleibt dann unverändert.
     private func saveAccounts() {
+        guard let store else { return }
         do {
             let data = try JSONEncoder().encode(accounts)
             store.set(data, forKey: Self.accountsKey)

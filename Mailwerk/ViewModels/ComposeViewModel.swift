@@ -6,6 +6,8 @@
 //  Antworten, Allen antworten und Weiterleiten.
 //
 //  - Vorbelegung über den ReplyBuilder bzw. aus einem mailto:-Link
+//  - Vorbelegung aus geteilten Inhalten (Teilen-Erweiterung): Anhänge,
+//    Text und Links, bei Links die Seitenüberschrift als Betreff
 //  - Verwaltung eigener und übernommener Anhänge
 //  - Eingebettete Bilder des Zitats: Beim Antworten und Weiterleiten gehen
 //    die im zitierten HTML angesprochenen Bilder (`cid:`) als Inline-Teile
@@ -42,12 +44,18 @@
 //  Abhängigkeiten: AccountStore, ReplyBuilder, RichTextHTML,
 //  MailSendService, AttachmentManager, MessageStore, InlineImages,
 //  InlineImageLoader, SignatureStore, SignatureEditing, HTMLSignatureBlock,
-//  DraftService, DraftFormat, RichTextImport, MailImageAttachment.
+//  DraftService, DraftFormat, RichTextImport, MailImageAttachment,
+//  SharedContent; UIKit bzw. AppKit für das Link-Attribut (`.link`).
 //
 
 import Foundation
 import Observation
 import CoreGraphics
+#if os(iOS)
+import UIKit
+#else
+import AppKit
+#endif
 
 /// Zustand und Ablauf des Verfassen-Fensters.
 @Observable
@@ -161,9 +169,11 @@ final class ComposeViewModel {
     /// Beim Weiterleiten werden die Anhänge der Originalmail übernommen;
     /// noch nicht geladene Anhänge und Bilder werden erst beim Senden
     /// nachgeladen. Ein mailto:-Link überschreibt
-    /// Empfänger, Betreff und Text. Erst ganz am Ende wird der
+    /// Empfänger, Betreff und Text. Geteilte Inhalte setzen Anhänge, Text
+    /// und gegebenenfalls den Betreff. Erst ganz am Ende wird der
     /// Ausgangszustand für die Änderungserkennung festgehalten – einmal,
-    /// aus den fertig vorbelegten Feldern.
+    /// aus den fertig vorbelegten Feldern; die Vorbelegung zählt beim
+    /// Abbrechen also nicht als Eingabe.
     ///
     /// - Parameters:
     ///   - accountStore: Quelle für Postfächer und Standard-Postfach.
@@ -172,12 +182,14 @@ final class ComposeViewModel {
     ///   - mailto: Getippter mailto:-Link zur Vorbelegung.
     ///   - senderAccountID: Absende-Postfach einer neuen Mail; `nil` (oder
     ///     ein nicht mehr vorhandenes Postfach) = Standard-Postfach.
+    ///   - shared: Aus einer anderen App geteilte Inhalte; `nil` = keine.
     init(
         accountStore: AccountStore,
         kind: ComposeKind,
         original: CachedMessage? = nil,
         mailto: MailtoLink? = nil,
-        senderAccountID: UUID? = nil
+        senderAccountID: UUID? = nil,
+        shared: SharedContent? = nil
     ) {
         self.accountStore = accountStore
         self.kind = kind
@@ -252,7 +264,44 @@ final class ComposeViewModel {
             initialBody = body
         }
 
+        // Geteilte Inhalte: Anhänge, Text mit Links, Betreff
+        if let shared {
+            if let sharedSubject = shared.subject { subject = sharedSubject }
+            attachments += shared.attachments.map {
+                OutgoingAttachment(filename: $0.filename, mimeType: $0.mimeType, data: $0.data)
+            }
+            let parts = shared.bodyParts
+            if !parts.isEmpty { body = ComposeViewModel.sharedBody(parts) }
+            initialBody = body
+        }
+
         initialState = currentState
+    }
+
+    /// Text einer neuen Mail aus geteilten Inhalten.
+    ///
+    /// Verarbeitung: Jeder Teil wird ein eigener Absatz; Links erscheinen
+    /// mit ihrer Adresse als antippbarer Link (Attribut `.link`), den der
+    /// Versand als `<a href>` überträgt. Den Abstand zu einer einfachen
+    /// Signatur setzt das Einsetzen der Signatur (SignatureEditing).
+    ///
+    /// - Parameter parts: Absätze in ihrer Reihenfolge.
+    /// - Returns: Formatierter Text in der Standardschrift.
+    static func sharedBody(_ parts: [SharedBodyPart]) -> NSAttributedString {
+        let text = NSMutableAttributedString()
+        let attributes = RichTextController.defaultAttributes
+        for (index, part) in parts.enumerated() {
+            if index > 0 { text.append(NSAttributedString(string: "\n\n", attributes: attributes)) }
+            switch part {
+            case .text(let value):
+                text.append(NSAttributedString(string: value, attributes: attributes))
+            case .link(let url):
+                var linkAttributes = attributes
+                linkAttributes[.link] = url
+                text.append(NSAttributedString(string: url.absoluteString, attributes: linkAttributes))
+            }
+        }
+        return text
     }
 
     /// Legt das Verfassen-Fenster für einen gesicherten Entwurf an.

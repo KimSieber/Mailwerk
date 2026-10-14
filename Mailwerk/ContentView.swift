@@ -14,7 +14,8 @@
 //  Abgrenzung: Aufbau der Objekte → MailwerkApp; Nachrichtenliste →
 //  InboxView.
 //
-//  Abhängigkeiten: InboxView, AppObjects, SignatureStore.
+//  Abhängigkeiten: InboxView, AppObjects, SignatureStore,
+//  ShareContextPublisher.
 //
 
 import SwiftUI
@@ -56,12 +57,15 @@ final class AppObjects {
     let folderCatalog: FolderCatalog
     /// Signaturen der Postfächer.
     let signatures: SignatureStore
+    /// Hält die Abschrift für die Teilen-Erweiterung aktuell.
+    let shareContext: ShareContextPublisher
 
     /// Legt alle Objekte in der nötigen Reihenfolge an.
     ///
     /// Verarbeitung: Erst Postfächer und Spam-Einstellungen, dann das
     /// ViewModel (zeigt sofort den Cache) und der Ordnerkatalog, die beide
-    /// darauf aufbauen.
+    /// darauf aufbauen. Zuletzt die Abschrift für die Teilen-Erweiterung,
+    /// die Postfächer und Signaturen beobachtet.
     ///
     /// - Parameters:
     ///   - filterLists: Speicher der Filterlisten.
@@ -79,6 +83,7 @@ final class AppObjects {
             spamSettings: spamSettings
         )
         self.folderCatalog = InboxView.makeFolderCatalog(accountStore: accountStore)
+        self.shareContext = ShareContextPublisher(accountStore: accountStore, signatures: signatures)
     }
 }
 

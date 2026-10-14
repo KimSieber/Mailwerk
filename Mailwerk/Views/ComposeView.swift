@@ -32,6 +32,10 @@
 //  Meldungen und Rückfragen laufen über je einen Kanal (siehe
 //  Dialogs.swift).
 //
+//  Teilen-Erweiterung: Dort ist das Fenster keine Sheet-Ansicht, die sich
+//  per `dismiss` schließt. Die Erweiterung übergibt deshalb `onClose` und
+//  beendet sich darin selbst; die geteilten Inhalte kommen über `shared`.
+//
 //  Abgrenzung: Zustand, Versand und Vorbelegung → ComposeViewModel;
 //  Editor → RichTextEditor; Formatierungsleiste → FormattingToolbar;
 //  Darstellung des Zitats (mit eingesetzten Bildern) → HTMLMailView;
@@ -54,6 +58,9 @@ struct ComposeView: View {
     /// Wird nach erfolgreichem Versand oder Sichern eines Entwurfs
     /// aufgerufen (Liste aktualisieren).
     private let onSent: () -> Void
+    /// Schließt das Fenster anstelle von `dismiss` (Teilen-Erweiterung);
+    /// `nil` = als Sheet schließen.
+    private let onClose: (() -> Void)?
 
     @Environment(\.dismiss) private var dismiss
     /// Speicher der Signaturen.
@@ -88,22 +95,28 @@ struct ComposeView: View {
     ///   - mailto: Vorbelegung aus einem mailto:-Link.
     ///   - senderAccountID: Absende-Postfach einer neuen Mail (Postfach des
     ///     gezeigten Ordners); `nil` = Standard-Postfach.
+    ///   - shared: Aus einer anderen App geteilte Inhalte; `nil` = keine.
     ///   - onSent: Rückruf nach erfolgreichem Versand.
+    ///   - onClose: Schließt das Fenster anstelle von `dismiss`; `nil` =
+    ///     als Sheet schließen.
     init(
         accountStore: AccountStore,
         kind: ComposeKind,
         original: CachedMessage? = nil,
         mailto: MailtoLink? = nil,
         senderAccountID: UUID? = nil,
-        onSent: @escaping () -> Void = {}
+        shared: SharedContent? = nil,
+        onSent: @escaping () -> Void = {},
+        onClose: (() -> Void)? = nil
     ) {
         _model = State(
             initialValue: ComposeViewModel(
                 accountStore: accountStore, kind: kind, original: original, mailto: mailto,
-                senderAccountID: senderAccountID
+                senderAccountID: senderAccountID, shared: shared
             )
         )
         self.onSent = onSent
+        self.onClose = onClose
     }
 
     /// Legt das Fenster für einen gesicherten Entwurf an.
@@ -123,6 +136,7 @@ struct ComposeView: View {
             initialValue: ComposeViewModel(accountStore: accountStore, draft: draft, attachments: attachments)
         )
         self.onSent = onSent
+        self.onClose = nil
     }
 
     var body: some View {
@@ -368,7 +382,7 @@ struct ComposeView: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .cancellationAction) {
             Button {
-                if model.hasContent { confirmClose() } else { dismiss() }
+                if model.hasContent { confirmClose() } else { close() }
             } label: {
                 Image(systemName: "xmark")
             }
@@ -439,6 +453,11 @@ struct ComposeView: View {
 
     // MARK: - Aktionen
 
+    /// Schließt das Fenster: über `onClose`, sonst als Sheet.
+    private func close() {
+        if let onClose { onClose() } else { dismiss() }
+    }
+
     /// Fragt beim Schließen nach: als Entwurf sichern, verwerfen oder
     /// weiter bearbeiten.
     ///
@@ -454,7 +473,7 @@ struct ComposeView: View {
             confirmLabel: "Verwerfen",
             cancelLabel: "Weiter bearbeiten"
         ) {
-            dismiss()
+            close()
         }
         request.secondary = .init(label: "Als Entwurf sichern", isEnabled: isOnline) {
             Task { await saveDraft() }
@@ -483,14 +502,14 @@ struct ComposeView: View {
         case .saved:
             if model.warnings.isEmpty {
                 onSent()
-                dismiss()
+                close()
             } else {
                 activeAlert = AlertItem(
                     title: "Hinweis zum Entwurf",
                     message: model.warnings.joined(separator: "\n\n")
                 ) {
                     onSent()
-                    dismiss()
+                    close()
                 }
             }
         case .needsDraftsFolder:
@@ -542,14 +561,14 @@ struct ComposeView: View {
         guard sent else { return }
         if model.warnings.isEmpty {
             onSent()
-            dismiss()
+            close()
         } else {
             activeAlert = AlertItem(
                 title: "Hinweis zum Versand",
                 message: model.warnings.joined(separator: "\n\n")
             ) {
                 onSent()
-                dismiss()
+                close()
             }
         }
     }
