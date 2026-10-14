@@ -77,6 +77,8 @@ struct InboxView: View {
     @State private var hasLoadedOnce = false
     /// Antwort bzw. Weiterleitung aus dem Kontextmenü.
     @State private var listCompose: ListComposeRequest?
+    /// Breite der Ansicht – bestimmt die Mindestbreite des Titels.
+    @State private var viewWidth: CGFloat = 0
     /// Entwurf, der zum Weiterbearbeiten geöffnet wird.
     @State private var draftToEdit: DraftEditRequest?
     /// Mail, für die aus dem Kontextmenü ein Zielordner gewählt wird.
@@ -214,6 +216,7 @@ struct InboxView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { viewWidth = $0 }
             .toolbar { listToolbar }
             // Befehlsleiste im Auswahlmodus – schwebt über der Liste am
             // unteren Rand, wo später die Suche sitzt.
@@ -365,7 +368,7 @@ struct InboxView: View {
     @ToolbarContentBuilder
     private var listToolbar: some ToolbarContent {
         if viewModel.isSelecting {
-            ToolbarItem(placement: .navigation) {
+            ToolbarItem(placement: Self.leadingPlacement) {
                 Button(viewModel.isAllSelected ? "Auswahl aufheben" : "Alle auswählen") {
                     viewModel.toggleSelectAll()
                 }
@@ -380,7 +383,7 @@ struct InboxView: View {
                 }
             }
         } else {
-            ToolbarItem(placement: .navigation) {
+            ToolbarItem(placement: Self.leadingPlacement) {
                 Button {
                     showingFolders = true
                 } label: {
@@ -388,19 +391,25 @@ struct InboxView: View {
                 }
             }
             ToolbarItem(placement: .principal) {
+                // Die Ladeanzeige steht in der Titelzeile, nicht als eigenes
+                // Element: So bleibt die Leiste immer gleich aufgebaut und
+                // das System ordnet keine Knöpfe um.
                 InboxTitle(
                     selection: viewModel.selection,
                     accountColor: selectedAccountColor,
                     syncState: viewModel.syncState,
-                    connectionStatus: connectionStatus
+                    connectionStatus: connectionStatus,
+                    isLoading: viewModel.isLoading && !viewModel.messages.isEmpty,
+                    minWidth: max(0, viewWidth - Self.toolbarButtonsWidth)
                 )
             }
-            ToolbarItem(placement: Self.progressPlacement) {
+            #if os(macOS)
+            ToolbarItem {
                 if viewModel.isLoading && !viewModel.messages.isEmpty {
                     ProgressView()
+                        .controlSize(.small)
                 }
             }
-            #if os(macOS)
             ToolbarItem {
                 refreshButton
             }
@@ -859,11 +868,20 @@ struct InboxView: View {
 
     // MARK: - Plattform
 
-    /// Platz für die Ladeanzeige in der Symbolleiste. `.topBarLeading`
-    /// gibt es auf macOS nicht; dort ordnet das System selbst ein.
-    private static var progressPlacement: ToolbarItemPlacement {
+    /// Platz, den die Knöpfe links und rechts samt Rändern in der
+    /// Symbolleiste belegen. Der Rest der Breite ist die Mindestbreite des
+    /// Titels: So ist er immer breiter als der Platz für einen zentrierten
+    /// Titel, und iOS setzt ihn stets linksbündig statt je nach Länge mal
+    /// mittig, mal links.
+    private static let toolbarButtonsWidth: CGFloat = 200
+
+    /// Platz links in der Symbolleiste (Ordnerleiste, „Alle auswählen“).
+    /// Auf dem iPhone/iPad fest `.topBarLeading` – `.navigation` ist dort nur
+    /// ein Wunsch, und iOS schob den Knopf beim Umbau der Leiste
+    /// gelegentlich nach rechts. `.topBarLeading` gibt es auf macOS nicht.
+    private static var leadingPlacement: ToolbarItemPlacement {
         #if os(macOS)
-        return .automatic
+        return .navigation
         #else
         return .topBarLeading
         #endif
@@ -872,6 +890,10 @@ struct InboxView: View {
 
 /// Überschrift der Liste: klein, mit Symbol passend zur Auswahl.
 /// Bei einem gewählten Ordner erscheint ein Farbpunkt des Postfachs.
+/// Während eines Abrufs steht ein kleines Drehsymbol vor der Standzeile.
+/// Eine Mindestbreite hält den Titel auf dem iPhone/iPad immer
+/// linksbündig: iOS zentriert einen Titel nur, solange er zwischen die
+/// Knöpfe passt, und rückt ihn sonst nach links – je nach Länge sprang er.
 /// Auf dem Mac trägt die Fensterleiste den Titel bereits
 /// (`navigationTitle`), dort bleibt der Platz leer.
 private struct InboxTitle: View {
@@ -884,11 +906,15 @@ private struct InboxTitle: View {
     var syncState: SyncState?
     /// „Offline" bzw. „Keine Verbindung", sonst `nil`.
     var connectionStatus: String?
+    /// Ein Abruf läuft – kleines Drehsymbol vor der Standzeile.
+    var isLoading = false
+    /// Mindestbreite (iPhone/iPad): hält den Titel stets linksbündig.
+    var minWidth: CGFloat = 0
 
     /// Titelzeile mit Symbol und darunter der Stand.
     var body: some View {
         #if os(iOS)
-        VStack(spacing: 1) {
+        VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 6) {
                 if let color = accountColor {
                     Circle()
@@ -904,13 +930,20 @@ private struct InboxTitle: View {
             if let syncState {
                 // Minütlich neu berechnen, damit „vor 5 Minuten" mitläuft.
                 TimelineView(.periodic(from: .now, by: 60)) { _ in
-                    statusLine(syncState)
-                        .font(.caption2)
-                        .foregroundStyle(connectionStatus == nil ? Color.secondary : Color.orange)
+                    HStack(spacing: 4) {
+                        if isLoading {
+                            ProgressView()
+                                .controlSize(.mini)
+                        }
+                        statusLine(syncState)
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(connectionStatus == nil ? Color.secondary : Color.orange)
                 }
             }
         }
         .lineLimit(1)
+        .frame(minWidth: minWidth, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
         #else
