@@ -19,6 +19,10 @@
 //  statt eines Fehlers, damit der Nutzer nicht fälschlich erneut sendet.
 //  Versendete Nachricht und Gesendet-Kopie tragen dieselbe Message-ID.
 //
+//  Fehler und Protokoll: Der erreichte Schritt (Verbinden, Anmelden,
+//  Senden) wird protokolliert; eine gescheiterte Anmeldung erscheint als
+//  verständliche Meldung (SMTPLoginFailure) statt als NIO-Fehler.
+//
 //  Zeilenenden: `makeEmail` bringt Text und HTML auf CRLF (MailLineEndings),
 //  damit Versand, Gesendet-Kopie und Entwurf kein einzelnes LF enthalten.
 //
@@ -29,7 +33,8 @@
 //  Abhängigkeiten: SwiftMail (SMTP/IMAP), MailServerFactory (TLS-Vorgaben
 //  für SMTP), MailSession (IMAP-Verbindung und Zugangsdaten), AccountStore,
 //  MessageStore (Cache-Markierung), FlagState (Keyword `$Forwarded`),
-//  MailLineEndings (Zeilenenden), Log.
+//  MailLineEndings (Zeilenenden), SMTPLoginFailure (Meldung bei
+//  gescheiterter Anmeldung), Log.
 //
 
 import Foundation
@@ -148,6 +153,9 @@ enum MailSendService {
         case invalidRecipient(String)
         /// Die Nachricht überschreitet das Größenlimit des Servers.
         case messageTooLarge(size: Int, limit: Int)
+        /// Die Anmeldung am Versandserver ist gescheitert; Antwort des
+        /// Servers, falls bekannt (`nil`, wenn er die Verbindung beendet hat).
+        case loginRejected(String?)
         /// Der Server hat die Nachricht endgültig abgelehnt.
         case rejected(String)
         /// Abbruch an einer Stelle, an der die Nachricht schon raus sein kann.
@@ -172,6 +180,8 @@ enum MailSendService {
                 return "Die Empfängeradresse „\(address)“ ist ungültig."
             case .messageTooLarge(let size, let limit):
                 return "Die Nachricht ist mit \(Self.megabytes(size)) zu groß. Der Server erlaubt höchstens \(Self.megabytes(limit))."
+            case .loginRejected(let reply):
+                return SMTPLoginFailure.message(serverReply: reply)
             case .rejected(let detail):
                 return "Der Server hat die Nachricht abgelehnt: \(detail)"
             case .uncertain(let detail):
@@ -242,6 +252,7 @@ enum MailSendService {
         }
 
         let email = makeEmail(mail, account: account, senderAddress: senderAddress)
+        Log.send.info("✉️ [\(account.displayName, privacy: .private)] Versand beginnt über \(account.smtpHost, privacy: .public):\(account.smtpPort, privacy: .public)")
 
         // 1. Versand – Fehler brechen hier ab
         try await submit(email, account: account, password: password)
@@ -331,8 +342,10 @@ enum MailSendService {
     /// Verarbeitung: Verbindet verschlüsselt, meldet sich an und prüft vorab
     /// das Größenlimit des Servers, um eine verständliche Meldung geben zu
     /// können. Danach wird versendet. Die Verbindung wird an genau einer
-    /// Stelle geschlossen – nach Erfolg wie nach Fehler. Fehler übersetzt
-    /// `sendError(for:)`.
+    /// Stelle geschlossen – nach Erfolg wie nach Fehler. Der erreichte
+    /// Schritt (`SMTPStep`) wird mitgeführt: Er steht im Protokoll und
+    /// entscheidet in `sendError(for:step:)`, ob eine gescheiterte Anmeldung
+    /// gemeldet wird.
     ///
     /// Für die Größenprüfung baut SwiftMail die Nachricht einmal zusätzlich
     /// zusammen. Das ist Absicht: Nur so stimmt die Größe genau (Kodierung,
@@ -347,9 +360,12 @@ enum MailSendService {
     private static func submit(_ email: Email, account: MailAccount, password: String) async throws {
         let smtp = MailServerFactory.smtpServer(for: account)
         var failure: Error?
+        var step = SMTPStep.connect
         do {
             try await smtp.connect()
+            step = .login
             try await smtp.login(username: account.username, password: password)
+            step = .send
 
             // Größenlimit des Servers vorab prüfen → verständliche Meldung
             if let limit = await smtp.maximumMessageSizeOctets, limit > 0 {
@@ -366,21 +382,34 @@ enum MailSendService {
         }
         try? await smtp.disconnect()
         if let failure {
-            throw sendError(for: failure)
+            Log.send.error("❌ [\(account.displayName, privacy: .private)] Versand gescheitert beim Schritt \(step.rawValue, privacy: .public): \(failure.localizedDescription, privacy: .public)")
+            throw sendError(for: failure, step: step)
         }
     }
 
     /// Übersetzt einen Fehler beim Versand in einen `SendError`.
     ///
-    /// Verarbeitung: Eigene `SendError` bleiben unverändert. SMTP-Fehler
-    /// werden nach ihrer Wiederholbarkeit eingeordnet: endgültig →
-    /// `rejected`, unsicher → `uncertain`, wiederholbar → `failed`. Alles
-    /// andere (z. B. Verbindungsfehler) wird zu `failed`.
+    /// Verarbeitung: Eigene `SendError` bleiben unverändert. Scheitert der
+    /// Schritt „Anmelden“, wird daraus `loginRejected` – mit der Antwort des
+    /// Servers, wenn SwiftMail sie liefert; ohne, wenn der Server die
+    /// Verbindung beendet hat (dann meldet SwiftMail nur einen NIO-Fehler).
+    /// SMTP-Fehler beim Senden werden nach ihrer Wiederholbarkeit
+    /// eingeordnet: endgültig → `rejected`, unsicher → `uncertain`,
+    /// wiederholbar → `failed`. Alles andere (z. B. Verbindungsfehler) wird
+    /// zu `failed`.
     ///
-    /// - Parameter error: Aufgetretener Fehler.
+    /// - Parameters:
+    ///   - error: Aufgetretener Fehler.
+    ///   - step: Schritt, in dem der Fehler auftrat.
     /// - Returns: Fehler für den Aufrufer.
-    private static func sendError(for error: Error) -> SendError {
+    private static func sendError(for error: Error, step: SMTPStep) -> SendError {
         if let sendError = error as? SendError { return sendError }
+        if step == .login {
+            if case SMTPError.authenticationFailed(let reply) = error {
+                return .loginRejected(reply)
+            }
+            return .loginRejected(nil)
+        }
         guard let smtpError = error as? SMTPSendError else {
             return .failed(error.localizedDescription)
         }
