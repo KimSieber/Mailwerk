@@ -28,6 +28,9 @@
 //  Bilder und weitergeleitete Mails werden nicht übertragen (siehe
 //  MessageContentPlan). So fließt jeder Teil höchstens einmal.
 //
+//  Suche: Immer ohne Server-Sortierung (SORT fehlt z. B. bei Gmail); die
+//  Reihenfolge ordnet `searchNewestFirst` selbst.
+//
 //  Spam-Angabe: Die Kopfdaten-Abfrage holt die Spam-Kopfzeilen des
 //  Servers (X-Spam, X-Spam-Status) gleich mit; ihre Einstufung wird mit
 //  der Mail gespeichert. Mails im Cache mit älterer Header-Version
@@ -85,7 +88,8 @@ enum MailFetchService {
     ///    gespeicherten Zustand entscheidet der SyncStatePlanner über das
     ///    Vorgehen. Bei geänderter UIDVALIDITY wird der Cache des Ordners
     ///    zuerst verworfen.
-    /// 2. SEARCH SINCE der letzten 30 Tage → UIDs der aktuellen Mails.
+    /// 2. SEARCH SINCE der letzten 30 Tage → UIDs der aktuellen Mails
+    ///    (ohne Server-Sortierung, siehe `searchNewestFirst`).
     ///    Im Posteingang zusätzlich alle gekennzeichneten Mails.
     /// 3. `cacheMessages` speichert neue Mails samt Body und Anhängen
     ///    (≤ 5 MB) und aktualisiert Flags bekannter Mails.
@@ -128,9 +132,9 @@ enum MailFetchService {
 
             // 2. Serverseitig nur Mails des Standardfensters suchen
             let sinceDate = SyncWindow.standardStart()
-            var uids: [SwiftMail.UID] = try await server.search(
+            var uids = try await searchNewestFirst(
+                on: server,
                 criteria: [.since(sinceDate)],
-                sortCriteria: [.descending(.date)],
                 calendar: SyncWindow.calendar
             )
 
@@ -140,9 +144,9 @@ enum MailFetchService {
             // ist klein, die Antwort bleibt weit unter den Puffergrenzen.
             // Bereits gecachte Mails bekommen dabei ihre Flags abgeglichen.
             if MailFolder.isInbox(folder) {
-                let flagged: [SwiftMail.UID] = try await server.search(
+                let flagged = try await searchNewestFirst(
+                    on: server,
                     criteria: [.flagged],
-                    sortCriteria: [.descending(.date)],
                     calendar: SyncWindow.calendar
                 )
                 let known = Set(uids.map(\.value))
@@ -310,9 +314,9 @@ enum MailFetchService {
             var failed = 0
             for _ in 0..<SyncWindow.maxBlocksPerLoad {
                 let block = SyncWindow.nextBlock(before: start)
-                let uids: [SwiftMail.UID] = try await server.search(
+                let uids = try await searchNewestFirst(
+                    on: server,
                     criteria: [.since(block.since), .before(block.before)],
-                    sortCriteria: [.descending(.date)],
                     calendar: searchCalendar
                 )
                 Log.fetch.info("📬 [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] Zeitraum ab \(block.since, privacy: .public): \(uids.count) UIDs")
@@ -395,6 +399,37 @@ enum MailFetchService {
             lower = upper + 1
         }
         return false
+    }
+
+    // MARK: - Suche
+
+    /// Sucht im ausgewählten Ordner und liefert die UIDs, höchste zuerst.
+    ///
+    /// Verarbeitung: Sucht bewusst ohne Server-Sortierung. Die dafür nötige
+    /// IMAP-Erweiterung SORT bieten nicht alle Server an (Gmail z. B. nicht),
+    /// und die Reihenfolge wird nur für das Laden der Kopfdaten gebraucht –
+    /// die Liste sortiert sich aus dem Cache nach Datum. Das Ergebnis kommt
+    /// je nach Server als ESEARCH (`all`) oder als einfache SEARCH-Antwort
+    /// (`ordered`); beides wird gleich ausgelesen und nach UID absteigend
+    /// geordnet, also grob in Eingangsreihenfolge „neueste zuerst“.
+    ///
+    /// - Parameters:
+    ///   - server: Angemeldete IMAP-Verbindung mit ausgewähltem Ordner.
+    ///   - criteria: Suchkriterien.
+    ///   - calendar: Kalender für Datumskriterien.
+    /// - Returns: Gefundene UIDs, höchste zuerst; leer ohne Treffer.
+    /// - Throws: IMAP-Fehler.
+    private static func searchNewestFirst(
+        on server: SwiftMail.IMAPServer,
+        criteria: [SwiftMail.SearchCriteria],
+        calendar: Calendar
+    ) async throws -> [SwiftMail.UID] {
+        let result: SwiftMail.ExtendedSearchResult<SwiftMail.UID> = try await server.extendedSearch(
+            criteria: criteria,
+            calendar: calendar
+        )
+        let uids = result.all?.toArray() ?? result.ordered ?? []
+        return uids.sorted { $0.value > $1.value }
     }
 
     // MARK: - Gemeinsames Caching
