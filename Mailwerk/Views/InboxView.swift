@@ -10,7 +10,9 @@
 //  und Gelesen-Status, die Mehrfachauswahl (über „Auswählen“ im
 //  Kontextmenü; Auswahlkreise, „Alle auswählen“, „Fertig“ und schwebende
 //  Befehlsleiste unten), die Zeile „Ältere Nachrichten laden“, die
-//  Ordnerleiste sowie Einstellungen und Verfassen. Aktualisiert wird auf
+//  Ordnerleiste sowie Einstellungen und Verfassen. Eine neue Mail geht vom
+//  Postfach des gezeigten Ordners aus, in Sammelansichten vom
+//  Standard-Postfach. Aktualisiert wird auf
 //  iPhone/iPad durch Herunterziehen, auf dem Mac per Knopf bzw. ⌘R.
 //  Kommen Postfächer hinzu (beim ersten Start aus iCloud oder neu
 //  eingerichtet) oder wird der Abruf eines Postfachs wieder
@@ -277,9 +279,12 @@ struct InboxView: View {
                 SpamSettingsView(settings: spamSettings, filterLists: filterLists)
             }
             .sheet(isPresented: $showingCompose) {
+                // Absender: Postfach des gezeigten Ordners; Sammelansichten
+                // (z. B. „Alle Eingänge“) haben keines → Standard-Postfach.
                 ComposeView(
                     accountStore: accountStore,
                     kind: .new,
+                    senderAccountID: viewModel.selection.accountID,
                     onSent: { viewModel.loadFromCache() }
                 )
             }

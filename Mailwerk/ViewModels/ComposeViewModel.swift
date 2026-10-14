@@ -153,7 +153,10 @@ final class ComposeViewModel {
     /// Legt das Verfassen-Fenster an und belegt es vor.
     ///
     /// Verarbeitung: Ermittelt die Vorbelegung über den ReplyBuilder (die
-    /// eigene Adresse entfällt bei „Allen antworten“). Beim Antworten und
+    /// eigene Adresse entfällt bei „Allen antworten“). Eine neue Mail geht
+    /// vom übergebenen Postfach aus (Ordner eines Postfachs), sonst vom
+    /// Standard-Postfach; Antworten und Weiterleiten immer vom Postfach der
+    /// Originalmail. Beim Antworten und
     /// Weiterleiten werden die vom Zitat angesprochenen Bilder vorgemerkt.
     /// Beim Weiterleiten werden die Anhänge der Originalmail übernommen;
     /// noch nicht geladene Anhänge und Bilder werden erst beim Senden
@@ -167,11 +170,14 @@ final class ComposeViewModel {
     ///   - kind: Art des Verfassens.
     ///   - original: Originalnachricht bei Antwort oder Weiterleitung.
     ///   - mailto: Getippter mailto:-Link zur Vorbelegung.
+    ///   - senderAccountID: Absende-Postfach einer neuen Mail; `nil` (oder
+    ///     ein nicht mehr vorhandenes Postfach) = Standard-Postfach.
     init(
         accountStore: AccountStore,
         kind: ComposeKind,
         original: CachedMessage? = nil,
-        mailto: MailtoLink? = nil
+        mailto: MailtoLink? = nil,
+        senderAccountID: UUID? = nil
     ) {
         self.accountStore = accountStore
         self.kind = kind
@@ -187,10 +193,14 @@ final class ComposeViewModel {
             .lowercased()
         let ownAddresses = Set([ownAddress].compactMap { $0 })
 
+        // Neue Mail: Postfach des gezeigten Ordners, sonst Standard-Postfach
+        let newMailAccountID = senderAccountID
+            .flatMap { id in accountStore.accounts.contains(where: { $0.id == id }) ? id : nil }
+            ?? accountStore.defaultAccountID
         let prefill = ReplyBuilder.prefill(
             kind: kind,
             original: original,
-            defaultAccountID: accountStore.defaultAccountID,
+            defaultAccountID: newMailAccountID,
             ownAddresses: ownAddresses
         )
         accountID = prefill.accountID

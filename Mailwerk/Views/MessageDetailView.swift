@@ -167,10 +167,12 @@ struct MessageDetailView: View {
             #endif
             .toolbar { toolbarContent }
             .sheet(item: $mailtoRequest) { link in
+                // Neue Mail aus einem Link: Absender ist das Postfach dieser Mail.
                 ComposeView(
                     accountStore: accountStore,
                     kind: .new,
                     mailto: link,
+                    senderAccountID: message.accountID,
                     onSent: { onChange?() }
                 )
             }

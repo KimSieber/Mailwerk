@@ -86,17 +86,21 @@ struct ComposeView: View {
     ///   - kind: Neue Mail, Antwort, Antwort an alle oder Weiterleitung.
     ///   - original: Ursprungsmail bei Antwort/Weiterleitung.
     ///   - mailto: Vorbelegung aus einem mailto:-Link.
+    ///   - senderAccountID: Absende-Postfach einer neuen Mail (Postfach des
+    ///     gezeigten Ordners); `nil` = Standard-Postfach.
     ///   - onSent: Rückruf nach erfolgreichem Versand.
     init(
         accountStore: AccountStore,
         kind: ComposeKind,
         original: CachedMessage? = nil,
         mailto: MailtoLink? = nil,
+        senderAccountID: UUID? = nil,
         onSent: @escaping () -> Void = {}
     ) {
         _model = State(
             initialValue: ComposeViewModel(
-                accountStore: accountStore, kind: kind, original: original, mailto: mailto
+                accountStore: accountStore, kind: kind, original: original, mailto: mailto,
+                senderAccountID: senderAccountID
             )
         )
         self.onSent = onSent
