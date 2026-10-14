@@ -15,12 +15,16 @@
 //  `DraftError.draftsFolderMissing` geworfen; die Oberfläche fragt dann
 //  nach und ruft `createDraftsFolder` auf.
 //
+//  Weiterbearbeiten: Wird ein Entwurf gesendet oder neu gesichert,
+//  entfernt `removeDraft` die alte Fassung endgültig (UID EXPUNGE, nicht
+//  über den Papierkorb) und aus dem Cache.
+//
 //  Abgrenzung: Inhalt und Marken des Entwurfs → DraftFormat,
 //  ComposeViewModel; Bau der Nachricht → MailSendService.
 //
 //  Abhängigkeiten: SwiftMail, MailSendService (makeEmail, Bcc-Header),
 //  MailSession, MailActionService (Ordner anlegen), DraftFormat,
-//  MailboxNameCodec, Log.
+//  MailboxNameCodec, MessageStore (Cache), Log.
 //
 
 import Foundation
@@ -86,6 +90,38 @@ enum DraftService {
             Log.send.info("📝 [\(account.displayName, privacy: .private)] Entwurf abgelegt in \(folder, privacy: .public)")
             return SaveResult(folder: folder, uid: result.firstUID?.value)
         }
+    }
+
+    /// Entfernt eine alte Fassung eines Entwurfs endgültig – auf dem Server
+    /// und im Cache.
+    ///
+    /// Verarbeitung: Wird nach dem Senden oder erneuten Sichern eines
+    /// weiterbearbeiteten Entwurfs aufgerufen. Die alte Fassung wird im
+    /// Entwürfe-Ordner mit `\Deleted` markiert und gezielt per UID EXPUNGE
+    /// entfernt – nicht über den Papierkorb, andere Mails des Ordners
+    /// bleiben unberührt. Kennt der Server UID EXPUNGE nicht (UIDPLUS fehlt),
+    /// entfernt ein einfaches EXPUNGE alle markierten Mails des Ordners; im
+    /// Entwürfe-Ordner sind das nur zum Löschen vorgesehene. Danach wird
+    /// die Fassung aus dem Cache gelöscht.
+    ///
+    /// - Parameters:
+    ///   - draft: Alte Fassung aus dem Cache (Postfach, Ordner, UID).
+    ///   - accountStore: Quelle für die Zugangsdaten.
+    /// - Throws: `MailCredentialError` oder Verbindungs- und IMAP-Fehler.
+    static func removeDraft(_ draft: CachedMessage, accountStore: AccountStore) async throws {
+        let credentials = try accountStore.credentials(for: draft.accountID)
+        let set = UIDSet([SwiftMail.UID(draft.uid)])
+        try await MailSession.withIMAP(credentials) { imap in
+            _ = try await imap.selectMailbox(draft.folder)
+            try await imap.store(flags: [SwiftMail.Flag.deleted], on: set, operation: .add)
+            do {
+                try await imap.expunge(messages: set)
+            } catch SwiftMail.IMAPError.commandNotSupported(_) {
+                try await imap.expunge()
+            }
+        }
+        MessageStore.shared.deleteMessage(id: draft.id)
+        Log.send.info("📝 [\(credentials.account.displayName, privacy: .private)] Alte Fassung des Entwurfs entfernt aus \(draft.folder, privacy: .public)")
     }
 
     /// Legt den Entwürfe-Ordner an (Name „Drafts“, Mailwerk zeigt ihn als „Entwürfe“).

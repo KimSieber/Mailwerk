@@ -27,6 +27,13 @@
 //  - Als Entwurf sichern (DraftService): gleicher Inhalt wie beim Senden,
 //    im HTML mit Entwurfs-Marken (DraftFormat), damit Text, Signatur und
 //    Zitat beim Weiterbearbeiten getrennt zurückkommen
+//  - Entwurf weiterbearbeiten: Ein gesicherter Entwurf wird über
+//    `init(accountStore:draft:attachments:)` vollständig wiederhergestellt
+//    (Absender, Empfänger inkl. Bcc, Betreff, Text mit Formaten und
+//    Bildern, Signatur, Zitat, Anhänge, Bezug zur Originalmail). Entwürfe
+//    anderer Programme kommen vereinfacht als Ganzes in den Editor. Nach
+//    dem Senden oder erneuten Sichern wird die alte Fassung endgültig
+//    entfernt (DraftService.removeDraft).
 //  - Erkennen ungespeicherter Eingaben beim Abbrechen
 //
 //  Abgrenzung: Die Darstellung liegt in ComposeView, der eigentliche
@@ -35,11 +42,12 @@
 //  Abhängigkeiten: AccountStore, ReplyBuilder, RichTextHTML,
 //  MailSendService, AttachmentManager, MessageStore, InlineImages,
 //  InlineImageLoader, SignatureStore, SignatureEditing, HTMLSignatureBlock,
-//  DraftService, DraftFormat.
+//  DraftService, DraftFormat, RichTextImport, MailImageAttachment.
 //
 
 import Foundation
 import Observation
+import CoreGraphics
 
 /// Zustand und Ablauf des Verfassen-Fensters.
 @Observable
@@ -96,6 +104,26 @@ final class ComposeViewModel {
     let kind: ComposeKind
     /// Originalnachricht bei Antwort oder Weiterleitung.
     private let original: CachedMessage?
+    /// Weiterbearbeiteter Entwurf (alte Fassung); wird nach dem Senden oder
+    /// erneuten Sichern endgültig entfernt. `nil` = kein Entwurf.
+    private let editedDraft: CachedMessage?
+    /// Bezug zur Originalmail aus dem Datenblock eines Entwurfs; gilt, wenn
+    /// ein Antwort- oder Weiterleitungs-Entwurf weiterbearbeitet wird.
+    private var draftOrigin: DraftMetadata.Origin?
+    /// HTML, dessen `cid:`-Verweise die mitzusendenden Bilder des Zitats
+    /// bestimmen: das HTML der Originalmail bzw. das Zitat eines Entwurfs.
+    private var imageReferenceHTML: String?
+    /// Aus einem Entwurf wiederhergestellt: Die Signatur steht schon im
+    /// Text und wird beim Erscheinen nicht neu eingesetzt.
+    private var isRestoredDraft = false
+    /// Hinweis nach dem Wiederherstellen eines Entwurfs (z. B. fehlende
+    /// Bilder); `nil` = keiner.
+    var restoreNotice: String?
+
+    /// Mail, aus der Bilder des Zitats und übernommene Anhänge stammen: die
+    /// Originalmail beim Antworten und Weiterleiten, der Entwurf beim
+    /// Weiterbearbeiten.
+    private var contentSource: CachedMessage? { editedDraft ?? original }
     /// Quelle für Postfächer und Passwörter.
     private let accountStore: AccountStore
     /// Zitat bzw. weitergeleiteter Inhalt als HTML (mit `cid:`-Verweisen,
@@ -148,6 +176,7 @@ final class ComposeViewModel {
         self.accountStore = accountStore
         self.kind = kind
         self.original = original
+        self.editedDraft = nil
 
         // Nur die Adresse des antwortenden Postfachs entfällt bei „Allen
         // antworten" – andere eigene Postfächer bleiben als Empfänger stehen.
@@ -176,6 +205,7 @@ final class ComposeViewModel {
         if let original, kind != .new {
             // Eingebettete Bilder, die das Zitat anspricht, gehen mit.
             originalAttachments = MessageStore.shared.attachments(forMessage: original.id)
+            imageReferenceHTML = original.htmlBody
             pendingInlineImages = quotedHTML == nil
                 ? []
                 : InlineImages.referencedImages(originalAttachments, html: original.htmlBody)
@@ -213,6 +243,133 @@ final class ComposeViewModel {
         }
 
         initialState = currentState
+    }
+
+    /// Legt das Verfassen-Fenster für einen gesicherten Entwurf an.
+    ///
+    /// Verarbeitung: Absender ist das Postfach des Entwurfs, An, Cc und
+    /// Betreff kommen aus dem Cache. Ein Mailwerk-Entwurf (DraftFormat)
+    /// liefert außerdem Bcc, Art, Threading und den Bezug zur Originalmail;
+    /// Text vor und nach der Signatur kommen mit Formaten und Bildern in den
+    /// Editor (`cid:` → Inline-Bild des Entwurfs mit derselben Content-ID).
+    /// Eine einfache Signatur steht wieder markiert im Text, eine
+    /// HTML-Signatur als Block; beide bleiben beim Wechsel des Postfachs
+    /// austauschbar. Das Zitat bleibt unverändert, sein Text kommt aus dem
+    /// Textteil des Entwurfs (sonst aus dem Zitat-HTML). Ein Entwurf eines
+    /// anderen Programms kommt als Ganzes vereinfacht in den Editor. Anhänge
+    /// werden übernommen; fehlende Daten lädt das Senden bzw. Sichern nach.
+    /// Fehlen Bilder des Entwurfs, steht ein Hinweis in `restoreNotice`.
+    /// Zuletzt wird der Ausgangszustand festgehalten – ein unveränderter
+    /// Entwurf schließt ohne Rückfrage.
+    ///
+    /// - Parameters:
+    ///   - accountStore: Quelle für Postfächer.
+    ///   - draft: Entwurf aus dem Cache.
+    ///   - draftAttachments: Anhänge und Bilder des Entwurfs aus dem Cache.
+    init(
+        accountStore: AccountStore,
+        draft: CachedMessage,
+        attachments draftAttachments: [CachedAttachment]
+    ) {
+        let parts = DraftFormat.parse(draft.htmlBody ?? "")
+        self.accountStore = accountStore
+        self.kind = parts.map { ComposeViewModel.composeKind($0.metadata.kind) } ?? .new
+        self.original = nil
+        self.editedDraft = draft
+        isRestoredDraft = true
+        originalAttachments = draftAttachments
+
+        accountID = accountStore.accounts.contains(where: { $0.id == draft.accountID }) ? draft.accountID : nil
+        to = draft.headers.toList.compactMap { MailAddress(parsing: $0) }
+        cc = draft.headers.ccList.compactMap { MailAddress(parsing: $0) }
+        subject = draft.subject
+
+        let images = ComposeViewModel.imageResolver(draftAttachments)
+        if let parts {
+            let metadata = parts.metadata
+            bcc = metadata.bcc.compactMap { MailAddress(parsing: $0) }
+            showBcc = !bcc.isEmpty
+            inReplyTo = metadata.inReplyTo
+            references = metadata.references
+            draftOrigin = metadata.origin
+
+            let text = NSMutableAttributedString(
+                attributedString: RichTextImport.attributedString(fromHTML: parts.textBefore, images: images).text
+            )
+            if let signatureHTML = parts.signature {
+                switch metadata.signature {
+                case .simple:
+                    let marked = NSMutableAttributedString(
+                        attributedString: RichTextImport.attributedString(fromHTML: signatureHTML, images: images).text
+                    )
+                    marked.addAttribute(.mailwerkSignature, value: true, range: NSRange(location: 0, length: marked.length))
+                    text.append(marked)
+                case .html:
+                    htmlSignature = HTMLSignatureBlock(restoredHTML: signatureHTML, images: draftAttachments)
+                case .none:
+                    break
+                }
+            }
+            if !parts.textAfter.isEmpty {
+                text.append(RichTextImport.attributedString(fromHTML: parts.textAfter, images: images).text)
+            }
+            body = text
+
+            if let quote = parts.quote {
+                quotedHTML = quote
+                imageReferenceHTML = quote
+                pendingInlineImages = InlineImages.referencedImages(draftAttachments, html: quote)
+                updateQuotedPreview()
+                // Eigener Text wie beim Senden, noch ohne Zitat
+                let ownText = composedText()
+                quotedText = DraftFormat.quotedText(draftText: draft.textBody, ownText: ownText)
+                    ?? SignatureRules.plainText(fromHTML: quote)
+            }
+        } else if let html = draft.htmlBody, !html.isEmpty {
+            body = RichTextImport.attributedString(fromHTML: html, images: images).text
+        } else {
+            body = NSAttributedString(string: draft.textBody ?? "", attributes: RichTextController.defaultAttributes)
+        }
+
+        // Anhänge des Entwurfs (ohne die Bilder im Text); fehlende Daten
+        // werden beim Senden bzw. Sichern nachgeladen.
+        pendingOriginalAttachments = InlineImages.visibleAttachments(draftAttachments, html: draft.htmlBody)
+        attachments = pendingOriginalAttachments.compactMap { attachment in
+            guard let data = attachment.data else { return nil }
+            return OutgoingAttachment(filename: attachment.filename, mimeType: attachment.contentType, data: data)
+        }
+
+        if InlineImages.hasMissingImages(draftAttachments, html: draft.htmlBody) {
+            restoreNotice = "Einige Bilder des Entwurfs konnten nicht geladen werden und fehlen im Text."
+        }
+
+        initialBody = body
+        initialSignatureHTML = htmlSignature?.editedHTML
+        initialState = currentState
+    }
+
+    /// Zuordnung `cid:`-Quelle → Bild im Editor für einen Entwurf.
+    ///
+    /// Verarbeitung: Nur Inline-Teile mit Daten; das Bild behält seine
+    /// Content-ID, damit es beim erneuten Senden gleich angesprochen wird.
+    ///
+    /// - Parameter attachments: Anhänge des Entwurfs.
+    /// - Returns: Zuordnung für RichTextImport.
+    private static func imageResolver(_ attachments: [CachedAttachment]) -> RichTextImport.ImageResolver {
+        var images: [String: CachedAttachment] = [:]
+        for attachment in attachments where attachment.isInline && attachment.data != nil {
+            if let contentID = attachment.contentID {
+                images[InlineImages.normalizedContentID(contentID)] = attachment
+            }
+        }
+        return { source, width in
+            guard source.lowercased().hasPrefix("cid:") else { return nil }
+            let key = InlineImages.normalizedContentID(String(source.dropFirst(4)))
+            guard let image = images[key], let data = image.data else { return nil }
+            return MailImageAttachment.make(
+                from: data, displayWidth: width.map { CGFloat($0) }, contentID: image.contentID
+            )
+        }
     }
 
     // MARK: - Änderungserkennung
@@ -284,10 +441,10 @@ final class ComposeViewModel {
         attachments.reduce(0) { $0 + $1.data.count }
     }
 
-    /// Noch nicht geladene Anhänge der weitergeleiteten Mail.
+    /// Noch nicht geladene Anhänge der weitergeleiteten Mail bzw. des
+    /// weiterbearbeiteten Entwurfs.
     var missingAttachmentCount: Int {
-        guard kind == .forward else { return 0 }
-        return pendingOriginalAttachments.filter { $0.data == nil }.count
+        pendingOriginalAttachments.filter { $0.data == nil }.count
     }
 
     // MARK: - Signatur
@@ -297,12 +454,14 @@ final class ComposeViewModel {
     ///
     /// Verarbeitung: Nur beim ersten Aufruf. Danach gilt der Text samt
     /// Signatur als Ausgangszustand – eine unveränderte Signatur zählt beim
-    /// Abbrechen nicht als Eingabe.
+    /// Abbrechen nicht als Eingabe. Ein wiederhergestellter Entwurf bringt
+    /// seine Signatur schon mit; sie bleibt unverändert.
     ///
     /// - Parameter store: Speicher der Signaturen.
     func attachSignatures(_ store: SignatureStore) {
         guard signatureStore == nil else { return }
         signatureStore = store
+        guard !isRestoredDraft else { return }
         applySignature()
         initialBody = body
         initialSignatureHTML = htmlSignature?.editedHTML
@@ -395,7 +554,8 @@ final class ComposeViewModel {
     /// nach, baut dann die versandfertige Nachricht samt Bezug auf die
     /// Originalmail (Postfach, Ordner, UID) und den Bildern des eigenen
     /// Texts als Inline-Teile und übergibt sie dem
-    /// MailSendService. Warnungen der Nacharbeiten landen in `warnings`,
+    /// MailSendService. War es ein weiterbearbeiteter Entwurf, wird danach
+    /// dessen alte Fassung entfernt. Warnungen der Nacharbeiten landen in `warnings`,
     /// Fehler in `errorMessage`. Lässt sich ein Anhang nicht laden, steht
     /// er in `attachmentFailure`; gesendet wird dann nicht.
     ///
@@ -430,11 +590,13 @@ final class ComposeViewModel {
             inReplyTo: inReplyTo,
             references: references,
             origin: OutgoingMail.Origin(composeKind: kind, original: original)
+                ?? Self.origin(kind: kind, draft: draftOrigin)
         )
 
         do {
             let report = try await MailSendService.send(mail, accountStore: accountStore)
             warnings = report.warnings
+            if let warning = await removeEditedDraft() { warnings.append(warning) }
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -462,7 +624,9 @@ final class ComposeViewModel {
     /// Originalmail nach – gelingt das nicht, wird nicht gesichert (der
     /// Entwurf wäre sonst unvollständig). Danach Ablage mit demselben Inhalt
     /// wie beim Senden, das HTML mit Entwurfs-Marken (`draftHTML`). Auf
-    /// Wunsch wird zuvor der Entwürfe-Ordner angelegt.
+    /// Wunsch wird zuvor der Entwürfe-Ordner angelegt. Erst nach dem
+    /// Sichern der neuen Fassung wird eine alte (weiterbearbeiteter Entwurf)
+    /// entfernt; scheitert das, steht ein Hinweis in `warnings`.
     ///
     /// - Parameter createFolder: `true` = fehlenden Entwürfe-Ordner anlegen.
     /// - Returns: Ergebnis für die Ansicht.
@@ -501,6 +665,7 @@ final class ComposeViewModel {
                 try await DraftService.createDraftsFolder(accountID: accountID, accountStore: accountStore)
             }
             _ = try await DraftService.save(mail, accountStore: accountStore)
+            if let warning = await removeEditedDraft() { warnings = [warning] }
             return .saved
         } catch DraftService.DraftError.draftsFolderMissing {
             return .needsDraftsFolder
@@ -547,7 +712,7 @@ final class ComposeViewModel {
             bcc: bcc.map(\.displayString),
             origin: kind == .new ? nil : original.map {
                 DraftMetadata.Origin(cachedMessageID: $0.id, accountID: $0.accountID, folder: $0.folder, uid: $0.uid)
-            },
+            } ?? draftOrigin,
             inReplyTo: inReplyTo,
             references: references,
             signature: signatureKind
@@ -571,6 +736,60 @@ final class ComposeViewModel {
         case .reply:    return .reply
         case .replyAll: return .replyAll
         case .forward:  return .forward
+        }
+    }
+
+    /// Art des Verfassens aus dem Datenblock eines Entwurfs.
+    ///
+    /// - Parameter kind: Wert im Datenblock.
+    /// - Returns: Art des Verfassens.
+    static func composeKind(_ kind: DraftMetadata.Kind) -> ComposeKind {
+        switch kind {
+        case .new:      return .new
+        case .reply:    return .reply
+        case .replyAll: return .replyAll
+        case .forward:  return .forward
+        }
+    }
+
+    /// Bezug zur Originalmail aus dem Datenblock eines Entwurfs.
+    ///
+    /// Verarbeitung: Antworten ergeben „beantwortet“, Weiterleiten
+    /// „weitergeleitet“; eine neue Mail hat keinen Bezug.
+    ///
+    /// - Parameters:
+    ///   - kind: Art des Verfassens.
+    ///   - draft: Bezug aus dem Datenblock; `nil` = keiner.
+    /// - Returns: Bezug für den Versand oder `nil`.
+    static func origin(kind: ComposeKind, draft: DraftMetadata.Origin?) -> OutgoingMail.Origin? {
+        guard let draft else { return nil }
+        let originKind: OutgoingMail.Origin.Kind
+        switch kind {
+        case .reply, .replyAll: originKind = .replied
+        case .forward:          originKind = .forwarded
+        case .new:              return nil
+        }
+        return OutgoingMail.Origin(
+            kind: originKind, cachedMessageID: draft.cachedMessageID,
+            accountID: draft.accountID, folder: draft.folder, uid: draft.uid
+        )
+    }
+
+    /// Entfernt die alte Fassung eines weiterbearbeiteten Entwurfs.
+    ///
+    /// Verarbeitung: Nur bei einem Entwurf; Fehler brechen nichts ab – die
+    /// Mail ist schon gesendet bzw. neu gesichert –, sondern werden als
+    /// Hinweis zurückgegeben.
+    ///
+    /// - Returns: Hinweistext bei einem Fehler, sonst `nil`.
+    @MainActor
+    private func removeEditedDraft() async -> String? {
+        guard let editedDraft else { return nil }
+        do {
+            try await DraftService.removeDraft(editedDraft, accountStore: accountStore)
+            return nil
+        } catch {
+            return "Die alte Fassung des Entwurfs konnte nicht entfernt werden: \(error.localizedDescription)"
         }
     }
 
@@ -628,13 +847,13 @@ final class ComposeViewModel {
     /// Eintrag im Cache liegt (Mail vor der Speicherung eingebetteter
     /// Bilder geladen).
     private var needsInlineImageLoad: Bool {
-        guard let original, quotedHTML != nil else { return false }
+        guard contentSource != nil, quotedHTML != nil else { return false }
         if pendingInlineImages.contains(where: { $0.data == nil }) { return true }
         let known = Set(originalAttachments.compactMap { attachment -> String? in
             guard attachment.isInline, let id = attachment.contentID else { return nil }
             return InlineImages.normalizedContentID(id)
         })
-        return !InlineImages.referencedContentIDs(in: original.htmlBody).isSubset(of: known)
+        return !InlineImages.referencedContentIDs(in: imageReferenceHTML).isSubset(of: known)
     }
 
     /// Lädt fehlende Bilder des Zitats nach.
@@ -649,13 +868,13 @@ final class ComposeViewModel {
     /// - Returns: true, wenn gesendet werden kann; false bei einem Fehler.
     @MainActor
     private func loadMissingInlineImages() async -> Bool {
-        guard let original else { return true }
+        guard let source = contentSource else { return true }
         var reason = "Das Bild ist auf dem Server nicht zu finden."
         do {
             originalAttachments = try await InlineImageLoader.loadMissing(
-                for: original, existing: originalAttachments, accountStore: accountStore
+                for: source, existing: originalAttachments, accountStore: accountStore
             )
-            pendingInlineImages = InlineImages.referencedImages(originalAttachments, html: original.htmlBody)
+            pendingInlineImages = InlineImages.referencedImages(originalAttachments, html: imageReferenceHTML)
                 .filter { !skippedInlineImageIDs.contains($0.id) }
             updateQuotedPreview()
         } catch {
@@ -679,11 +898,11 @@ final class ComposeViewModel {
     /// - Returns: true, wenn alle Anhänge vorliegen; false bei einem Fehler.
     @MainActor
     private func loadMissingAttachments() async -> Bool {
-        guard let original else { return true }
+        guard let source = contentSource else { return true }
         for attachment in pendingOriginalAttachments where attachment.data == nil {
             do {
                 let loaded = try await AttachmentManager.downloadAttachment(
-                    attachment, message: original, accountStore: accountStore
+                    attachment, message: source, accountStore: accountStore
                 )
                 guard let data = loaded.data else { continue }
                 attachments.append(

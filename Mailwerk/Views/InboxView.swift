@@ -19,7 +19,9 @@
 //
 //  Die Liste arbeitet mit Listeneinträgen ohne Mailinhalt
 //  (`MessageListItem`). Erst beim Öffnen einer Mail lädt
-//  `MessageDetailLoader` die vollständige Nachricht aus dem Cache.
+//  `MessageDetailLoader` die vollständige Nachricht aus dem Cache. Im
+//  Ordner „Entwürfe“ öffnet ein Tipp den Entwurf zum Weiterbearbeiten
+//  (`DraftComposeLoader`).
 //
 //  ViewModel und Ordnerkatalog legt die App einmal beim Start an und
 //  reicht sie herein. Würde die Ansicht sie selbst im `init` erzeugen,
@@ -38,7 +40,7 @@
 //  ContactImageDirectory, SenderIconCache, FilterListCloudEvents,
 //  MessageDetailView, MessageMenu, MessageActionDialogs, FolderMoveSheet,
 //  MessageSelection, SelectionActionBar,
-//  ComposeView, Dialogs, Log.
+//  ComposeView, DraftComposeLoader, Dialogs, Log.
 //
 
 import SwiftUI
@@ -73,6 +75,8 @@ struct InboxView: View {
     @State private var hasLoadedOnce = false
     /// Antwort bzw. Weiterleitung aus dem Kontextmenü.
     @State private var listCompose: ListComposeRequest?
+    /// Entwurf, der zum Weiterbearbeiten geöffnet wird.
+    @State private var draftToEdit: DraftEditRequest?
     /// Mail, für die aus dem Kontextmenü ein Zielordner gewählt wird.
     @State private var moveItem: MessageListItem?
     /// Rückfrage aus dem Kontextmenü (Löschen, Spam); einziger
@@ -287,6 +291,13 @@ struct InboxView: View {
                     onSent: { viewModel.loadFromCache() }
                 )
             }
+            .sheet(item: $draftToEdit) { request in
+                DraftComposeLoader(
+                    messageID: request.id,
+                    accountStore: accountStore,
+                    onSent: { refreshAfterDraft() }
+                )
+            }
             .sheet(isPresented: $showingSelectionMove) {
                 selectionMoveSheet
             }
@@ -497,12 +508,14 @@ struct InboxView: View {
     private var messageList: some View {
         let colors = accountColors
         let recipients = showsRecipients
+        let drafts = showsDrafts
         return List(selection: listSelection) {
             ForEach(viewModel.messages) { message in
                 messageRow(
                     for: message,
                     colorHex: colors[message.accountID],
-                    showsRecipients: recipients
+                    showsRecipients: recipients,
+                    opensDraft: drafts
                 )
             }
 
@@ -555,21 +568,44 @@ struct InboxView: View {
         return role == .sent || role == .drafts
     }
 
+    /// Aktualisiert die Liste nach Senden oder Sichern eines Entwurfs.
+    ///
+    /// Verarbeitung: Die alte Fassung ist schon aus dem Cache entfernt; die
+    /// neu gesicherte kommt erst mit einem Abruf des Ordners. Deshalb wird
+    /// der gezeigte Ordner gleich neu abgerufen.
+    private func refreshAfterDraft() {
+        viewModel.loadFromCache()
+        guard case .folder(let accountID, let path, _) = viewModel.selection else { return }
+        Task { await viewModel.refreshFolder(accountID: accountID, path: path) }
+    }
+
+    /// `true`, wenn die gezeigte Ansicht ein Entwürfe-Ordner ist – dort
+    /// öffnet ein Tipp die Mail zum Weiterbearbeiten statt zum Lesen.
+    private var showsDrafts: Bool {
+        guard case .folder(let accountID, let path, _) = viewModel.selection,
+              case .loaded(let tree) = folderCatalog.state(for: accountID) else { return false }
+        return tree.node(withPath: path)?.role == .drafts
+    }
+
     /// Eine Zeile der Liste: Link zur Mail, Wischaktionen, Kontextmenü,
     /// Sperre während einer laufenden Aktion.
     ///
     /// Verarbeitung: Der Link öffnet `MessageDetailLoader`, der die
-    /// vollständige Mail erst beim Öffnen aus dem Cache lädt.
+    /// vollständige Mail erst beim Öffnen aus dem Cache lädt. Im
+    /// Entwürfe-Ordner öffnet ein Tipp stattdessen das Verfassen-Fenster
+    /// (`DraftComposeLoader`).
     ///
     /// - Parameters:
     ///   - message: Darzustellender Listeneintrag.
     ///   - colorHex: Farbe des Postfachs; `nil` = keine Farbe gewählt.
     ///   - showsRecipients: `true` in Gesendet und Entwürfen.
+    ///   - opensDraft: `true` im Entwürfe-Ordner.
     /// - Returns: Die fertige Zeile.
     private func messageRow(
         for message: MessageListItem,
         colorHex: String?,
-        showsRecipients: Bool
+        showsRecipients: Bool,
+        opensDraft: Bool
     ) -> some View {
         Group {
             if viewModel.isSelecting {
@@ -577,6 +613,14 @@ struct InboxView: View {
                 // öffnen. Auf dem Mac würde der Link den Klick sonst selbst
                 // verarbeiten und die Mail öffnen.
                 selectableRow(for: message, colorHex: colorHex, showsRecipients: showsRecipients)
+            } else if opensDraft {
+                Button {
+                    draftToEdit = DraftEditRequest(id: message.id)
+                } label: {
+                    rowContent(for: message, colorHex: colorHex, showsRecipients: showsRecipients)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             } else {
                 NavigationLink {
                     MessageDetailLoader(
@@ -1003,6 +1047,12 @@ private struct OlderMessagesRow: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 6)
     }
+}
+
+/// Entwurf zum Weiterbearbeiten: Cache-ID für das Sheet.
+private struct DraftEditRequest: Identifiable {
+    /// Cache-ID des Entwurfs.
+    let id: String
 }
 
 /// Antwort bzw. Weiterleitung aus dem Kontextmenü: Art und vollständige

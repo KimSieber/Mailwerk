@@ -14,13 +14,17 @@
 //    `cid:<Content-ID>` ersetzt; das Logo geht als Inline-Teil mit
 //    (`sendHTML`, `logoAttachment`).
 //
+//  Aus einem gesicherten Entwurf entsteht der Block mit
+//  `init(restoredHTML:images:)`: das Logo steht dort als `cid:` und wird
+//  für die Anzeige wieder zur `data:`-Adresse.
+//
 //  Ohne Oberfläche, deshalb ohne Gerät testbar.
 //
 //  Abgrenzung: Anzeige und Bearbeitung → SignatureBlockView; Zustand beim
 //  Verfassen → ComposeViewModel; Platzhalter → SignatureRules.
 //
 //  Abhängigkeiten: Foundation, SignatureItem, SignatureRules,
-//  OutgoingAttachment.
+//  OutgoingAttachment, CachedAttachment, InlineImages.
 //
 
 import Foundation
@@ -63,6 +67,44 @@ struct HTMLSignatureBlock: Equatable, Identifiable {
             logoDataURI = nil
             logoAttachment = nil
             displayHTML = signature.html
+        }
+        editedHTML = displayHTML
+    }
+
+    /// Bildet den Block aus der HTML-Signatur eines gesicherten Entwurfs.
+    ///
+    /// Verarbeitung: Im Entwurf steht die Signatur so, wie sie gesendet
+    /// würde – das Logo als `cid:<Content-ID>`, das Bild als Inline-Teil
+    /// des Entwurfs. Das erste Bild unter `images`, das die Signatur so
+    /// anspricht, wird für die Anzeige als `data:`-Adresse eingesetzt und
+    /// behält beim Senden seine Content-ID. Ohne passendes Bild bleibt das
+    /// HTML unverändert. `nonisolated` wie `init(signature:)`.
+    ///
+    /// - Parameters:
+    ///   - restoredHTML: HTML der Signatur aus dem Entwurf.
+    ///   - images: Anhänge des Entwurfs (Inline-Bilder werden herausgesucht).
+    nonisolated init(restoredHTML html: String, images: [CachedAttachment]) {
+        id = UUID()
+        let referenced = InlineImages.referencedContentIDs(in: html)
+        let logo = images.first { image in
+            guard image.isInline, image.data != nil, let contentID = image.contentID else { return false }
+            return referenced.contains(InlineImages.normalizedContentID(contentID))
+                && html.contains("cid:" + contentID)
+        }
+        if let logo, let data = logo.data, let contentID = logo.contentID {
+            let mimeType = logo.contentType
+                .split(separator: ";", maxSplits: 1).first
+                .map { $0.trimmingCharacters(in: .whitespaces).lowercased() } ?? "image/png"
+            let dataURI = SignatureRules.dataURI(data, mimeType: mimeType)
+            logoDataURI = dataURI
+            logoAttachment = OutgoingAttachment(
+                filename: logo.filename, mimeType: mimeType, data: data, contentID: contentID
+            )
+            displayHTML = html.replacingOccurrences(of: "cid:" + contentID, with: dataURI)
+        } else {
+            logoDataURI = nil
+            logoAttachment = nil
+            displayHTML = html
         }
         editedHTML = displayHTML
     }

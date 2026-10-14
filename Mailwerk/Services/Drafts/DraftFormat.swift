@@ -17,6 +17,9 @@
 //  dazwischen bleibt unberührt. Ein Entwurf ohne Datenblock (etwa aus dem
 //  Webmail) liefert `nil` – er wird dann als Ganzes übernommen.
 //
+//  Beim Wiederherstellen liefert `quotedText` den Zitat-Text aus dem
+//  Textteil des Entwurfs (dort steht er hinter dem eigenen Text).
+//
 //  Ohne Oberfläche, deshalb ohne Gerät testbar.
 //
 //  Abgrenzung: Ablage auf dem Server → DraftService; Zusammenstellen und
@@ -121,7 +124,37 @@ nonisolated enum DraftFormat {
         )
     }
 
+    /// Zitat-Text aus dem Textteil eines Entwurfs.
+    ///
+    /// Verarbeitung: Der Textteil eines Entwurfs ist wie beim Senden gebaut –
+    /// eigener Text, eine Leerzeile, dann das Zitat. Steht der wieder
+    /// hergestellte eigene Text vorn, ist der Rest das Zitat. Zeilenenden
+    /// werden vorher vereinheitlicht (der Server liefert CRLF). Passt der
+    /// Anfang nicht (z. B. Text eines anderen Programms), gibt es kein
+    /// Ergebnis; der Aufrufer bildet den Text dann aus dem Zitat-HTML.
+    ///
+    /// - Parameters:
+    ///   - draftText: Textteil des Entwurfs; `nil` = keiner.
+    ///   - ownText: Wieder hergestellter eigener Text samt Signatur.
+    /// - Returns: Zitat als Text oder `nil`.
+    static func quotedText(draftText: String?, ownText: String) -> String? {
+        guard let draftText else { return nil }
+        let text = unifiedLineEndings(draftText)
+        let prefix = unifiedLineEndings(ownText) + "\n\n"
+        guard text.hasPrefix(prefix) else { return nil }
+        let quote = String(text.dropFirst(prefix.count))
+        return quote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : quote
+    }
+
     // MARK: - Intern
+
+    /// Vereinheitlicht Zeilenenden auf LF.
+    ///
+    /// - Parameter text: Text mit beliebigen Zeilenenden.
+    /// - Returns: Text mit LF.
+    private static func unifiedLineEndings(_ text: String) -> String {
+        text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+    }
 
     /// Setzt einen Teil zwischen seine Marken.
     ///

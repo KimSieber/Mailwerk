@@ -25,6 +25,10 @@
 //  Absender wird zuerst um die Wahl eines Absenders gebeten; fehlt der
 //  Entwürfe-Ordner, wird nach dem Anlegen gefragt.
 //
+//  Entwurf weiterbearbeiten: `init(accountStore:draft:attachments:)` öffnet
+//  einen gesicherten Entwurf; fehlen dabei Bilder, erscheint beim Öffnen
+//  ein Hinweis.
+//
 //  Meldungen und Rückfragen laufen über je einen Kanal (siehe
 //  Dialogs.swift).
 //
@@ -47,7 +51,8 @@ import PhotosUI
 struct ComposeView: View {
     /// Zustand und Logik des Fensters.
     @State private var model: ComposeViewModel
-    /// Wird nach erfolgreichem Versand aufgerufen (Inbox aktualisieren).
+    /// Wird nach erfolgreichem Versand oder Sichern eines Entwurfs
+    /// aufgerufen (Liste aktualisieren).
     private let onSent: () -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -97,6 +102,25 @@ struct ComposeView: View {
         self.onSent = onSent
     }
 
+    /// Legt das Fenster für einen gesicherten Entwurf an.
+    ///
+    /// - Parameters:
+    ///   - accountStore: Quelle für Postfächer und Passwörter.
+    ///   - draft: Entwurf aus dem Cache.
+    ///   - attachments: Anhänge und Bilder des Entwurfs aus dem Cache.
+    ///   - onSent: Rückruf nach Versand oder Sichern.
+    init(
+        accountStore: AccountStore,
+        draft: CachedMessage,
+        attachments: [CachedAttachment],
+        onSent: @escaping () -> Void = {}
+    ) {
+        _model = State(
+            initialValue: ComposeViewModel(accountStore: accountStore, draft: draft, attachments: attachments)
+        )
+        self.onSent = onSent
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -111,7 +135,14 @@ struct ComposeView: View {
             .toolbar { toolbarContent }
             .interactiveDismissDisabled(model.hasContent)
             .confirmationRequest($activeConfirmation)
-            .task { model.attachSignatures(signatureStore) }
+            .task {
+                model.attachSignatures(signatureStore)
+                // Hinweis nach dem Wiederherstellen eines Entwurfs, einmal.
+                if let notice = model.restoreNotice {
+                    model.restoreNotice = nil
+                    activeAlert = AlertItem(title: "Entwurf geöffnet", message: notice)
+                }
+            }
             .onChange(of: model.accountID) { _, _ in model.accountDidChange() }
             .onChange(of: model.errorMessage) { _, message in
                 // Fehler des ViewModels in den Meldungskanal übernehmen.
@@ -432,7 +463,9 @@ struct ComposeView: View {
     ///
     /// Verarbeitung: Ohne Absender erscheint zuerst ein Hinweis. Fehlt der
     /// Entwürfe-Ordner, wird nach dem Anlegen gefragt und danach erneut
-    /// gesichert. Bei einem Fehler bleibt das Fenster offen.
+    /// gesichert. Bei einem Fehler bleibt das Fenster offen. Nach dem
+    /// Sichern wird die Liste aktualisiert; Hinweise (alte Fassung nicht
+    /// entfernt) erscheinen vor dem Schließen.
     ///
     /// - Parameter createFolder: `true` = fehlenden Entwürfe-Ordner anlegen.
     private func saveDraft(createFolder: Bool = false) async {
@@ -445,7 +478,18 @@ struct ComposeView: View {
         }
         switch await model.saveDraft(createFolder: createFolder) {
         case .saved:
-            dismiss()
+            if model.warnings.isEmpty {
+                onSent()
+                dismiss()
+            } else {
+                activeAlert = AlertItem(
+                    title: "Hinweis zum Entwurf",
+                    message: model.warnings.joined(separator: "\n\n")
+                ) {
+                    onSent()
+                    dismiss()
+                }
+            }
         case .needsDraftsFolder:
             activeConfirmation = ConfirmationRequest(
                 title: "Ordner „Entwürfe“ anlegen?",
