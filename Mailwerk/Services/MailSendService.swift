@@ -14,6 +14,9 @@
 //     Markierung erfolgt in dem Ordner, in dem die Originalnachricht liegt;
 //     UIDs sind nur innerhalb eines Ordners eindeutig.
 //
+//  Schritt 2 entfällt, wenn im Postfach „Kopie in Gesendet ablegen“
+//  ausgeschaltet ist (Anbieter legt selbst ab, z. B. Gmail).
+//
 //  Die Schritte 2 und 3 laufen erst nach erfolgreichem Versand. Scheitern sie,
 //  ist die Nachricht trotzdem gesendet – das Ergebnis enthält dann Warnungen
 //  statt eines Fehlers, damit der Nutzer nicht fälschlich erneut sendet.
@@ -260,14 +263,18 @@ enum MailSendService {
 
         // 2. + 3. Nacharbeiten – Fehler werden zu Warnungen
         var report = SendReport()
-        do {
-            report.sentCopyFolder = try await saveSentCopy(
-                email, bcc: mail.bcc, credentials: credentials
-            )
-        } catch {
-            report.warnings.append(
-                "Die Nachricht wurde gesendet, die Kopie konnte aber nicht im Gesendet-Ordner abgelegt werden: \(error.localizedDescription)"
-            )
+        if account.savesSentCopy {
+            do {
+                report.sentCopyFolder = try await saveSentCopy(
+                    email, bcc: mail.bcc, credentials: credentials
+                )
+            } catch {
+                report.warnings.append(
+                    "Die Nachricht wurde gesendet, die Kopie konnte aber nicht im Gesendet-Ordner abgelegt werden: \(error.localizedDescription)"
+                )
+            }
+        } else {
+            Log.send.info("📤 [\(account.displayName, privacy: .private)] Keine eigene Gesendet-Kopie (im Postfach ausgeschaltet)")
         }
 
         if let origin = mail.origin {

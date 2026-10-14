@@ -3,8 +3,14 @@
 //  Mailwerk
 //
 //  Zweck: Datenmodell eines eingerichteten IMAP-/SMTP-Postfachs – Bezeichnung,
-//  Absendername, Benutzername, E-Mail-Adresse, Server und Ports, Farbe und
-//  gemerkter Spam-Ordner.
+//  Absendername, Benutzername, E-Mail-Adresse, Server und Ports, Farbe,
+//  gemerkter Spam-Ordner und ob eine Kopie in „Gesendet“ abgelegt wird.
+//
+//  Gesendet-Kopie: Manche Anbieter (z. B. Gmail) legen über SMTP gesendete
+//  Mails selbst ab; eine eigene Kopie wäre dort doppelt. Einen Standard,
+//  der das meldet, gibt es nicht – deshalb ein Schalter je Postfach
+//  (`storesSentCopy`), wie in anderen Mail-Programmen. Ältere gespeicherte
+//  Postfächer ohne das Feld legen weiterhin eine Kopie ab.
 //
 //  Benutzername und E-Mail-Adresse sind getrennt: Der Benutzername dient
 //  nur der Anmeldung, die Adresse dem Versand („From“) und dem Erkennen
@@ -70,6 +76,11 @@ struct MailAccount: Identifiable, Codable, Equatable {
     /// Wird beim ersten Filterlauf gefüllt und danach wiederverwendet.
     var spamFolder: String?
 
+    /// Ob Mailwerk nach dem Versand eine Kopie im Gesendet-Ordner ablegt.
+    /// `nil` (ältere gespeicherte Postfächer) gilt als „ja“; Auswertung
+    /// über `savesSentCopy`.
+    var storesSentCopy: Bool?
+
     /// Legt ein Postfach an.
     ///
     /// Verarbeitung: Ein leerer Absendername wird zu `nil` (`normalized`).
@@ -86,6 +97,7 @@ struct MailAccount: Identifiable, Codable, Equatable {
     ///   - smtpPort: SMTP-Port.
     ///   - colorHex: Farbe als Hex-Wert.
     ///   - spamFolder: gemerkter Spam-Ordner.
+    ///   - storesSentCopy: Kopie in „Gesendet“ ablegen.
     init(
         id: UUID = UUID(),
         displayName: String,
@@ -97,7 +109,8 @@ struct MailAccount: Identifiable, Codable, Equatable {
         smtpHost: String,
         smtpPort: Int = 465,
         colorHex: String? = nil,
-        spamFolder: String? = nil
+        spamFolder: String? = nil,
+        storesSentCopy: Bool = true
     ) {
         self.id = id
         self.displayName = displayName
@@ -110,6 +123,13 @@ struct MailAccount: Identifiable, Codable, Equatable {
         self.smtpPort = smtpPort
         self.colorHex = colorHex
         self.spamFolder = spamFolder
+        self.storesSentCopy = storesSentCopy
+    }
+
+    /// `true`, wenn nach dem Versand eine Kopie in „Gesendet“ abgelegt wird;
+    /// ältere Postfächer ohne Angabe gelten als `true`.
+    var savesSentCopy: Bool {
+        storesSentCopy ?? true
     }
 
     /// Adresse für Versand und Erkennen der eigenen Adresse: die

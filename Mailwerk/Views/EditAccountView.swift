@@ -3,8 +3,8 @@
 //  Mailwerk
 //
 //  Zweck: Formular zum Bearbeiten eines Postfachs – Bezeichnung,
-//  Absendername, E-Mail-Adresse, Benutzername, Passwort, Server, Farbe,
-//  Signatur, Abruf – mit Verbindungstest. Die Zeile „Signatur“ öffnet
+//  Absendername, E-Mail-Adresse, Benutzername, Passwort, Server, Kopie in
+//  „Gesendet“, Farbe, Signatur, Abruf – mit Verbindungstest. Die Zeile „Signatur“ öffnet
 //  deren Pflege-Seite; sie speichert unabhängig von „Sichern“ dieses
 //  Formulars. Ebenso wirkt der Schalter „Abruf“ sofort (nur dieses Gerät). Jede Zeile zeigt ihre Beschriftung und ein
 //  Beispiel (LabeledInputField). Ein leeres Passwortfeld lässt das
@@ -58,6 +58,8 @@ struct EditAccountView: View {
     @State private var smtpHost: String
     /// SMTP-Port als Text.
     @State private var smtpPort: String
+    /// Kopie in „Gesendet“ ablegen.
+    @State private var savesSentCopy: Bool
     /// Farbe des Postfachs; `nil` = keine.
     @State private var selectedColor: AccountColor?
     /// Einziger Meldungskanal der Ansicht.
@@ -93,6 +95,7 @@ struct EditAccountView: View {
         _imapPort = State(initialValue: String(account.imapPort))
         _smtpHost = State(initialValue: account.smtpHost)
         _smtpPort = State(initialValue: String(account.smtpPort))
+        _savesSentCopy = State(initialValue: account.savesSentCopy)
         _selectedColor = State(initialValue: AccountColor.from(hex: account.colorHex))
     }
 
@@ -161,13 +164,18 @@ struct EditAccountView: View {
                         .numberInput()
                 }
 
-                Section("SMTP (Versand)") {
+                Section {
                     LabeledInputField(label: "Host", example: "z. B. smtp.mail.org",
                                       text: $smtpHost)
                         .plainTextInput()
                     LabeledInputField(label: "Port", example: "z. B. 587",
                                       text: $smtpPort)
                         .numberInput()
+                    Toggle("Kopie in „Gesendet“ ablegen", isOn: $savesSentCopy)
+                } header: {
+                    Text("SMTP (Versand)")
+                } footer: {
+                    Text("Ausschalten, wenn der Anbieter gesendete Mails selbst in „Gesendet“ ablegt (z. B. Gmail) – sonst erscheinen sie dort doppelt.")
                 }
 
                 Section("Farbe") {
@@ -258,6 +266,7 @@ struct EditAccountView: View {
         updated.imapPort = Int(imapPort) ?? 993
         updated.smtpHost = smtpHost
         updated.smtpPort = Int(smtpPort) ?? 587
+        updated.storesSentCopy = savesSentCopy
         updated.colorHex = selectedColor?.rawValue
 
         do {

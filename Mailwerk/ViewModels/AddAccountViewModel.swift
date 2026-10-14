@@ -41,6 +41,8 @@ final class AddAccountViewModel {
     var smtpHost = ""
     /// SMTP-Port als Text.
     var smtpPort = "587"
+    /// Kopie in „Gesendet“ ablegen (Standard: ja).
+    var savesSentCopy = true
 
     /// `true`, solange der Verbindungstest läuft.
     var isTesting = false
@@ -113,7 +115,8 @@ final class AddAccountViewModel {
             imapHost: imapHost,
             imapPort: Int(imapPort) ?? 993,
             smtpHost: smtpHost,
-            smtpPort: Int(smtpPort) ?? 587
+            smtpPort: Int(smtpPort) ?? 587,
+            storesSentCopy: savesSentCopy
         )
     }
 }

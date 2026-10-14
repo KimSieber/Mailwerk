@@ -4,7 +4,7 @@
 //
 //  Zweck: Formular zum Einrichten eines Postfachs – Bezeichnung,
 //  Absendername, E-Mail-Adresse, Benutzername, Passwort, IMAP- und
-//  SMTP-Server – mit Verbindungstest. Jede Zeile zeigt ihre Beschriftung
+//  SMTP-Server, Kopie in „Gesendet“ – mit Verbindungstest. Jede Zeile zeigt ihre Beschriftung
 //  und ein Beispiel (LabeledInputField). Speichern legt das Postfach an
 //  und das Passwort im Schlüsselbund ab; scheitert das, bleibt das
 //  Formular mit allen Eingaben offen und eine Meldung erklärt den Grund.
@@ -67,13 +67,18 @@ struct AddAccountView: View {
                         .numberInput()
                 }
 
-                Section("SMTP (Versand)") {
+                Section {
                     LabeledInputField(label: "Host", example: "z. B. smtp.mail.org",
                                       text: $viewModel.smtpHost)
                         .plainTextInput()
                     LabeledInputField(label: "Port", example: "z. B. 587",
                                       text: $viewModel.smtpPort)
                         .numberInput()
+                    Toggle("Kopie in „Gesendet“ ablegen", isOn: $viewModel.savesSentCopy)
+                } header: {
+                    Text("SMTP (Versand)")
+                } footer: {
+                    Text("Ausschalten, wenn der Anbieter gesendete Mails selbst in „Gesendet“ ablegt (z. B. Gmail) – sonst erscheinen sie dort doppelt.")
                 }
 
                 Section {
