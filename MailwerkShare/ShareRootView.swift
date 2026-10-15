@@ -17,10 +17,11 @@
 //
 //  Abgrenzung: Einlesen der Inhalte → SharedItemLoader; Verfassen und
 //  Versand → ComposeView/ComposeViewModel; Einbettung in das System →
-//  ShareViewController.
+//  ShareViewController (iPhone/iPad: MailwerkShare, Mac: MailwerkShareMac).
 //
 //  Abhängigkeiten: SwiftUI, ShareContext, AccountStore, SignatureStore,
-//  InMemorySignatureStorage, SharedItemLoader, ComposeView, Dialogs.
+//  InMemorySignatureStorage, SharedItemLoader, ComposeView, Dialogs,
+//  MacSheetSize.
 //
 
 import SwiftUI
@@ -87,6 +88,10 @@ struct ShareRootView: View {
                 }
             }
         }
+        // Auf dem Mac richtet sich das Fenster der Erweiterung nach dem
+        // Inhalt; Laden und Hinweis bekommen dieselbe Größe wie das
+        // Verfassen-Fenster.
+        .macSheetFrame(.composer)
         .task { await prepare() }
         .alertItem($loadNotice)
     }

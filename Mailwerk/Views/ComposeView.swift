@@ -35,6 +35,8 @@
 //  Teilen-Erweiterung: Dort ist das Fenster keine Sheet-Ansicht, die sich
 //  per `dismiss` schließt. Die Erweiterung übergibt deshalb `onClose` und
 //  beendet sich darin selbst; die geteilten Inhalte kommen über `shared`.
+//  Auf dem Mac hat die Erweiterung keine Fensterleiste; Schließen und
+//  Senden stehen dort in einer eigenen Kopfleiste.
 //
 //  Abgrenzung: Zustand, Versand und Vorbelegung → ComposeViewModel;
 //  Editor → RichTextEditor; Formatierungsleiste → FormattingToolbar;
@@ -145,6 +147,9 @@ struct ComposeView: View {
                 scrollingContent
                 bottomBar
             }
+            #if os(macOS)
+            .safeAreaInset(edge: .top, spacing: 0) { extensionHeaderBar }
+            #endif
             .navigationTitle(title)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -380,27 +385,65 @@ struct ComposeView: View {
     /// Schließen (mit Rückfrage bei Inhalt) und Senden.
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .cancellationAction) {
-            Button {
-                if model.hasContent { confirmClose() } else { close() }
-            } label: {
-                Image(systemName: "xmark")
-            }
-            .disabled(model.isSending || model.isSavingDraft)
+        ToolbarItem(placement: .cancellationAction) { closeButton }
+        ToolbarItem(placement: .primaryAction) { sendButton }
+    }
+
+    /// Knopf „Schließen“ (mit Rückfrage bei Inhalt).
+    private var closeButton: some View {
+        Button {
+            if model.hasContent { confirmClose() } else { close() }
+        } label: {
+            Image(systemName: "xmark")
         }
-        ToolbarItem(placement: .primaryAction) {
-            if model.isSending || model.isSavingDraft {
-                ProgressView()
-            } else {
-                Button {
-                    Task { await send() }
-                } label: {
-                    Image(systemName: "paperplane.fill")
-                }
-                .disabled(!model.canSend)
+        .disabled(model.isSending || model.isSavingDraft)
+        .help("Schließen")
+    }
+
+    /// Knopf „Senden“, während Versand oder Sichern eine Ladeanzeige.
+    @ViewBuilder
+    private var sendButton: some View {
+        if model.isSending || model.isSavingDraft {
+            ProgressView()
+        } else {
+            Button {
+                Task { await send() }
+            } label: {
+                Image(systemName: "paperplane.fill")
             }
+            .disabled(!model.canSend)
+            .help("Senden")
         }
     }
+
+    #if os(macOS)
+    /// Kopfleiste mit Schließen, Titel und Senden für die Teilen-Erweiterung
+    /// auf dem Mac.
+    ///
+    /// Verarbeitung: Dort steht das Fenster in keiner Fensterleiste, die
+    /// Symbolleiste (`toolbar`) bleibt deshalb unsichtbar. Die Leiste
+    /// erscheint nur, wenn `onClose` gesetzt ist; in der App bleibt es bei
+    /// der Symbolleiste.
+    @ViewBuilder
+    private var extensionHeaderBar: some View {
+        if onClose != nil {
+            VStack(spacing: 0) {
+                HStack {
+                    closeButton
+                    Spacer()
+                    Text(title).font(.headline)
+                    Spacer()
+                    sendButton
+                }
+                .buttonStyle(.borderless)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                Divider()
+            }
+            .background(.bar)
+        }
+    }
+    #endif
 
     /// Untere Leiste: Anhang als erste Gruppe, dahinter die Formatierung
     /// (scrollt bei Bedarf).

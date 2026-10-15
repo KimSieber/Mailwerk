@@ -7,8 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		3B3F6DC030802A69001BA55D /* MailwerkShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 3B3F6DB630802A69001BA55D /* MailwerkShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		3B3F6DC030802A69001BA55D /* MailwerkShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 3B3F6DB630802A69001BA55D /* MailwerkShare.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		3B3F6DC930802D80001BA55D /* SwiftMail in Frameworks */ = {isa = PBXBuildFile; productRef = 3B3F6DC830802D80001BA55D /* SwiftMail */; };
+		3B3F6E7030812089001BA55D /* MailwerkShareMac.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 3B3F6E6430812089001BA55D /* MailwerkShareMac.appex */; platformFilters = (macos, ); settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		3B3F6E77308122D4001BA55D /* SwiftMail in Frameworks */ = {isa = PBXBuildFile; productRef = 3B3F6E76308122D4001BA55D /* SwiftMail */; };
 		3BF782073071ED7000A4DC3D /* SwiftMail in Frameworks */ = {isa = PBXBuildFile; productRef = 3BF782063071ED7000A4DC3D /* SwiftMail */; };
 /* End PBXBuildFile section */
 
@@ -19,6 +21,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 3B3F6DB530802A69001BA55D;
 			remoteInfo = MailwerkShare;
+		};
+		3B3F6E6E30812089001BA55D /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3B8C3B17305DE0980028B269 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3B3F6E6330812089001BA55D;
+			remoteInfo = MailwerkShareMac;
 		};
 		3B8C3B2D305DE09B0028B269 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -43,6 +52,7 @@
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
+				3B3F6E7030812089001BA55D /* MailwerkShareMac.appex in Embed Foundation Extensions */,
 				3B3F6DC030802A69001BA55D /* MailwerkShare.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
@@ -52,6 +62,7 @@
 
 /* Begin PBXFileReference section */
 		3B3F6DB630802A69001BA55D /* MailwerkShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MailwerkShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		3B3F6E6430812089001BA55D /* MailwerkShareMac.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MailwerkShareMac.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B74D9E0305DE2290072DF5D /* .gitignore */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitignore; sourceTree = "<group>"; };
 		3B74D9E1305DE2290072DF5D /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		3B8C3B1F305DE0980028B269 /* Mailwerk.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Mailwerk.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -76,6 +87,29 @@
 			);
 			target = 3B3F6DB530802A69001BA55D /* MailwerkShare */;
 		};
+		3B3F6E7430812089001BA55D /* Exceptions for "MailwerkShareMac" folder in "MailwerkShareMac" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 3B3F6E6330812089001BA55D /* MailwerkShareMac */;
+		};
+		3B3F6EFE30812341001BA55D /* Exceptions for "Mailwerk" folder in "MailwerkShareMac" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				MailwerkApp.swift,
+			);
+			target = 3B3F6E6330812089001BA55D /* MailwerkShareMac */;
+		};
+		3B3F6F0030812367001BA55D /* Exceptions for "MailwerkShare" folder in "MailwerkShareMac" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				SharedItemLoader.swift,
+				ShareRootView.swift,
+			);
+			target = 3B3F6E6330812089001BA55D /* MailwerkShareMac */;
+		};
 		3BA5C3493064A2E500DAF05C /* Exceptions for "Mailwerk" folder in "Mailwerk" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -90,8 +124,17 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				3B3F6DC430802A69001BA55D /* Exceptions for "MailwerkShare" folder in "MailwerkShare" target */,
+				3B3F6F0030812367001BA55D /* Exceptions for "MailwerkShare" folder in "MailwerkShareMac" target */,
 			);
 			path = MailwerkShare;
+			sourceTree = "<group>";
+		};
+		3B3F6E6530812089001BA55D /* MailwerkShareMac */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				3B3F6E7430812089001BA55D /* Exceptions for "MailwerkShareMac" folder in "MailwerkShareMac" target */,
+			);
+			path = MailwerkShareMac;
 			sourceTree = "<group>";
 		};
 		3B8C3B21305DE0980028B269 /* Mailwerk */ = {
@@ -99,6 +142,7 @@
 			exceptions = (
 				3BA5C3493064A2E500DAF05C /* Exceptions for "Mailwerk" folder in "Mailwerk" target */,
 				3B3F6E4D30802DDD001BA55D /* Exceptions for "Mailwerk" folder in "MailwerkShare" target */,
+				3B3F6EFE30812341001BA55D /* Exceptions for "Mailwerk" folder in "MailwerkShareMac" target */,
 			);
 			path = Mailwerk;
 			sourceTree = "<group>";
@@ -121,6 +165,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				3B3F6DC930802D80001BA55D /* SwiftMail in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3B3F6E6130812089001BA55D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3B3F6E77308122D4001BA55D /* SwiftMail in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -166,6 +218,7 @@
 				3B8C3B2F305DE09B0028B269 /* MailwerkTests */,
 				3B8C3B39305DE09B0028B269 /* MailwerkUITests */,
 				3B3F6DB730802A69001BA55D /* MailwerkShare */,
+				3B3F6E6530812089001BA55D /* MailwerkShareMac */,
 				3B3F6DC730802D80001BA55D /* Frameworks */,
 				3B8C3B20305DE0980028B269 /* Products */,
 			);
@@ -178,6 +231,7 @@
 				3B8C3B2C305DE09B0028B269 /* MailwerkTests.xctest */,
 				3B8C3B36305DE09B0028B269 /* MailwerkUITests.xctest */,
 				3B3F6DB630802A69001BA55D /* MailwerkShare.appex */,
+				3B3F6E6430812089001BA55D /* MailwerkShareMac.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -209,6 +263,30 @@
 			productReference = 3B3F6DB630802A69001BA55D /* MailwerkShare.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		3B3F6E6330812089001BA55D /* MailwerkShareMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3B3F6E7130812089001BA55D /* Build configuration list for PBXNativeTarget "MailwerkShareMac" */;
+			buildPhases = (
+				3B3F6E6030812089001BA55D /* Sources */,
+				3B3F6E6130812089001BA55D /* Frameworks */,
+				3B3F6E6230812089001BA55D /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				3B3F6E6530812089001BA55D /* MailwerkShareMac */,
+				3B8C3B21305DE0980028B269 /* Mailwerk */,
+			);
+			name = MailwerkShareMac;
+			packageProductDependencies = (
+				3B3F6E76308122D4001BA55D /* SwiftMail */,
+			);
+			productName = MailwerkShareMac;
+			productReference = 3B3F6E6430812089001BA55D /* MailwerkShareMac.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		3B8C3B1E305DE0980028B269 /* Mailwerk */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 3B8C3B40305DE09B0028B269 /* Build configuration list for PBXNativeTarget "Mailwerk" */;
@@ -222,6 +300,7 @@
 			);
 			dependencies = (
 				3B3F6DBF30802A69001BA55D /* PBXTargetDependency */,
+				3B3F6E6F30812089001BA55D /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				3B8C3B21305DE0980028B269 /* Mailwerk */,
@@ -293,6 +372,9 @@
 					3B3F6DB530802A69001BA55D = {
 						CreatedOnToolsVersion = 27.0;
 					};
+					3B3F6E6330812089001BA55D = {
+						CreatedOnToolsVersion = 27.0;
+					};
 					3B8C3B1E305DE0980028B269 = {
 						CreatedOnToolsVersion = 26.6;
 					};
@@ -328,12 +410,20 @@
 				3B8C3B2B305DE09B0028B269 /* MailwerkTests */,
 				3B8C3B35305DE09B0028B269 /* MailwerkUITests */,
 				3B3F6DB530802A69001BA55D /* MailwerkShare */,
+				3B3F6E6330812089001BA55D /* MailwerkShareMac */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		3B3F6DB430802A69001BA55D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3B3F6E6230812089001BA55D /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -371,6 +461,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		3B3F6E6030812089001BA55D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		3B8C3B1B305DE0980028B269 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -397,8 +494,17 @@
 /* Begin PBXTargetDependency section */
 		3B3F6DBF30802A69001BA55D /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
+			platformFilter = ios;
 			target = 3B3F6DB530802A69001BA55D /* MailwerkShare */;
 			targetProxy = 3B3F6DBE30802A69001BA55D /* PBXContainerItemProxy */;
+		};
+		3B3F6E6F30812089001BA55D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			platformFilters = (
+				macos,
+			);
+			target = 3B3F6E6330812089001BA55D /* MailwerkShareMac */;
+			targetProxy = 3B3F6E6E30812089001BA55D /* PBXContainerItemProxy */;
 		};
 		3B8C3B2E305DE09B0028B269 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -477,6 +583,98 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		3B3F6E7230812089001BA55D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = MailwerkShareMac/MailwerkShareMac.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 62QD57DH52;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = YES;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
+				ENABLE_RESOURCE_ACCESS_USB = NO;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MailwerkShareMac/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Mailwerk;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 0.1.15;
+				PRODUCT_BUNDLE_IDENTIFIER = "de.sieber-bw.Mailwerk.MailwerkShareMac";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		3B3F6E7330812089001BA55D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = MailwerkShareMac/MailwerkShareMac.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 62QD57DH52;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = YES;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
+				ENABLE_RESOURCE_ACCESS_USB = NO;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MailwerkShareMac/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Mailwerk;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 0.1.15;
+				PRODUCT_BUNDLE_IDENTIFIER = "de.sieber-bw.Mailwerk.MailwerkShareMac";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
 		};
@@ -842,6 +1040,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		3B3F6E7130812089001BA55D /* Build configuration list for PBXNativeTarget "MailwerkShareMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3B3F6E7230812089001BA55D /* Debug */,
+				3B3F6E7330812089001BA55D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		3B8C3B1A305DE0980028B269 /* Build configuration list for PBXProject "Mailwerk" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -893,6 +1100,11 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		3B3F6DC830802D80001BA55D /* SwiftMail */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3BF782053071ED7000A4DC3D /* XCRemoteSwiftPackageReference "SwiftMail" */;
+			productName = SwiftMail;
+		};
+		3B3F6E76308122D4001BA55D /* SwiftMail */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 3BF782053071ED7000A4DC3D /* XCRemoteSwiftPackageReference "SwiftMail" */;
 			productName = SwiftMail;

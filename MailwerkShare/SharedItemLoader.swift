@@ -8,8 +8,10 @@
 //
 //  Je Anbieter genau ein Inhalt, in dieser Rangfolge:
 //  1. Web-Link (http/https) → Link im Text,
-//  2. reiner Text ohne Dateinamen (z. B. markierter Text) → Text,
-//  3. alles andere als Datei → Anhang. Bei Fotos wird JPEG genommen, wenn
+//  2. Datei als Verweis (z. B. Finder, Dateien-App) → immer Anhang mit
+//     dem Dateinamen und dem Inhalt der Datei – auch Text- und CSV-Dateien,
+//  3. reiner Text ohne Dateinamen (z. B. markierter Text) → Text,
+//  4. alles andere als Daten → Anhang. Bei Fotos wird JPEG genommen, wenn
 //     die teilende App es anbietet (für Empfänger ohne HEIC), sonst das
 //     Originalformat; Kontakte kommen als vCard (.vcf).
 //
@@ -105,9 +107,10 @@ nonisolated enum SharedItemLoader {
 
     /// Liest den Inhalt eines Anbieters.
     ///
-    /// Verarbeitung: Rangfolge Web-Link → reiner Text → Datei (siehe
-    /// Datei-Kopf). Ein Text mit vorgeschlagenem Dateinamen ist eine
-    /// Textdatei und wird angehängt.
+    /// Verarbeitung: Rangfolge Web-Link → Dateiverweis → reiner Text →
+    /// Daten (siehe Datei-Kopf). Eine geteilte Datei wird so immer angehängt,
+    /// auch wenn sie Text enthält; ein Text mit vorgeschlagenem Dateinamen
+    /// gilt ebenfalls als Datei.
     ///
     /// - Parameter provider: Anbieter.
     /// - Returns: Inhalt; `nil`, wenn der Anbieter nichts Verwertbares hat.
@@ -118,6 +121,11 @@ nonisolated enum SharedItemLoader {
            let url = try await loadURL(provider),
            let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
             return .link(url)
+        }
+
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier),
+           let file = try await loadFile(provider) {
+            return .attachment(file)
         }
 
         if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier),
@@ -206,6 +214,51 @@ nonisolated enum SharedItemLoader {
                     continuation.resume(returning: data)
                 } else {
                     continuation.resume(throwing: error ?? LoadError.noData)
+                }
+            }
+        }
+    }
+
+    /// Lädt eine Datei, die als Verweis übergeben wurde.
+    ///
+    /// Verarbeitung: Der Verweis gilt nur innerhalb des Rückrufs; die Datei
+    /// wird deshalb dort gelesen (mit Zugriffsrecht für Dateien außerhalb
+    /// der Erweiterung). Dateiname und Typ kommen aus dem Verweis.
+    ///
+    /// - Parameter provider: Anbieter mit einem Dateiverweis.
+    /// - Returns: Anhang; `nil`, wenn der Wert kein Dateiverweis ist.
+    /// - Throws: Fehler des Anbieters oder beim Lesen der Datei.
+    private static func loadFile(_ provider: NSItemProvider) async throws -> SharedAttachment? {
+        try await withCheckedThrowingContinuation { continuation in
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                let url: URL?
+                switch item {
+                case let value as URL: url = value
+                case let data as Data: url = URL(dataRepresentation: data, relativeTo: nil)
+                default: url = nil
+                }
+                guard let url, url.isFileURL else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let access = url.startAccessingSecurityScopedResource()
+                defer { if access { url.stopAccessingSecurityScopedResource() } }
+                do {
+                    let data = try Data(contentsOf: url)
+                    let type = UTType(filenameExtension: url.pathExtension)
+                    continuation.resume(returning: SharedAttachment(
+                        filename: SharedContentRules.filename(
+                            suggested: url.lastPathComponent, fileExtension: nil, fallback: "Anhang"
+                        ),
+                        mimeType: type?.preferredMIMEType ?? "application/octet-stream",
+                        data: data
+                    ))
+                } catch {
+                    continuation.resume(throwing: error)
                 }
             }
         }
