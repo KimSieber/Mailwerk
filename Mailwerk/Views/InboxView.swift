@@ -10,7 +10,11 @@
 //  und Gelesen-Status, die Mehrfachauswahl (über „Auswählen“ im
 //  Kontextmenü; Auswahlkreise, „Alle auswählen“, „Fertig“ und schwebende
 //  Befehlsleiste unten), die Zeile „Ältere Nachrichten laden“, die
-//  Ordnerleiste sowie Einstellungen und Verfassen. Eine neue Mail geht vom
+//  Ordnerleiste sowie Einstellungen. Sortieren und Verfassen liegen auf dem
+//  iPhone/iPad in der Leiste am unteren Rand (einhändige Bedienung), auf
+//  dem Mac in der Symbolleiste; im Auswahlmodus ersetzt die Befehlsleiste
+//  die untere Leiste. Eine abweichende Sortierung hebt den Knopf hervor
+//  (blau getönter Glaskreis). Eine neue Mail geht vom
 //  Postfach des gezeigten Ordners aus, in Sammelansichten vom
 //  Standard-Postfach. Aktualisiert wird auf
 //  iPhone/iPad durch Herunterziehen, auf dem Mac per Knopf bzw. ⌘R.
@@ -41,7 +45,7 @@
 //  FolderCatalog, NetworkMonitor, MessageRow, MessageRowParty,
 //  ContactImageDirectory, SenderIconCache, FilterListCloudEvents,
 //  MessageDetailView, MessageMenu, MessageActionDialogs, FolderMoveSheet,
-//  MessageSelection, SelectionActionBar,
+//  MessageSelection, SelectionActionBar, MessageSort, SearchIndexBuilder,
 //  ComposeView, DraftComposeLoader, Dialogs, Log.
 //
 
@@ -218,8 +222,24 @@ struct InboxView: View {
             #endif
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { viewWidth = $0 }
             .toolbar { listToolbar }
+            // „Rückgängig“ über der unteren Leiste: Als Überlagerung des
+            // Inhalts hält es den sicheren Bereich ein und verdeckt die
+            // Knöpfe nicht.
+            .overlay(alignment: .bottom) {
+                if let offer = viewModel.undoOffer {
+                    UndoBanner(
+                        text: offer.text,
+                        onUndo: { Task { await viewModel.undo(offer) } },
+                        onDismiss: { viewModel.dismissUndo() }
+                    )
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .padding(.bottom, 16)
+                    .padding(.horizontal, 16)
+                }
+            }
+            .animation(.snappy(duration: 0.25), value: viewModel.undoOffer?.id)
             // Befehlsleiste im Auswahlmodus – schwebt über der Liste am
-            // unteren Rand, wo später die Suche sitzt.
+            // unteren Rand anstelle der unteren Leiste.
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if viewModel.isSelecting {
                     selectionBar
@@ -233,6 +253,8 @@ struct InboxView: View {
                 // Kontaktbilder parallel zum Abruf: Die Systemabfrage zur
                 // Berechtigung soll den Abruf nicht aufhalten.
                 Task { await ContactImageDirectory.shared.start() }
+                // Fehlende Einträge im Suchindex schrittweise nachtragen.
+                Task { await SearchIndexBuilder.run(store: MessageStore.shared) }
                 await viewModel.refresh()
             }
             .onChange(of: accountStore.accounts.map(\.id)) { oldIDs, newIDs in
@@ -242,6 +264,10 @@ struct InboxView: View {
                 guard !Set(newIDs).isSubset(of: Set(oldIDs)) else { return }
                 viewModel.loadFromCache()
                 Task { await viewModel.refresh() }
+            }
+            .onChange(of: showsRecipients, initial: true) { _, recipients in
+                // „Von“ sortiert in Gesendet/Entwürfen nach dem Empfänger.
+                viewModel.sortsByRecipients = recipients
             }
             .onReceive(FilterListCloudEvents.remoteChangesImported) {
                 // Listen von einem anderen Gerät übernommen (Absenderbilder).
@@ -324,19 +350,6 @@ struct InboxView: View {
         // Einziger Meldungskanal der Liste – am äußeren Element, getrennt
         // von der Rückfrage am Inhalt.
         .alertItem($viewModel.alert)
-        .overlay(alignment: .bottom) {
-            if let offer = viewModel.undoOffer {
-                UndoBanner(
-                    text: offer.text,
-                    onUndo: { Task { await viewModel.undo(offer) } },
-                    onDismiss: { viewModel.dismissUndo() }
-                )
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-                .padding(.bottom, 16)
-                .padding(.horizontal, 16)
-            }
-        }
-        .animation(.snappy(duration: 0.25), value: viewModel.undoOffer?.id)
         .sideDrawer(isPresented: $showingFolders) {
             FolderSidebarView(
                 accounts: accountStore.accounts,
@@ -364,7 +377,8 @@ struct InboxView: View {
     // MARK: - Symbolleiste
 
     /// Symbolleiste: im Auswahlmodus „Alle auswählen“, Anzahl und „Fertig“,
-    /// sonst Ordnerleiste, Titel, Ladeanzeige, Verfassen und Einstellungen.
+    /// sonst oben Ordnerleiste, Titel und Einstellungen, unten Sortieren
+    /// und Verfassen (Mac: alles oben, dazu Ladeanzeige und Aktualisieren).
     @ToolbarContentBuilder
     private var listToolbar: some ToolbarContent {
         if viewModel.isSelecting {
@@ -414,14 +428,26 @@ struct InboxView: View {
                 refreshButton
             }
             #endif
+            #if os(macOS)
             ToolbarItem {
-                Button {
-                    showingCompose = true
-                } label: {
-                    Label("Neue Nachricht", systemImage: "square.and.pencil")
-                }
-                .disabled(accountStore.accounts.isEmpty)
+                sortMenu
             }
+            .sharedBackgroundVisibility(sortItemBackground)
+            ToolbarItem {
+                composeButton
+            }
+            #else
+            // Untere Leiste: Sortieren links, Verfassen rechts – mit dem
+            // Daumen erreichbar.
+            ToolbarItem(placement: .bottomBar) {
+                sortMenu
+            }
+            .sharedBackgroundVisibility(sortItemBackground)
+            ToolbarSpacer(.flexible, placement: .bottomBar)
+            ToolbarItem(placement: .bottomBar) {
+                composeButton
+            }
+            #endif
             ToolbarItem {
                 Menu {
                     Button {
@@ -439,6 +465,58 @@ struct InboxView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Sortieren und Verfassen
+
+    /// Sortiermenü: oben die Richtung, darunter das Feld; die aktive Wahl
+    /// trägt ein Häkchen. In Grundstellung ein normaler Knopf der Leiste;
+    /// weicht die Sortierung ab, ein kräftig blau getönter Glaskreis mit
+    /// weißem Symbol – so ist jederzeit erkennbar, dass die Liste nicht
+    /// nach Datum steht. Der gemeinsame Glashintergrund der Leiste wird
+    /// dafür ausgeblendet (`sortItemBackground`), sonst überdeckte er die
+    /// Tönung.
+    private var sortMenu: some View {
+        Menu {
+            Picker("Richtung", selection: $viewModel.sort.ascending) {
+                Text("Aufsteigend").tag(true)
+                Text("Absteigend").tag(false)
+            }
+            .pickerStyle(.inline)
+            Picker("Sortieren nach", selection: $viewModel.sort.field) {
+                ForEach(MessageSort.Field.allCases) { field in
+                    Text(field.title(showsRecipients: showsRecipients)).tag(field)
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            if viewModel.sort.isStandard {
+                Label("Sortieren", systemImage: "arrow.up.arrow.down")
+            } else {
+                Image(systemName: "arrow.up.arrow.down")
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .glassEffect(.regular.tint(.blue).interactive(), in: .circle)
+                    .accessibilityLabel("Sortieren, geändert")
+            }
+        }
+    }
+
+    /// Gemeinsamer Glashintergrund der Leiste hinter dem Sortierknopf:
+    /// nur in Grundstellung; der blaue Glaskreis bringt seinen eigenen mit.
+    private var sortItemBackground: Visibility {
+        viewModel.sort.isStandard ? .automatic : .hidden
+    }
+
+    /// Knopf „Neue Nachricht“; gesperrt, solange kein Postfach eingerichtet ist.
+    private var composeButton: some View {
+        Button {
+            showingCompose = true
+        } label: {
+            Label("Neue Nachricht", systemImage: "square.and.pencil")
+        }
+        .disabled(accountStore.accounts.isEmpty)
     }
 
     // MARK: - Mehrfachauswahl
@@ -902,7 +980,7 @@ private struct InboxTitle: View {
     /// Farbe des Postfachs bei einem einzelnen Ordner; sonst `nil`.
     var accountColor: Color?
     /// Stand der Ansicht; erscheint als zweite Zeile. Der untere
-    /// Bildschirmrand bleibt so frei (später für die Suche vorgesehen).
+    /// Bildschirmrand bleibt so frei für die untere Leiste.
     var syncState: SyncState?
     /// „Offline" bzw. „Keine Verbindung", sonst `nil`.
     var connectionStatus: String?

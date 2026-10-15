@@ -50,9 +50,8 @@ struct MessageListItem: Identifiable, Equatable {
     let isForwarded: Bool
     /// `true`, wenn die Nachricht Anhänge hat.
     let hasAttachments: Bool
-    /// Anfang des Textteils (höchstens 200 Zeichen); `nil`, wenn die Mail
-    /// keinen Textteil hat. Die Listenzeile zeigt ihn bewusst nicht.
-    let preview: String?
+    /// Gesamtgröße der Nachricht in Byte (Sortierung nach Größe).
+    let sizeBytes: Int
     /// Spam-Einstufung des Servers; `nil` = unbekannt. Entscheidet mit den
     /// Filterlisten, ob die Zeile ein Absenderbild zeigen darf.
     let spamVerdict: SpamHeaderVerdict?

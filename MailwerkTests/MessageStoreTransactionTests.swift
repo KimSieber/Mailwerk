@@ -135,9 +135,9 @@ struct MessageStoreTransactionTests {
     @Test func schemaVersionIsStored() {
         let path = temporaryPath()
         _ = MessageStore(path: path)
-        #expect(pragma("user_version", at: path) == "6")
+        #expect(pragma("user_version", at: path) == "7")
         _ = MessageStore(path: path)
-        #expect(pragma("user_version", at: path) == "6")
+        #expect(pragma("user_version", at: path) == "7")
     }
 
     /// Eingebettetes Bild: Content-ID und Kennzeichen „inline“ bleiben erhalten.
@@ -182,6 +182,6 @@ struct MessageStoreTransactionTests {
         #expect(!loaded.isInline)
         #expect(loaded.contentID == nil)
         #expect(loaded.data == Data([1, 2, 3]))
-        #expect(pragma("user_version", at: path) == "6")
+        #expect(pragma("user_version", at: path) == "7")
     }
 }

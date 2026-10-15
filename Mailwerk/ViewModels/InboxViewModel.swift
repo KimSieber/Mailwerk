@@ -17,6 +17,11 @@
 //  der Auswahl; ein Wechsel der Ansicht und jede Sammelaktion beenden den
 //  Auswahlmodus.
 //
+//  Sortierung: Eine vom Standard („Datum, absteigend“) abweichende
+//  Sortierung gilt nur für die gezeigte Ansicht. Ein Wechsel der Ansicht
+//  setzt sie zurück; gespeichert wird sie nicht. Öffnen einer Mail,
+//  Abruf, Aktionen und der Wechsel in andere Apps lassen sie bestehen.
+//
 //  Ablauf: Die Liste wird immer zuerst aus dem lokalen Cache gezeigt
 //  (`loadFromCache`), der Abruf vom Server läuft danach und aktualisiert
 //  die Liste schrittweise. Ohne Netz bleibt es beim Cache; der Zustand
@@ -35,8 +40,8 @@
 //  (`SpamClassifier.allowsSenderImage`). Die Kopie wird bei jedem Laden
 //  der Liste und nach Änderungen an den Listen neu gelesen.
 //
-//  Messung: In Debug-Builds gibt `loadFromCache` Laufzeit, Anzahl der
-//  Mails und Menge der geladenen Vorschautexte aus (`⏱ …`), außerdem wie
+//  Messung: In Debug-Builds gibt `loadFromCache` Laufzeit und Anzahl der
+//  Mails aus (`⏱ …`), außerdem wie
 //  viele Datenbankabfragen die Ansicht seit der letzten Liste ausgelöst
 //  hat – Grundlage für Performance-Messungen.
 //
@@ -46,7 +51,7 @@
 //  Abhängigkeiten: AccountStore, SpamSettings, SpamFilterService,
 //  MailFetchService, MailSession (Zugangsdaten), MessageActions, UndoOffer,
 //  MessageActionDialogs, SpamMenuRequest, MessageSelection,
-//  MessageStore, NetworkMonitor, SyncWindow, FetchCoordinator,
+//  MessageStore, MessageSort, NetworkMonitor, SyncWindow, FetchCoordinator,
 //  FolderKey, MailFolder, SpamClassifier, FilterAddress, Log.
 //
 
@@ -64,8 +69,26 @@ final class InboxViewModel {
     /// Wird auch von der Detailansicht für Blockieren und Vertrauen genutzt.
     let spamFilter: SpamFilterService
 
-    /// Listeneinträge der aktuellen Ansicht (ohne Mailinhalt), absteigend nach Datum.
+    /// Listeneinträge der aktuellen Ansicht (ohne Mailinhalt) in der
+    /// gewählten Sortierung (`sort`).
     var messages: [MessageListItem] = []
+    /// Sortierung der gezeigten Ansicht. Eine Änderung sortiert die Liste
+    /// sofort um; ein Wechsel der Ansicht setzt sie auf die Grundstellung.
+    var sort = MessageSort.standard {
+        didSet {
+            guard sort != oldValue else { return }
+            messages = sorted(messages)
+        }
+    }
+    /// `true`, wenn die Zeilen der Ansicht den Empfänger statt des
+    /// Absenders zeigen (Gesendet, Entwürfe) – „Von“ sortiert dann danach.
+    /// Setzt die Ansicht, die die Ordnerrolle kennt.
+    var sortsByRecipients = false {
+        didSet {
+            guard sortsByRecipients != oldValue, sort.field == .person else { return }
+            messages = sorted(messages)
+        }
+    }
     /// `true`, solange ein Abruf vom Server läuft.
     var isLoading = false
     /// Meldung für die Anzeige (Abruf- und Aktionsfehler); `nil` = keine.
@@ -130,6 +153,8 @@ final class InboxViewModel {
             connectionFailed = false
             olderConnectionFailed = false
             endSelection()
+            // Die Sortierung gilt nur für die bisherige Ansicht.
+            sort = .standard
             loadFromCache()
         }
     }
@@ -183,9 +208,9 @@ final class InboxViewModel {
     /// Auswahl alle Posteingänge, die gekennzeichneten Mails oder einen
     /// Ordner – als Listeneinträge ohne Mailinhalt –, entfernt nicht mehr
     /// vorhandene Mails aus der Mehrfachauswahl und liest die
-    /// Filterlisten für die Absenderbilder neu. In Debug-Builds werden
-    /// Laufzeit, Anzahl, Menge der Vorschautexte und die zwischenzeitlichen
-    /// Abfragen der Ansicht ausgegeben.
+    /// Filterlisten für die Absenderbilder neu. Eine abweichende
+    /// Sortierung wird angewandt. In Debug-Builds werden Laufzeit, Anzahl
+    /// und die zwischenzeitlichen Abfragen der Ansicht ausgegeben.
     func loadFromCache() {
         #if DEBUG
         let started = Date()
@@ -207,6 +232,9 @@ final class InboxViewModel {
                 accountID: accountID, folder: path
             )
         }
+        if !sort.isStandard {
+            messages = sorted(messages)
+        }
         if !selectedIDs.isEmpty {
             // Verschwundene Mails fallen aus der Auswahl.
             selectedIDs.formIntersection(messages.map(\.id))
@@ -215,6 +243,20 @@ final class InboxViewModel {
         #if DEBUG
         reportCacheLoad(startedAt: started)
         #endif
+    }
+
+    // MARK: - Sortierung
+
+    /// Sortiert Listeneinträge nach der gewählten Sortierung.
+    ///
+    /// Verarbeitung: Der Cache liefert bereits nach Datum absteigend; nur
+    /// eine abweichende Sortierung oder die Rückkehr zur Grundstellung
+    /// sortiert um.
+    ///
+    /// - Parameter items: Listeneinträge.
+    /// - Returns: Sortierte Einträge.
+    private func sorted(_ items: [MessageListItem]) -> [MessageListItem] {
+        sort.sorted(items, showsRecipients: sortsByRecipients)
     }
 
     // MARK: - Absenderbilder
@@ -257,19 +299,14 @@ final class InboxViewModel {
     #if DEBUG
     /// Messung: gibt die Kennzahlen eines Ladevorgangs aus.
     ///
-    /// Verarbeitung: Die Laufzeit wird vor dem Zählen der Textmenge
-    /// genommen, damit das Zählen sie nicht verfälscht. Gezählt wird, was
-    /// die Liste tatsächlich im Speicher hält: die Vorschautexte.
-    ///
     /// - Parameter startedAt: Beginn des Ladevorgangs.
     private func reportCacheLoad(startedAt: Date) {
         let millis = Int(Date().timeIntervalSince(startedAt) * 1000)
         cacheLoadCount += 1
-        let textBytes = messages.reduce(0) { $0 + ($1.preview?.utf8.count ?? 0) }
         let loadNumber = cacheLoadCount
         let count = messages.count
         let queries = viewQueryCount
-        Log.view.debug("⏱ Liste aus Cache #\(loadNumber): \(count) Mails, \(millis) ms, Vorschautexte \(textBytes / 1024) KB, Ansichtsabfragen seither: \(queries)")
+        Log.view.debug("⏱ Liste aus Cache #\(loadNumber): \(count) Mails, \(millis) ms, Ansichtsabfragen seither: \(queries)")
         viewQueryCount = 0
     }
     #endif

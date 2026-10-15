@@ -3,9 +3,9 @@
 //  MailwerkTests
 //
 //  Zweck: Tests für die Listenabfragen des MessageStore – Listeneinträge
-//  ohne Mailinhalt (samt Empfängern und Spam-Angabe), Vorschau aus dem Textteil, Sortierung, Migration auf
-//  Schema-Stufe 3 (Vorschau nachgetragen, Index angelegt) und weiter bis
-//  zur aktuellen Stufe.
+//  ohne Mailinhalt (samt Empfängern, Größe und Spam-Angabe), Sortierung,
+//  Migration auf Schema-Stufe 3 (Index angelegt) und weiter bis zur
+//  aktuellen Stufe (Vorschau-Spalte entfernt).
 //
 //  Jeder Test arbeitet auf einer eigenen Datei im Temp-Verzeichnis.
 //
@@ -61,7 +61,7 @@ struct MessageStoreListTests {
         #expect(item.date == saved.date)
         #expect(item.isUnread && !item.isFlagged && !item.isAnswered && item.isForwarded)
         #expect(item.hasAttachments)
-        #expect(item.preview == "Text")
+        #expect(item.sizeBytes == 100)
     }
 
     /// Der Listeneintrag übernimmt Empfänger und Spam-Angabe.
@@ -96,33 +96,6 @@ struct MessageStoreListTests {
         #expect(item.recipients.isEmpty)
     }
 
-    /// Die Vorschau besteht aus den ersten 200 Zeichen des Textteils (Zeichen, nicht Bytes).
-    @Test func previewIsFirst200Characters() throws {
-        let store = MessageStore(path: temporaryPath())
-        let long = String(repeating: "ä", count: 250)
-        store.saveMessage(message(uid: 1, text: long))
-
-        let item = try #require(store.folderMessages(accountID: Self.account, folder: "INBOX").first)
-        #expect(item.preview == String(repeating: "ä", count: MessageStore.previewLength))
-    }
-
-    /// Ohne Textteil gibt es keine Vorschau.
-    @Test func noTextMeansNoPreview() throws {
-        let store = MessageStore(path: temporaryPath())
-        store.saveMessage(message(uid: 1, text: nil))
-        let item = try #require(store.folderMessages(accountID: Self.account, folder: "INBOX").first)
-        #expect(item.preview == nil)
-    }
-
-    /// Wird eine Mail erneut gespeichert, wird auch die Vorschau aktualisiert.
-    @Test func resavingUpdatesPreview() throws {
-        let store = MessageStore(path: temporaryPath())
-        store.saveMessage(message(uid: 1, text: "alt"))
-        store.saveMessage(message(uid: 1, text: "neu"))
-        let item = try #require(store.folderMessages(accountID: Self.account, folder: "INBOX").first)
-        #expect(item.preview == "neu")
-    }
-
     /// Alle drei Listenabfragen liefern absteigend nach Datum.
     @Test func listsAreSortedNewestFirst() {
         let store = MessageStore(path: temporaryPath())
@@ -145,8 +118,8 @@ struct MessageStoreListTests {
         #expect(full.htmlBody == "<p>HTML</p>")
     }
 
-    /// Migration 2 → 3: Vorschau wird für vorhandene Mails nachgetragen, Index angelegt, alter Index entfernt.
-    @Test func migrationToVersion3FillsPreviewAndCreatesIndex() throws {
+    /// Migration ab Stufe 2: Index angelegt, alter Index und Vorschau-Spalte entfernt, Mails bleiben.
+    @Test func migrationFromVersion2CreatesIndexAndDropsPreview() throws {
         let path = temporaryPath()
         do {
             let store = MessageStore(path: path)
@@ -158,22 +131,23 @@ struct MessageStoreListTests {
         let store = MessageStore(path: path)
 
         let items = store.folderMessages(accountID: Self.account, folder: "INBOX")
-        #expect(items.first { $0.uid == 1 }?.preview == "Bestand")
-        #expect(items.first { $0.uid == 2 }?.preview == nil)
+        #expect(Set(items.map(\.uid)) == [1, 2])
+        #expect(sqlite(at: path, "SELECT count(*) FROM pragma_table_info('message') WHERE name = 'preview'") == "0")
         #expect(sqlite(at: path, "SELECT count(*) FROM sqlite_master WHERE name = 'idx_message_account_folder_date'") == "1")
         #expect(sqlite(at: path, "SELECT count(*) FROM sqlite_master WHERE name = 'idx_message_account_folder'") == "0")
-        #expect(sqlite(at: path, "PRAGMA user_version") == "6")
+        #expect(sqlite(at: path, "PRAGMA user_version") == "7")
     }
 
     /// Testhilfe: versetzt eine Datenbank in den Zustand von Schema-Stufe 2
-    /// (ohne Spalte `preview`, alter Index, user_version = 2).
+    /// (alter Index, user_version = 2) – mit der Vorschau-Spalte, die
+    /// frühere Stände ab Stufe 3 hatten.
     private func downgradeToVersion2(at path: String) throws {
         var db: OpaquePointer?
         #expect(sqlite3_open(path, &db) == SQLITE_OK)
         defer { sqlite3_close(db) }
         for sql in [
             "DROP INDEX IF EXISTS idx_message_account_folder_date",
-            "ALTER TABLE message DROP COLUMN preview",
+            "ALTER TABLE message ADD COLUMN preview TEXT",
             "CREATE INDEX IF NOT EXISTS idx_message_account_folder ON message(accountID, folder)",
             "PRAGMA user_version = 2"
         ] {

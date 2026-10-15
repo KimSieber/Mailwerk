@@ -19,7 +19,7 @@ struct MessageRowPartyTests {
         MessageListItem(
             id: "x", accountID: UUID(), folder: "INBOX", uid: 1, subject: "Betreff",
             from: from, recipients: recipients, date: nil, isUnread: false, isFlagged: false,
-            isAnswered: false, isForwarded: false, hasAttachments: false, preview: nil,
+            isAnswered: false, isForwarded: false, hasAttachments: false, sizeBytes: 0,
             spamVerdict: nil
         )
     }

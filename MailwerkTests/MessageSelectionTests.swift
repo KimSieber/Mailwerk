@@ -25,7 +25,7 @@ struct MessageSelectionTests {
         MessageListItem(
             id: id, accountID: account, folder: folder, uid: UInt32(id.count), subject: "Betreff",
             from: "a@example.org", recipients: [], date: nil, isUnread: unread, isFlagged: flagged,
-            isAnswered: false, isForwarded: false, hasAttachments: false, preview: nil,
+            isAnswered: false, isForwarded: false, hasAttachments: false, sizeBytes: 0,
             spamVerdict: nil
         )
     }

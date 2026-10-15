@@ -22,9 +22,17 @@
 //  Oberfläche ein Hinweis bereit (`consumeStartupNotice()`).
 //
 //  Listen: Die Abfragen für die Nachrichtenliste liefern
-//  `MessageListItem` ohne Text- und HTML-Inhalt, dafür mit einer kurzen
-//  Vorschau (Spalte `preview`, beim Speichern aus dem Textteil gebildet).
-//  Die vollständige Nachricht liefert `message(id:)`.
+//  `MessageListItem` ohne Text- und HTML-Inhalt. Die vollständige
+//  Nachricht liefert `message(id:)`.
+//
+//  Suchindex: Die FTS5-Tabelle `message_search` (Verfahren „trigram“:
+//  Teilzeichenfolgen ab drei Zeichen, ohne Groß-/Kleinschreibung) hält je
+//  Nachricht Betreff, Personen (Von, An, Cc), Text und Anhangnamen. Ihre
+//  Zeilennummer ist die der Nachricht. Beim Speichern einer Nachricht und
+//  beim Nachtragen der Kopfdaten wird ihr Eintrag neu geschrieben; ein
+//  Trigger löscht ihn mit der Nachricht. Verschieben ändert die
+//  Zeilennummer nicht. Fehlende Einträge (Bestand vor Schema-Stufe 7 oder
+//  ein gescheitertes Schreiben) trägt `indexMissingSearchEntries` nach.
 //
 //  Schema: `createTablesIfNeeded()` legt nur das Basisschema an, alle
 //  späteren Spalten und Tabellen kommen über `migrateIfNeeded()`.
@@ -53,7 +61,7 @@
 //  Abhängigkeiten: SQLite3 (System-Framework), CachedMessage,
 //  CachedAttachment, SpamHeaderVerdict, FolderListing, MailFolder (Name des Posteingangs),
 //  ServerReconciliation (Plan-Typ), FolderSyncState, MessageListItem,
-//  SenderIconRecord, Log.
+//  SenderIconRecord, SearchText (Inhalt des Suchindex), Log.
 //
 
 import Foundation
@@ -127,7 +135,7 @@ final class MessageStore: @unchecked Sendable {
 
     /// Schema-Version, die diese App-Version erwartet. Wird nach den
     /// Migrationen in `PRAGMA user_version` geschrieben.
-    private static let schemaVersion: Int32 = 6
+    private static let schemaVersion: Int32 = 7
 
     /// Explizite Spaltenliste – Reihenfolge entspricht den Indizes in readMessage().
     private static let messageColumns = """
@@ -142,12 +150,9 @@ final class MessageStore: @unchecked Sendable {
     /// Reihenfolge entspricht readListItem().
     private static let listColumns = """
         id, accountID, folder, uid, subject, "from", date, \
-        isUnread, isFlagged, isAnswered, isForwarded, hasAttachments, preview, \
+        isUnread, isFlagged, isAnswered, isForwarded, hasAttachments, totalSizeBytes, \
         toJSON, spamFlag, spamScore
         """
-
-    /// Höchstlänge der Vorschau in Zeichen.
-    static let previewLength = 200
 
     /// Spaltenliste der Anhänge – Reihenfolge entspricht readAttachment().
     private static let attachmentColumns =
@@ -164,6 +169,11 @@ final class MessageStore: @unchecked Sendable {
 
     /// Hinweis für die Oberfläche, solange er nicht abgeholt wurde.
     private var startupNotice: StoreStartupNotice?
+
+    /// `true`, wenn die Tabelle des Suchindex besteht. Fehlt sie (SQLite
+    /// ohne FTS5), wird nicht indiziert und die Suche findet nichts – das
+    /// Speichern von Mails darf daran nie scheitern.
+    private var hasSearchIndex = false
 
     /// Ergebnis eines Öffnungsversuchs.
     private enum OpenResult {
@@ -243,6 +253,7 @@ final class MessageStore: @unchecked Sendable {
         exec("PRAGMA foreign_keys = ON")
         createTablesIfNeeded()
         migrateIfNeeded()
+        hasSearchIndex = tableExists("message_search")
     }
 
     /// Liefert den Hinweis für die Oberfläche genau einmal.
@@ -443,6 +454,9 @@ final class MessageStore: @unchecked Sendable {
         if current < 6 {
             migrateToVersion6()
         }
+        if current < 7 {
+            migrateToVersion7()
+        }
 
         setUserVersion(Self.schemaVersion)
     }
@@ -528,20 +542,13 @@ final class MessageStore: @unchecked Sendable {
         addColumnIfMissing("uidNext", "INTEGER", in: "folder_sync")
     }
 
-    /// Stufe 3: Vorschau-Spalte und Index für die Nachrichtenliste.
+    /// Stufe 3: Index für die Nachrichtenliste.
     ///
-    /// Verarbeitung: Ergänzt die Spalte `preview` und füllt sie für alle
-    /// vorhandenen Nachrichten aus dem Textteil (einmalig, beim ersten
-    /// Start nach dem Update). Legt den Index auf Postfach, Ordner und
-    /// Datum an, damit die Liste ohne Umweg nach Datum sortiert; der
-    /// bisherige Index auf Postfach und Ordner ist darin enthalten und
-    /// entfällt.
+    /// Verarbeitung: Legt den Index auf Postfach, Ordner und Datum an,
+    /// damit die Liste ohne Umweg nach Datum sortiert; der bisherige Index
+    /// auf Postfach und Ordner ist darin enthalten und entfällt. (Die
+    /// früher hier angelegte Vorschau-Spalte entfernt Stufe 7.)
     private func migrateToVersion3() {
-        addColumnIfMissing("preview", "TEXT")
-        exec("""
-            UPDATE message SET preview = substr(textBody, 1, \(Self.previewLength))
-            WHERE textBody IS NOT NULL
-            """)
         exec("""
             CREATE INDEX IF NOT EXISTS idx_message_account_folder_date
             ON message(accountID, folder, date DESC)
@@ -582,6 +589,32 @@ final class MessageStore: @unchecked Sendable {
     private func migrateToVersion6() {
         addColumnIfMissing("contentID", "TEXT", in: "attachment")
         addColumnIfMissing("isInline", "INTEGER NOT NULL DEFAULT 0", in: "attachment")
+    }
+
+    /// Stufe 7: Suchindex; die Vorschau-Spalte entfällt.
+    ///
+    /// Verarbeitung: Legt die FTS5-Tabelle `message_search` (Verfahren
+    /// „trigram“) und den Trigger an, der den Eintrag mit der Nachricht
+    /// löscht. Gefüllt wird der Index nicht hier, sondern schrittweise über
+    /// `indexMissingSearchEntries` – so bleibt der Start nach dem Update
+    /// kurz. Die nicht mehr genutzte Spalte `preview` wird entfernt.
+    private func migrateToVersion7() {
+        // Der Trigger nur mit Tabelle – sonst scheiterte jedes Löschen.
+        let created = exec("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS message_search
+            USING fts5(subject, people, body, attachments, tokenize = 'trigram')
+            """)
+        if created {
+            exec("""
+                CREATE TRIGGER IF NOT EXISTS message_search_delete
+                AFTER DELETE ON message BEGIN
+                    DELETE FROM message_search WHERE rowid = old.rowid;
+                END
+                """)
+        }
+        if columnExists("preview", in: "message") {
+            exec("ALTER TABLE message DROP COLUMN preview")
+        }
     }
 
     /// Schreibt die Kennungen von "<account>-<uid>" auf "<account>-INBOX-<uid>" um.
@@ -640,6 +673,17 @@ final class MessageStore: @unchecked Sendable {
         return exec("ALTER TABLE \(table) ADD COLUMN \(column) \(definition)")
     }
 
+    /// Prüft, ob eine Tabelle (auch eine virtuelle) existiert.
+    ///
+    /// - Parameter table: Tabellenname.
+    /// - Returns: `true`, wenn die Tabelle vorhanden ist.
+    private func tableExists(_ table: String) -> Bool {
+        guard let stmt = prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?") else { return false }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, table)
+        return sqlite3_step(stmt) == SQLITE_ROW
+    }
+
     /// Prüft, ob eine Spalte in einer Tabelle existiert.
     ///
     /// - Parameters:
@@ -666,15 +710,20 @@ final class MessageStore: @unchecked Sendable {
     ///
     /// - Parameter m: Zu speichernde Nachricht.
     func saveMessage(_ m: CachedMessage) {
-        logged("saveMessage \(m.id)") { try insertMessage(m) }
+        logged("saveMessage \(m.id)") {
+            try transaction {
+                try insertMessage(m)
+                try writeSearchEntry(messageID: m.id)
+            }
+        }
     }
 
     /// Speichert eine Nachricht und ihre Anhänge in einer Transaktion.
     ///
-    /// Verarbeitung: Nachricht und alle Anhänge werden gemeinsam
-    /// geschrieben. Schlägt ein Teil fehl, wird alles zurückgerollt –
-    /// es entsteht weder eine Nachricht ohne ihre Anhänge noch ein
-    /// verwaister Anhang.
+    /// Verarbeitung: Nachricht, alle Anhänge und der Eintrag im Suchindex
+    /// werden gemeinsam geschrieben. Schlägt ein Teil fehl, wird alles
+    /// zurückgerollt – es entsteht weder eine Nachricht ohne ihre Anhänge
+    /// noch ein verwaister Anhang.
     ///
     /// - Parameters:
     ///   - message: Zu speichernde Nachricht.
@@ -688,6 +737,7 @@ final class MessageStore: @unchecked Sendable {
                 for attachment in attachments {
                     try insertAttachment(attachment)
                 }
+                try writeSearchEntry(messageID: message.id)
             }
         }
     }
@@ -696,9 +746,8 @@ final class MessageStore: @unchecked Sendable {
     ///
     /// Verarbeitung: `ON CONFLICT … DO UPDATE` statt `INSERT OR REPLACE`,
     /// weil letzteres intern DELETE + INSERT ist und damit über
-    /// ON DELETE CASCADE die Anhänge löschen würde. Die Vorschau bildet
-    /// SQLite aus dem Textteil (`substr(?15, …)` verweist auf denselben
-    /// Wert wie Platzhalter 15, `textBody`) – dieselbe Regel wie in der Migration.
+    /// ON DELETE CASCADE die Anhänge löschen würde. Den Suchindex schreibt
+    /// der Aufrufer (`writeSearchEntry`), wenn auch die Anhänge stehen.
     /// Platzhalter: 1–24 Spalten bis `folder`, 25–26 Spam-Angabe,
     /// 27 Header-Version.
     ///
@@ -707,9 +756,8 @@ final class MessageStore: @unchecked Sendable {
     private func insertMessage(_ m: CachedMessage) throws {
         let sql = """
             INSERT INTO message
-            (\(Self.messageColumns), headersVersion, preview)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
-                    substr(?15, 1, \(Self.previewLength)))
+            (\(Self.messageColumns), headersVersion)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 isUnread = excluded.isUnread,
                 isFlagged = excluded.isFlagged,
@@ -728,8 +776,7 @@ final class MessageStore: @unchecked Sendable {
                 rfcReferences = excluded.rfcReferences,
                 spamFlag = excluded.spamFlag,
                 spamScore = excluded.spamScore,
-                headersVersion = excluded.headersVersion,
-                preview = excluded.preview
+                headersVersion = excluded.headersVersion
             """
         try execute(sql, context: "insertMessage \(m.id)") { stmt in
             bind(stmt, 1, m.id)
@@ -966,11 +1013,15 @@ final class MessageStore: @unchecked Sendable {
             WHERE id = ?
             """
         logged("updateHeaders \(messageID)") {
-            try execute(sql, context: "updateHeaders \(messageID)") { stmt in
-                bindHeaders(stmt, startingAt: 1, headers)                    // 1–6
-                bindSpamVerdict(stmt, startingAt: 7, headers.spamVerdict)  // 7–8
-                sqlite3_bind_int(stmt, 9, Int32(Self.currentHeadersVersion))
-                bind(stmt, 10, messageID)
+            try transaction {
+                try execute(sql, context: "updateHeaders \(messageID)") { stmt in
+                    bindHeaders(stmt, startingAt: 1, headers)                    // 1–6
+                    bindSpamVerdict(stmt, startingAt: 7, headers.spamVerdict)  // 7–8
+                    sqlite3_bind_int(stmt, 9, Int32(Self.currentHeadersVersion))
+                    bind(stmt, 10, messageID)
+                }
+                // An und Cc gehören zum Suchindex.
+                try writeSearchEntry(messageID: messageID)
             }
         }
     }
@@ -1521,6 +1572,98 @@ final class MessageStore: @unchecked Sendable {
         return ok ? newID : nil
     }
 
+    // MARK: - Suchindex
+
+    /// Schreibt den Eintrag einer Nachricht im Suchindex neu.
+    ///
+    /// Verarbeitung: Liest Betreff, Absender, An, Cc, Text und HTML der
+    /// Nachricht sowie die Namen ihrer echten Anhänge (ohne eingebettete
+    /// Bilder) aus der Ablage, bereitet sie über `SearchText` auf und
+    /// ersetzt den Eintrag mit der Zeilennummer der Nachricht. Fehlt die
+    /// Nachricht, passiert nichts.
+    ///
+    /// - Parameter messageID: Cache-ID der Nachricht.
+    /// - Throws: `StoreError`, wenn Lesen oder Schreiben fehlschlägt.
+    private func writeSearchEntry(messageID: String) throws {
+        guard hasSearchIndex else { return }
+        let readSQL = """
+            SELECT rowid, subject, "from", toJSON, ccJSON, textBody, htmlBody,
+                   (SELECT group_concat(filename, char(10)) FROM attachment
+                    WHERE messageID = message.id AND isInline = 0)
+            FROM message WHERE id = ?
+            """
+        guard let stmt = prepare(readSQL) else {
+            throw StoreError.prepare(context: "writeSearchEntry \(messageID)", message: errMsg)
+        }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, messageID)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return }
+
+        let rowID = sqlite3_column_int64(stmt, 0)
+        let entry = SearchText.Entry(
+            subject: str(stmt, 1),
+            people: SearchText.people(
+                from: str(stmt, 2),
+                to: decodeList(optStr(stmt, 3)),
+                cc: decodeList(optStr(stmt, 4))
+            ),
+            body: SearchText.body(text: optStr(stmt, 5), html: optStr(stmt, 6)),
+            attachments: optStr(stmt, 7) ?? ""
+        )
+
+        try execute("DELETE FROM message_search WHERE rowid = ?",
+                    context: "writeSearchEntry/delete \(messageID)") { s in
+            sqlite3_bind_int64(s, 1, rowID)
+        }
+        try execute("""
+            INSERT INTO message_search (rowid, subject, people, body, attachments)
+            VALUES (?, ?, ?, ?, ?)
+            """, context: "writeSearchEntry/insert \(messageID)") { s in
+            sqlite3_bind_int64(s, 1, rowID)
+            bind(s, 2, entry.subject)
+            bind(s, 3, entry.people)
+            bind(s, 4, entry.body)
+            bind(s, 5, entry.attachments)
+        }
+    }
+
+    /// Trägt fehlende Einträge im Suchindex nach.
+    ///
+    /// Verarbeitung: Sucht bis zu `limit` Nachrichten ohne Eintrag (die
+    /// neuesten zuerst, damit aktuelle Mails schnell auffindbar sind) und
+    /// schreibt ihre Einträge in einer Transaktion. Der Aufrufer wiederholt,
+    /// bis 0 zurückkommt (`SearchIndexBuilder`). Scheitert ein Paket, wird
+    /// es zurückgerollt und 0 gemeldet, damit keine Endlosschleife entsteht.
+    ///
+    /// - Parameter limit: Höchstzahl der Nachrichten je Aufruf.
+    /// - Returns: Anzahl der nachgetragenen Nachrichten.
+    @discardableResult
+    func indexMissingSearchEntries(limit: Int) -> Int {
+        guard hasSearchIndex else { return 0 }
+        let sql = """
+            SELECT id FROM message
+            WHERE rowid NOT IN (SELECT rowid FROM message_search)
+            ORDER BY date DESC LIMIT ?
+            """
+        guard let stmt = prepare(sql) else { return 0 }
+        sqlite3_bind_int(stmt, 1, Int32(limit))
+        var ids: [String] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            ids.append(str(stmt, 0))
+        }
+        sqlite3_finalize(stmt)
+        guard !ids.isEmpty else { return 0 }
+
+        let ok = logged("indexMissingSearchEntries") {
+            try transaction {
+                for id in ids {
+                    try writeSearchEntry(messageID: id)
+                }
+            }
+        }
+        return ok ? ids.count : 0
+    }
+
     // MARK: - Transaktionen und Schreib-Helfer
 
     /// Führt einen Block in einer Transaktion aus.
@@ -1681,7 +1824,7 @@ final class MessageStore: @unchecked Sendable {
             isAnswered: sqlite3_column_int(s, 9) != 0,
             isForwarded: sqlite3_column_int(s, 10) != 0,
             hasAttachments: sqlite3_column_int(s, 11) != 0,
-            preview: optStr(s, 12),
+            sizeBytes: Int(sqlite3_column_int64(s, 12)),
             spamVerdict: readSpamVerdict(s, startingAt: 14)
         )
     }
