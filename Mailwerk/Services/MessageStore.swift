@@ -61,7 +61,7 @@
 //  Abhängigkeiten: SQLite3 (System-Framework), CachedMessage,
 //  CachedAttachment, SpamHeaderVerdict, FolderListing, MailFolder (Name des Posteingangs),
 //  ServerReconciliation (Plan-Typ), FolderSyncState, MessageListItem,
-//  SenderIconRecord, SearchText (Inhalt des Suchindex), Log.
+//  SenderIconRecord, SearchText (Inhalt des Suchindex), SearchScope, Log.
 //
 
 import Foundation
@@ -1662,6 +1662,67 @@ final class MessageStore: @unchecked Sendable {
             }
         }
         return ok ? ids.count : 0
+    }
+
+    // MARK: - Suche
+
+    /// Cache-IDs der Mails im Suchbereich, die einen Suchausdruck erfüllen.
+    ///
+    /// Verarbeitung: Fragt den Suchindex mit `MATCH` und schränkt auf
+    /// Postfächer, Ordner und ggf. Kennzeichnung ein. Ohne Suchindex ist
+    /// das Ergebnis leer.
+    ///
+    /// - Parameters:
+    ///   - scope: Suchbereich.
+    ///   - match: FTS5-Ausdruck (`SearchText.matchExpression`).
+    /// - Returns: Cache-IDs der Treffer.
+    func searchMessageIDs(in scope: SearchScope, match: String) -> Set<String> {
+        guard hasSearchIndex, !scope.accountIDs.isEmpty else { return [] }
+        let sql = """
+            SELECT id FROM message
+            WHERE accountID IN (\(Self.placeholders(scope.accountIDs.count))) AND folder = ?
+            \(scope.flaggedOnly ? "AND isFlagged = 1" : "")
+            AND rowid IN (SELECT rowid FROM message_search WHERE message_search MATCH ?)
+            """
+        guard let stmt = prepare(sql) else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        let next = bind(stmt, accountIDs: scope.accountIDs)
+        bind(stmt, next, scope.folder)
+        bind(stmt, next + 1, match)
+        var ids = Set<String>()
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            ids.insert(str(stmt, 0))
+        }
+        return ids
+    }
+
+    /// Alle Adressen (Von, An, Cc) der Mails im Suchbereich – Quelle der
+    /// Namensvorschläge.
+    ///
+    /// - Parameter scope: Suchbereich.
+    /// - Returns: Formatierte Adressen ohne Doppelte, ungeordnet.
+    func participantAddresses(in scope: SearchScope) -> [String] {
+        guard !scope.accountIDs.isEmpty else { return [] }
+        let sql = """
+            SELECT "from", toJSON, ccJSON FROM message
+            WHERE accountID IN (\(Self.placeholders(scope.accountIDs.count))) AND folder = ?
+            \(scope.flaggedOnly ? "AND isFlagged = 1" : "")
+            """
+        guard let stmt = prepare(sql) else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        let next = bind(stmt, accountIDs: scope.accountIDs)
+        bind(stmt, next, scope.folder)
+        var addresses = Set<String>()
+        // Gleiche JSON-Listen kommen oft vor (z. B. immer „An: ich“) –
+        // jede nur einmal entschlüsseln.
+        var decoded = Set<String>()
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            addresses.insert(str(stmt, 0))
+            for json in [optStr(stmt, 1), optStr(stmt, 2)].compactMap({ $0 }) where decoded.insert(json).inserted {
+                addresses.formUnion(decodeList(json))
+            }
+        }
+        return Array(addresses)
     }
 
     // MARK: - Transaktionen und Schreib-Helfer

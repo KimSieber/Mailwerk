@@ -17,6 +17,10 @@
 //  der Auswahl; ein Wechsel der Ansicht und jede Sammelaktion beenden den
 //  Auswahlmodus.
 //
+//  Suche: Während einer Suche zeigt die Liste nur die Treffer
+//  (`searchFilter`, Cache-IDs aus der lokalen Suche). Liste, Auswahl und
+//  „Alle auswählen“ arbeiten mit `visibleMessages`.
+//
 //  Sortierung: Eine vom Standard („Datum, absteigend“) abweichende
 //  Sortierung gilt nur für die gezeigte Ansicht. Ein Wechsel der Ansicht
 //  setzt sie zurück; gespeichert wird sie nicht. Öffnen einer Mail,
@@ -71,7 +75,26 @@ final class InboxViewModel {
 
     /// Listeneinträge der aktuellen Ansicht (ohne Mailinhalt) in der
     /// gewählten Sortierung (`sort`).
-    var messages: [MessageListItem] = []
+    var messages: [MessageListItem] = [] {
+        didSet { updateVisibleMessages() }
+    }
+    /// Cache-IDs der Suchtreffer; `nil` = keine Suche, alle Mails sichtbar.
+    var searchFilter: Set<String>? {
+        didSet {
+            guard searchFilter != oldValue else { return }
+            updateVisibleMessages()
+            if let searchFilter, !selectedIDs.isEmpty {
+                // Nicht mehr sichtbare Mails fallen aus der Auswahl.
+                selectedIDs.formIntersection(searchFilter)
+            }
+        }
+    }
+    /// Die in der Liste gezeigten Einträge: alle bzw. während einer Suche
+    /// nur die Treffer, in der gewählten Sortierung.
+    private(set) var visibleMessages: [MessageListItem] = []
+    /// Zählt das Neuladen der Liste aus dem Cache; die Suche läuft daraufhin
+    /// erneut (neue oder geänderte Mails).
+    private(set) var cacheGeneration = 0
     /// Sortierung der gezeigten Ansicht. Eine Änderung sortiert die Liste
     /// sofort um; ein Wechsel der Ansicht setzt sie auf die Grundstellung.
     var sort = MessageSort.standard {
@@ -240,9 +263,22 @@ final class InboxViewModel {
             selectedIDs.formIntersection(messages.map(\.id))
         }
         reloadFilterLists()
+        cacheGeneration += 1
         #if DEBUG
         reportCacheLoad(startedAt: started)
         #endif
+    }
+
+    // MARK: - Sichtbare Einträge
+
+    /// Bildet die gezeigten Einträge neu: alle Mails bzw. nur die Treffer
+    /// der Suche, Reihenfolge wie in `messages`.
+    private func updateVisibleMessages() {
+        if let searchFilter {
+            visibleMessages = messages.filter { searchFilter.contains($0.id) }
+        } else {
+            visibleMessages = messages
+        }
     }
 
     // MARK: - Sortierung
@@ -926,12 +962,12 @@ final class InboxViewModel {
 
     /// Ausgewählte Mails in der Reihenfolge der Liste.
     var selectedItems: [MessageListItem] {
-        messages.filter { selectedIDs.contains($0.id) }
+        visibleMessages.filter { selectedIDs.contains($0.id) }
     }
 
     /// `true`, wenn alle Mails der Liste ausgewählt sind.
     var isAllSelected: Bool {
-        !messages.isEmpty && selectedIDs.count == messages.count
+        !visibleMessages.isEmpty && visibleMessages.allSatisfy { selectedIDs.contains($0.id) }
     }
 
     /// Beginnt den Auswahlmodus mit einer ausgewählten Mail.
@@ -964,7 +1000,7 @@ final class InboxViewModel {
     /// Wählt alle Mails der Liste aus bzw. hebt die Auswahl auf, wenn
     /// schon alle ausgewählt sind.
     func toggleSelectAll() {
-        selectedIDs = isAllSelected ? [] : Set(messages.map(\.id))
+        selectedIDs = isAllSelected ? [] : Set(visibleMessages.map(\.id))
     }
 
     /// Kennzeichnet die Auswahl bzw. entfernt die Kennzeichnung

@@ -1,0 +1,241 @@
+//
+//  SearchViewModel.swift
+//  Mailwerk
+//
+//  Zweck: Zustand und Abläufe der Suche in der Nachrichtenliste.
+//  - Lokale Suche im Cache: Teilzeichenfolge ab drei Zeichen (Leerzeichen
+//    zählen mit), ohne Groß-/Kleinschreibung, über Betreff, Personen, Text
+//    und Anhangnamen. Läuft bei jeder Eingabe neu, auch offline.
+//  - Namensvorschläge ab dem ersten Zeichen aus den Adressen des
+//    Suchbereichs; eine gewählte Person wird zur Marke (Mails von und an
+//    diese Adresse) und hebt die Mindestlänge auf.
+//  - Serversuche auf Knopfdruck: im gezeigten Ordner bzw. nacheinander in
+//    den Posteingängen; höchstens 100 Treffer je Ordner, nur Treffer, die
+//    nicht im Cache liegen. Eine geänderte Eingabe verwirft das Ergebnis.
+//
+//  Gesucht wird immer in der gezeigten Ansicht (`SearchScope`). Die
+//  lokale Suche liefert nur Cache-IDs; die Liste filtert damit ihre
+//  eigenen Einträge (`InboxViewModel.searchFilter`) – so gelten
+//  Sortierung, Aktionen und Auswahl unverändert auch für Treffer.
+//
+//  Abgrenzung: Darstellung in InboxView; Suchindex im MessageStore;
+//  Serversuche im MailFetchService.
+//
+//  Abhängigkeiten: AccountStore (Zugangsdaten), MessageStore, SearchText,
+//  SearchScope, SearchPerson, MailFetchService, MailboxSelection, Log.
+//
+
+import Foundation
+import Observation
+import os
+
+/// Zustand und Abläufe der Suche.
+@Observable
+final class SearchViewModel {
+
+    /// Stand der Serversuche.
+    enum ServerState: Equatable {
+        /// Noch nicht gesucht (oder Eingabe seither geändert).
+        case idle
+        /// Suche läuft.
+        case searching
+        /// Fertig. `hasMore`: Es gab mehr Treffer als gezeigt;
+        /// `unreachable`: Anzahl der Postfächer ohne Verbindung.
+        case done(hasMore: Bool, unreachable: Int)
+    }
+
+    /// Quelle für Zugangsdaten.
+    private let accountStore: AccountStore
+
+    /// Suchfeld ist geöffnet.
+    var isPresented = false {
+        didSet {
+            guard isPresented != oldValue else { return }
+            if isPresented {
+                loadPeople()
+            } else {
+                clear()
+            }
+        }
+    }
+    /// Eingabe im Suchfeld.
+    var text = "" {
+        didSet {
+            guard text != oldValue else { return }
+            queryChanged()
+        }
+    }
+    /// Gewählte Person als Marke im Suchfeld (höchstens eine).
+    var tokens: [SearchPerson] = [] {
+        didSet {
+            guard tokens != oldValue else { return }
+            // Eine zweite Marke ersetzt die erste.
+            if tokens.count > 1, let last = tokens.last {
+                tokens = [last]
+                return
+            }
+            if !tokens.isEmpty, !text.isEmpty {
+                // Der getippte Name ist mit der Marke erledigt.
+                text = ""
+            }
+            queryChanged()
+        }
+    }
+
+    /// Suchbereich (gezeigte Ansicht).
+    private(set) var scope: SearchScope?
+    /// Personen des Suchbereichs für die Vorschläge.
+    private(set) var people: [SearchPerson] = []
+    /// Cache-IDs der lokalen Treffer; `nil` = keine Suche aktiv (Liste
+    /// ungefiltert).
+    private(set) var matchingIDs: Set<String>?
+    /// Stand der Serversuche.
+    private(set) var serverState = ServerState.idle
+    /// Treffer vom Server, die nicht im Cache liegen, neueste zuerst.
+    private(set) var serverHits: [MessageListItem] = []
+
+    /// Laufende Serversuche; wird bei geänderter Eingabe abgebrochen.
+    @ObservationIgnored private var serverTask: Task<Void, Never>?
+
+    /// Legt die Suche an.
+    ///
+    /// - Parameter accountStore: Quelle für Zugangsdaten.
+    init(accountStore: AccountStore) {
+        self.accountStore = accountStore
+    }
+
+    // MARK: - Abgeleitete Werte
+
+    /// Adresse der gewählten Person; `nil` = keine.
+    var address: String? { tokens.first?.address }
+
+    /// Suchausdruck für den Index; `nil`, solange die Eingabe zu kurz und
+    /// keine Person gewählt ist.
+    var matchExpression: String? {
+        SearchText.matchExpression(query: text, address: address)
+    }
+
+    /// `true`, wenn die Liste gerade Treffer statt aller Mails zeigt.
+    var isFiltering: Bool { matchingIDs != nil }
+
+    /// Namensvorschläge zur Eingabe; leer, sobald eine Person gewählt ist.
+    var suggestions: [SearchPerson] {
+        guard tokens.isEmpty else { return [] }
+        return SearchPerson.suggestions(from: people, matching: text)
+    }
+
+    /// `true`, wenn „Auf dem Server weitersuchen“ angeboten wird.
+    var offersServerSearch: Bool {
+        isFiltering && (scope?.allowsServerSearch ?? false)
+    }
+
+    // MARK: - Ablauf
+
+    /// Setzt den Suchbereich passend zur gezeigten Ansicht.
+    ///
+    /// Verarbeitung: Ein anderer Bereich beendet eine laufende Suche – die
+    /// Suche gilt immer nur für die Ansicht, in der sie begonnen wurde.
+    ///
+    /// - Parameters:
+    ///   - selection: Gezeigte Ansicht.
+    ///   - fetchingAccountIDs: Postfächer mit eingeschaltetem Abruf.
+    func updateScope(for selection: MailboxSelection, fetchingAccountIDs: [UUID]) {
+        let newScope = SearchScope.make(for: selection, fetchingAccountIDs: fetchingAccountIDs)
+        guard newScope != scope else { return }
+        let hadScope = scope != nil
+        scope = newScope
+        if hadScope && isPresented {
+            isPresented = false
+        }
+    }
+
+    /// Führt die lokale Suche erneut aus, z. B. nachdem sich der Cache
+    /// geändert hat (Abruf, Löschen, geladener Servertreffer).
+    func refreshLocal() {
+        guard let scope, let expression = matchExpression else {
+            matchingIDs = nil
+            return
+        }
+        matchingIDs = MessageStore.shared.searchMessageIDs(in: scope, match: expression)
+    }
+
+    /// Nimmt einen Servertreffer aus der Liste, nachdem er geladen wurde
+    /// (er ist jetzt ein lokaler Treffer).
+    ///
+    /// - Parameter id: Cache-ID des Treffers.
+    func removeServerHit(_ id: String) {
+        serverHits.removeAll { $0.id == id }
+    }
+
+    /// Sucht auf dem Server.
+    ///
+    /// Verarbeitung: Nacheinander je Postfach des Bereichs (eine Verbindung
+    /// nach der anderen). Ein nicht erreichbares Postfach wird gezählt, die
+    /// übrigen werden trotzdem durchsucht. Die Treffer aller Postfächer
+    /// stehen gemeinsam nach Datum (neueste zuerst). Ändert sich die
+    /// Eingabe währenddessen, wird das Ergebnis verworfen.
+    func searchServer() {
+        guard let scope, scope.allowsServerSearch, matchExpression != nil else { return }
+        let query = text
+        let address = address
+        let expression = matchExpression
+        serverTask?.cancel()
+        serverState = .searching
+        serverHits = []
+        serverTask = Task {
+            var hits: [MessageListItem] = []
+            var hasMore = false
+            var unreachable = 0
+            for accountID in scope.accountIDs {
+                if Task.isCancelled { return }
+                do {
+                    let credentials = try accountStore.credentials(for: accountID)
+                    let result = try await MailFetchService.searchOnServer(
+                        credentials, folder: scope.folder, query: query, address: address
+                    )
+                    hits += result.hits
+                    hasMore = hasMore || result.hasMore
+                } catch {
+                    unreachable += 1
+                    Log.fetch.error("🔎 Serversuche fehlgeschlagen: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+            guard !Task.isCancelled, expression == matchExpression else { return }
+            serverHits = hits.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+            serverState = .done(hasMore: hasMore, unreachable: unreachable)
+        }
+    }
+
+    // MARK: - Intern
+
+    /// Reagiert auf eine geänderte Eingabe oder Marke: lokale Suche neu,
+    /// Serverergebnis verwerfen.
+    private func queryChanged() {
+        serverTask?.cancel()
+        serverTask = nil
+        serverState = .idle
+        serverHits = []
+        refreshLocal()
+    }
+
+    /// Liest die Personen des Suchbereichs für die Vorschläge.
+    private func loadPeople() {
+        guard let scope else {
+            people = []
+            return
+        }
+        people = SearchPerson.collect(from: MessageStore.shared.participantAddresses(in: scope))
+    }
+
+    /// Setzt die Suche zurück (Suchfeld geschlossen).
+    private func clear() {
+        serverTask?.cancel()
+        serverTask = nil
+        text = ""
+        tokens = []
+        people = []
+        matchingIDs = nil
+        serverState = .idle
+        serverHits = []
+    }
+}

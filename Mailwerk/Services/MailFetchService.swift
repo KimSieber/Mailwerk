@@ -4,10 +4,15 @@
 //
 //  Zweck: Holt Mails von IMAP-Servern und legt sie im lokalen Cache ab.
 //
-//  Drei Zugangspunkte:
+//  Zugangspunkte:
 //  - `refreshAndCache`: Abruf der letzten 30 Tage (plus gekennzeichnete
 //    im Posteingang) mit anschließendem Abgleich.
 //  - `fetchOlder`: Zeitfenster blockweise zurückschieben.
+//  - `searchOnServer`: Suche in einem Ordner auf dem Server; liefert nur
+//    Kopfdaten der Treffer, die nicht im Cache liegen (nichts wird
+//    gespeichert).
+//  - `loadMessage`: lädt eine einzelne Mail (z. B. einen Suchtreffer vom
+//    Server) und speichert sie im Cache.
 //  - `reconcile` (privat): Vergleicht den ganzen Ordner mit dem Cache,
 //    entfernt Gelöschtes und aktualisiert Flags.
 //
@@ -29,7 +34,10 @@
 //  MessageContentPlan). So fließt jeder Teil höchstens einmal.
 //
 //  Suche: Immer ohne Server-Sortierung (SORT fehlt z. B. bei Gmail); die
-//  Reihenfolge ordnet `searchNewestFirst` selbst.
+//  Reihenfolge ordnet `searchNewestFirst` selbst. Die Serversuche nutzt
+//  TEXT (Kopf und Inhalt, damit auch Betreff und Anhangnamen) bzw. für
+//  eine gewählte Person FROM/TO/CC; sie wählt den Ordner nur lesend aus
+//  (EXAMINE).
 //
 //  Spam-Angabe: Die Kopfdaten-Abfrage holt die Spam-Kopfzeilen des
 //  Servers (X-Spam, X-Spam-Status) gleich mit; ihre Einstufung wird mit
@@ -46,7 +54,8 @@
 //  MessageStore (Cache), ServerReconciliation (Abgleichslogik),
 //  SyncStatePlanner (Sync-Zustand), SyncWindow (Zeitfenster),
 //  MessageContentPlan (zu ladende Teile), FlagState (Flags), MailFolder,
-//  SpamHeaderParser (Spam-Angabe), Log.
+//  SpamHeaderParser (Spam-Angabe), SearchText (Mindestlänge der Suche),
+//  MessageListItem (Suchtreffer), Log.
 //
 
 import Foundation
@@ -273,6 +282,148 @@ enum MailFetchService {
         return state
     }
 
+
+    // MARK: - Suche auf dem Server
+
+    /// Höchstzahl der Treffer je Ordner, die eine Serversuche zeigt.
+    static let serverSearchLimit = 100
+
+    /// Höchstzahl der Treffer, deren Kopfdaten geholt werden. UIDs sagen
+    /// nichts über das Datum (z. B. nach einem Umzug per IMAPSYNC); die
+    /// neuesten `serverSearchLimit` Treffer werden deshalb aus den Kopfdaten
+    /// der höchsten UIDs nach Datum bestimmt.
+    private static let serverSearchHeaderLimit = 300
+
+    /// Ergebnis einer Serversuche in einem Ordner.
+    struct ServerSearchResult {
+        /// Treffer, die nicht im Cache liegen, neueste zuerst.
+        let hits: [MessageListItem]
+        /// `true`, wenn es mehr Treffer gab als gezeigt werden.
+        let hasMore: Bool
+    }
+
+    /// Sucht in einem Ordner auf dem Server.
+    ///
+    /// Verarbeitung: Wählt den Ordner nur lesend aus (EXAMINE) und sucht
+    /// mit TEXT (Eingabe ab drei Zeichen, Leerzeichen zählen mit) und für
+    /// eine gewählte Person mit FROM/TO/CC – beides zusammen muss zutreffen.
+    /// Treffer, die schon im Cache liegen, entfallen (die findet die lokale
+    /// Suche). Von den übrigen werden für die höchsten
+    /// `serverSearchHeaderLimit` UIDs die Kopfdaten geholt (in Paketen zu
+    /// `headerBatchSize`, mit BODY.PEEK – nichts wird als gelesen markiert)
+    /// und die neuesten `serverSearchLimit` als Listeneinträge geliefert.
+    /// Gespeichert wird nichts; das geschieht erst beim Öffnen
+    /// (`loadMessage`). Anhänge sind vor dem Öffnen nicht bekannt.
+    ///
+    /// - Parameters:
+    ///   - credentials: Postfach und Passwort.
+    ///   - folder: IMAP-Ordner.
+    ///   - query: Eingabe im Suchfeld.
+    ///   - address: Adresse einer gewählten Person; `nil` = keine.
+    /// - Returns: Treffer außerhalb des Caches.
+    /// - Throws: Verbindungs- oder IMAP-Fehler.
+    static func searchOnServer(
+        _ credentials: MailCredentials,
+        folder: String,
+        query: String,
+        address: String?
+    ) async throws -> ServerSearchResult {
+        var criteria: [SwiftMail.SearchCriteria] = []
+        if let address, !address.isEmpty {
+            criteria.append(.or(.from(address), .or(.to(address), .cc(address))))
+        }
+        if SearchText.isSearchable(query) {
+            criteria.append(.text(query))
+        }
+        guard !criteria.isEmpty else { return ServerSearchResult(hits: [], hasMore: false) }
+
+        let account = credentials.account
+        return try await MailSession.withIMAP(credentials) { server -> ServerSearchResult in
+            _ = try await server.examineMailbox(folder)
+            let uids = try await searchNewestFirst(
+                on: server, criteria: criteria, calendar: SyncWindow.calendar
+            )
+            let cached = MessageStore.shared.cachedUIDs(accountID: account.id, folder: folder)
+            let missing = uids.filter { !cached.contains($0.value) }
+            let candidates = Array(missing.prefix(serverSearchHeaderLimit))
+
+            var infos: [MessageInfo] = []
+            for start in stride(from: 0, to: candidates.count, by: headerBatchSize) {
+                let batch = Array(candidates[start..<min(start + headerBatchSize, candidates.count)])
+                infos += try await server.fetchMessageInfosBulk(
+                    using: UIDSet(batch),
+                    options: .slim,
+                    headerFields: extraHeaderFields
+                )
+            }
+            let hits = infos
+                .compactMap { listItem(from: $0, account: account, folder: folder) }
+                .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+            Log.fetch.info("🔎 [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] Serversuche: \(uids.count) Treffer, \(missing.count) nicht im Cache, \(min(hits.count, serverSearchLimit)) gezeigt")
+            return ServerSearchResult(
+                hits: Array(hits.prefix(serverSearchLimit)),
+                hasMore: missing.count > serverSearchLimit
+            )
+        }
+    }
+
+    /// Listeneintrag aus den Kopfdaten einer Mail, die nicht im Cache liegt.
+    ///
+    /// Verarbeitung: Dieselben Regeln wie beim Speichern (Ersatztexte,
+    /// Datum aus dem Kopf, sonst Eingangsdatum). Die Cache-ID ist die, die
+    /// die Mail beim Laden erhält.
+    ///
+    /// - Parameters:
+    ///   - info: Kopfdaten.
+    ///   - account: Postfach.
+    ///   - folder: IMAP-Ordner.
+    /// - Returns: Listeneintrag; `nil` ohne UID.
+    private static func listItem(from info: MessageInfo, account: MailAccount, folder: String) -> MessageListItem? {
+        guard let uid = info.uid?.value else { return nil }
+        let flags = FlagState(info.flags)
+        let headers = headers(from: info)
+        return MessageListItem(
+            id: CachedMessage.makeID(accountID: account.id, folder: folder, uid: uid),
+            accountID: account.id,
+            folder: folder,
+            uid: uid,
+            subject: info.subject ?? "(kein Betreff)",
+            from: info.from ?? "(unbekannt)",
+            recipients: headers.toList,
+            date: info.date ?? info.internalDate,
+            isUnread: flags.isUnread,
+            isFlagged: flags.isFlagged,
+            isAnswered: flags.isAnswered,
+            isForwarded: flags.isForwarded,
+            hasAttachments: false,
+            sizeBytes: info.size ?? 0,
+            spamVerdict: headers.spamVerdict
+        )
+    }
+
+    /// Lädt eine einzelne Mail vom Server und speichert sie im Cache.
+    ///
+    /// Verarbeitung: Wählt den Ordner aus und lädt die Mail auf demselben
+    /// Weg wie der Abruf (Struktur, Text/HTML, Anhänge bis 5 MB). Liegt sie
+    /// schon im Cache, werden nur die Flags abgeglichen.
+    ///
+    /// - Parameters:
+    ///   - credentials: Postfach und Passwort.
+    ///   - folder: IMAP-Ordner.
+    ///   - uid: UID der Mail.
+    /// - Returns: `true`, wenn die Mail danach im Cache liegt.
+    /// - Throws: Verbindungs- oder IMAP-Fehler.
+    static func loadMessage(_ credentials: MailCredentials, folder: String, uid: UInt32) async throws -> Bool {
+        let account = credentials.account
+        try await MailSession.withIMAP(credentials) { server -> Void in
+            _ = try await server.selectMailbox(folder)
+            _ = try await cacheMessages(
+                uids: [SwiftMail.UID(uid)], server: server, account: account, folder: folder
+            )
+        }
+        let id = CachedMessage.makeID(accountID: account.id, folder: folder, uid: uid)
+        return MessageStore.shared.message(id: id) != nil
+    }
 
     // MARK: - Ältere Nachrichten
 

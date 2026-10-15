@@ -14,7 +14,13 @@
 //  iPhone/iPad in der Leiste am unteren Rand (einhändige Bedienung), auf
 //  dem Mac in der Symbolleiste; im Auswahlmodus ersetzt die Befehlsleiste
 //  die untere Leiste. Eine abweichende Sortierung hebt den Knopf hervor
-//  (blau getönter Glaskreis). Eine neue Mail geht vom
+//  (blau getönter Glaskreis). Die drei Knöpfe stehen als Gruppe in der
+//  Mitte. Zwischen beiden sitzt die Suche
+//  (`searchable`; auf dem iPhone ein Knopf der unteren Leiste, der zum
+//  schwebenden Suchfeld über der Tastatur wird): Treffer aus dem Cache
+//  ersetzen die Liste, darunter Namensvorschläge als Marken und der
+//  Abschnitt „Auf dem Server“ (Serversuche auf Knopfdruck; ein Tipp lädt
+//  den Treffer und öffnet ihn). Eine neue Mail geht vom
 //  Postfach des gezeigten Ordners aus, in Sammelansichten vom
 //  Standard-Postfach. Aktualisiert wird auf
 //  iPhone/iPad durch Herunterziehen, auf dem Mac per Knopf bzw. ⌘R.
@@ -46,6 +52,7 @@
 //  ContactImageDirectory, SenderIconCache, FilterListCloudEvents,
 //  MessageDetailView, MessageMenu, MessageActionDialogs, FolderMoveSheet,
 //  MessageSelection, SelectionActionBar, MessageSort, SearchIndexBuilder,
+//  SearchViewModel, SearchPerson, ServerMessageLoader,
 //  ComposeView, DraftComposeLoader, Dialogs, Log.
 //
 
@@ -94,6 +101,9 @@ struct InboxView: View {
     @State private var showingSelectionMove = false
     /// Netzzustand (online/offline).
     private let network = NetworkMonitor.shared
+    /// Zustand der Suche. Bewusst als `@State`: Das Anlegen ist billig
+    /// (kein Laden im `init`), SwiftUI behält das erste Objekt.
+    @State private var search: SearchViewModel
 
     /// Übernimmt die beim App-Start angelegten Objekte.
     ///
@@ -115,6 +125,7 @@ struct InboxView: View {
         self.spamSettings = spamSettings
         self._viewModel = Bindable(viewModel)
         self.folderCatalog = folderCatalog
+        self._search = State(initialValue: SearchViewModel(accountStore: accountStore))
     }
 
     /// Legt den Ordnerkatalog für die Ordnerleiste an.
@@ -189,7 +200,7 @@ struct InboxView: View {
             Group {
                 if viewModel.messages.isEmpty && viewModel.isLoading {
                     InitialLoadingView()
-                } else if viewModel.messages.isEmpty {
+                } else if viewModel.messages.isEmpty && !search.isPresented {
                     EmptyMailboxView(
                         selection: viewModel.selection,
                         hasAccounts: !accountStore.accounts.isEmpty
@@ -215,6 +226,39 @@ struct InboxView: View {
             // Feine Linie als Abgrenzung unter der Überschrift
             .safeAreaInset(edge: .top, spacing: 0) {
                 Divider()
+            }
+            .searchable(
+                text: $search.text,
+                tokens: $search.tokens,
+                isPresented: $search.isPresented,
+                prompt: "Suchen"
+            ) { person in
+                Label(person.title, systemImage: "person.fill")
+            }
+            .searchSuggestions {
+                ForEach(search.suggestions) { person in
+                    PersonSuggestionRow(person: person)
+                        .searchCompletion(person)
+                }
+            }
+            #if os(iOS)
+            // Die Suche ist ein Knopf der unteren Leiste und wird beim
+            // Antippen zum Suchfeld über der Tastatur.
+            .searchToolbarBehavior(.minimize)
+            // Die obere Leiste (Ordner, Titel, Einstellungen bzw. „Alle
+            // auswählen“ und „Fertig“) bleibt während der Suche stehen –
+            // iOS blendet sie sonst aus.
+            .searchPresentationToolbarBehavior(.avoidHidingContent)
+            #endif
+            .onChange(of: search.matchingIDs) { _, ids in
+                viewModel.searchFilter = ids
+            }
+            .onChange(of: viewModel.cacheGeneration) {
+                // Cache neu geladen (Abruf, Aktion, geladener Treffer).
+                search.refreshLocal()
+            }
+            .onChange(of: viewModel.selection, initial: true) {
+                updateSearchScope()
             }
             .navigationTitle(viewModel.selection.title)
             #if os(iOS)
@@ -293,6 +337,7 @@ struct InboxView: View {
             .onChange(of: accountStore.pausedAccountIDs) { oldPaused, newPaused in
                 // Abruf ein-/ausgeschaltet: Sammelsichten neu zusammenstellen;
                 // wieder eingeschaltete Postfächer gleich abrufen.
+                updateSearchScope()
                 viewModel.loadFromCache()
                 guard !oldPaused.isSubset(of: newPaused) else { return }
                 Task { await viewModel.refresh() }
@@ -396,6 +441,15 @@ struct InboxView: View {
                     withAnimation(.snappy(duration: 0.25)) { viewModel.endSelection() }
                 }
             }
+            #if os(iOS)
+            if search.isPresented {
+                // Auswahl während einer Suche: Das Suchfeld bleibt unten.
+                // Ohne seinen Platz in der unteren Leiste wanderte das
+                // aktive Suchfeld in die obere Leiste und verdeckte
+                // „Alle auswählen“ und „Fertig“.
+                DefaultToolbarItem(kind: .search, placement: .bottomBar)
+            }
+            #endif
         } else {
             ToolbarItem(placement: Self.leadingPlacement) {
                 Button {
@@ -437,16 +491,20 @@ struct InboxView: View {
                 composeButton
             }
             #else
-            // Untere Leiste: Sortieren links, Verfassen rechts – mit dem
-            // Daumen erreichbar.
+            // Untere Leiste: Sortieren, Suche und Verfassen als Gruppe in
+            // der Mitte – mit dem Daumen erreichbar. Die Abstandhalter
+            // außen zentrieren; zwischen den Knöpfen steht keiner, damit
+            // iOS sie unter einem gemeinsamen Glas zusammenfasst.
+            ToolbarSpacer(.flexible, placement: .bottomBar)
             ToolbarItem(placement: .bottomBar) {
                 sortMenu
             }
             .sharedBackgroundVisibility(sortItemBackground)
-            ToolbarSpacer(.flexible, placement: .bottomBar)
+            DefaultToolbarItem(kind: .search, placement: .bottomBar)
             ToolbarItem(placement: .bottomBar) {
                 composeButton
             }
+            ToolbarSpacer(.flexible, placement: .bottomBar)
             #endif
             ToolbarItem {
                 Menu {
@@ -517,6 +575,85 @@ struct InboxView: View {
             Label("Neue Nachricht", systemImage: "square.and.pencil")
         }
         .disabled(accountStore.accounts.isEmpty)
+    }
+
+    // MARK: - Suche
+
+    /// Setzt den Suchbereich auf die gezeigte Ansicht.
+    private func updateSearchScope() {
+        search.updateScope(
+            for: viewModel.selection,
+            fetchingAccountIDs: accountStore.fetchingAccounts.map(\.id)
+        )
+    }
+
+    /// Abschnitt „Auf dem Server“: Knopf zum Weitersuchen, Ladeanzeige
+    /// bzw. die Treffer, die nicht im Cache liegen.
+    ///
+    /// - Parameters:
+    ///   - colors: Farbe je Postfach.
+    ///   - showsRecipients: `true` in Gesendet und Entwürfen.
+    /// - Returns: Der Abschnitt.
+    private func serverSection(colors: [UUID: String], showsRecipients: Bool) -> some View {
+        Section {
+            switch search.serverState {
+            case .idle:
+                // Offline ausgegraut, ohne eigenen Hinweis – „Offline“
+                // steht schon in der Titelzeile.
+                Button {
+                    search.searchServer()
+                } label: {
+                    Label("Auf dem Server weitersuchen", systemImage: "magnifyingglass")
+                }
+                .foregroundStyle(network.isOnline ? Color.accentColor : Color.secondary)
+                .disabled(!network.isOnline)
+            case .searching:
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("Suche auf dem Server …")
+                        .foregroundStyle(.secondary)
+                }
+            case .done(let hasMore, let unreachable):
+                ForEach(search.serverHits) { hit in
+                    NavigationLink {
+                        ServerMessageLoader(
+                            hit: hit,
+                            accountStore: accountStore,
+                            spamFilter: viewModel.spamFilter,
+                            scoreLimit: spamSettings.scoreLimit,
+                            onChange: { viewModel.loadFromCache() },
+                            onReturn: {
+                                // Jetzt im Cache: wird zum lokalen Treffer.
+                                search.removeServerHit(hit.id)
+                                viewModel.loadFromCache()
+                            }
+                        )
+                    } label: {
+                        rowContent(for: hit, colorHex: colors[hit.accountID], showsRecipients: showsRecipients)
+                    }
+                }
+                if search.serverHits.isEmpty {
+                    Text("Keine weiteren Treffer auf dem Server")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                if hasMore {
+                    Text("Weitere Treffer – Suche verfeinern")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                if unreachable > 0 {
+                    Button("Nicht alle Postfächer erreichbar – erneut versuchen") {
+                        search.searchServer()
+                    }
+                    .font(.footnote)
+                    .foregroundStyle(network.isOnline ? Color.accentColor : Color.secondary)
+                    .disabled(!network.isOnline)
+                }
+            }
+        } header: {
+            Text("Auf dem Server")
+        }
     }
 
     // MARK: - Mehrfachauswahl
@@ -594,6 +731,8 @@ struct InboxView: View {
 
     /// Liste der Nachrichten samt Zeile „Ältere Nachrichten laden“. Im
     /// Auswahlmodus mit Auswahlkreisen; die Zeile „Ältere“ entfällt dann.
+    /// Während einer Suche nur die Treffer, darunter statt „Ältere“ der
+    /// Abschnitt „Auf dem Server“.
     ///
     /// Eigene Eigenschaft statt Teil von `body`, damit der Compiler den
     /// Ausdruck in vertretbarer Zeit prüfen kann.
@@ -602,7 +741,7 @@ struct InboxView: View {
         let recipients = showsRecipients
         let drafts = showsDrafts
         return List(selection: listSelection) {
-            ForEach(viewModel.messages) { message in
+            ForEach(viewModel.visibleMessages) { message in
                 messageRow(
                     for: message,
                     colorHex: colors[message.accountID],
@@ -613,7 +752,16 @@ struct InboxView: View {
 
             // Letzte Zeile der Liste – gehört IN die List, damit
             // der Zweig ein einzelnes View bleibt.
-            if viewModel.showsOlderRow && !viewModel.isSelecting {
+            if search.isFiltering {
+                if viewModel.visibleMessages.isEmpty {
+                    Text("Keine Treffer auf diesem Gerät")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                if search.offersServerSearch && !viewModel.isSelecting {
+                    serverSection(colors: colors, showsRecipients: recipients)
+                }
+            } else if viewModel.showsOlderRow && !viewModel.isSelecting {
                 Section {
                     olderRow
                 }
@@ -1044,6 +1192,29 @@ private struct InboxTitle: View {
         case (.never, let status?):
             return Text("\(status) · noch nicht abgerufen")
         }
+    }
+}
+
+/// Namensvorschlag der Suche: Name fett, Adresse grau dahinter.
+private struct PersonSuggestionRow: View {
+    /// Vorgeschlagene Person.
+    let person: SearchPerson
+
+    /// Name und Adresse in einer Zeile.
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "person.crop.circle")
+                .foregroundStyle(.secondary)
+            if let name = person.name {
+                Text(name)
+                    .fontWeight(.semibold)
+                Text(person.address)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(person.address)
+            }
+        }
+        .lineLimit(1)
     }
 }
 
