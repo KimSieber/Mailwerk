@@ -95,7 +95,7 @@ struct ServerReconciliationTests {
         #expect(result.removedIDs == ["msg-1", "msg-2"])
     }
 
-    /// Mails mit UIDs oberhalb der Server-Antwort bleiben erhalten.
+    /// Ohne UIDNEXT: Mails mit UIDs oberhalb der Server-Antwort bleiben erhalten.
     @Test func newerUIDsThanTheServerAnswerAreKept() {
         let state = server(all: [1, 2])
         let result = ServerReconciliation.plan(
@@ -104,6 +104,35 @@ struct ServerReconciliationTests {
             keepUIDsAbove: ServerReconciliation.highestUID(in: state)
         )
         #expect(result.removedIDs.isEmpty)
+    }
+
+    /// Anderswo gelöschte neueste Mails werden entfernt (Grenze aus UIDNEXT).
+    @Test func deletedNewestMessagesAreRemoved() {
+        let state = server(all: [1, 2])
+        let result = ServerReconciliation.plan(
+            cached: [cached(1), cached(2), cached(3), cached(4)],
+            server: state,
+            keepUIDsAbove: ServerReconciliation.removalLimit(in: state, uidNext: 5)
+        )
+        #expect(result.removedIDs == ["msg-3", "msg-4"])
+    }
+
+    /// Nach der Auswahl eingetroffene Mails (UID ab UIDNEXT) bleiben erhalten.
+    @Test func arrivalsAfterSelectAreKept() {
+        let state = server(all: [1])
+        let result = ServerReconciliation.plan(
+            cached: [cached(1), cached(5), cached(6)],
+            server: state,
+            keepUIDsAbove: ServerReconciliation.removalLimit(in: state, uidNext: 5)
+        )
+        #expect(result.removedIDs.isEmpty)
+    }
+
+    /// removalLimit: UIDNEXT − 1; ohne UIDNEXT die höchste gemeldete UID.
+    @Test func removalLimitUsesUIDNext() {
+        #expect(ServerReconciliation.removalLimit(in: server(all: [2, 3]), uidNext: 10) == 9)
+        #expect(ServerReconciliation.removalLimit(in: server(all: [2, 3]), uidNext: 0) == 3)
+        #expect(ServerReconciliation.removalLimit(in: server(all: []), uidNext: 0) == .max)
     }
 
     /// highestUID: Maximum der Menge, bei leerem Ordner .max.

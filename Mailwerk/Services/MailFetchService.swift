@@ -163,7 +163,9 @@ enum MailFetchService {
             }
 
             // 4. Abgleich mit dem ganzen Ordner
-            let serverState = try await reconcile(server: server, account: account, folder: folder)
+            let serverState = try await reconcile(
+                server: server, account: account, folder: folder, uidNext: serverUIDNext
+            )
 
             // 5. Neuankünfte seit dem letzten Abruf
             var nextUIDNext = serverUIDNext
@@ -212,12 +214,15 @@ enum MailFetchService {
     /// das übernimmt der Abruf (Datumssuche und Neuankünfte).
     ///
     /// Der Ordner muss bereits ausgewählt sein. Schlägt die Abfrage fehl,
-    /// wirft die Methode – gelöscht wird dann nichts.
+    /// wirft die Methode – gelöscht wird dann nichts. Als gelöscht gilt eine
+    /// gecachte Mail nur bis zur Grenze aus UIDNEXT
+    /// (`ServerReconciliation.removalLimit`).
     ///
     /// - Parameters:
     ///   - server: Angemeldete IMAP-Verbindung mit ausgewähltem Ordner.
     ///   - account: Postfach.
     ///   - folder: IMAP-Ordner.
+    ///   - uidNext: UIDNEXT aus der Auswahl des Ordners; 0 = unbekannt.
     /// - Returns: Der Stand des Ordners auf dem Server (alle UIDs und
     ///   Flags); daraus ermittelt der Abruf die Neuankünfte.
     /// - Throws: IMAP-Fehler.
@@ -225,7 +230,8 @@ enum MailFetchService {
     private static func reconcile(
         server: SwiftMail.IMAPServer,
         account: MailAccount,
-        folder: String
+        folder: String,
+        uidNext: UInt32
     ) async throws -> ServerFolderState {
         let started = Date()
 
@@ -252,7 +258,7 @@ enum MailFetchService {
                 accountID: account.id, folder: folder, since: .distantPast
             ),
             server: state,
-            keepUIDsAbove: ServerReconciliation.highestUID(in: state)
+            keepUIDsAbove: ServerReconciliation.removalLimit(in: state, uidNext: uidNext)
         )
         MessageStore.shared.apply(plan)
 

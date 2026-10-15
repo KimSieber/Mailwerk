@@ -91,9 +91,9 @@ nonisolated enum ServerReconciliation {
     ///   - cached: Alle gecachten Mails dieses Ordners.
     ///   - server: Die UID-Mengen des Servers.
     ///   - keepUIDsAbove: UIDs oberhalb dieser Grenze bleiben unangetastet.
-    ///     Gedacht für Mails, die nach der Server-Abfrage eingetroffen und
-    ///     schon gecacht sind – sie stünden sonst fälschlich als „gelöscht"
-    ///     da. Die Grenze ist die höchste UID der Server-Abfrage.
+    ///     Gedacht für Mails, die nach der Auswahl des Ordners eingetroffen
+    ///     und schon gecacht sind – sie stünden sonst fälschlich als
+    ///     „gelöscht" da. Die Grenze liefert `removalLimit`.
     /// - Returns: Änderungsplan mit Entfernungen und Flag-Updates.
     static func plan(
         cached: [CachedFlagState],
@@ -118,9 +118,30 @@ nonisolated enum ServerReconciliation {
         return plan
     }
 
-    /// Obergrenze für `keepUIDsAbove`: die höchste UID, die der Server
-    /// gemeldet hat. Bei leerem Ordner gilt `.max`, damit ein geleerter
-    /// Ordner auch im Cache geleert wird.
+    /// Grenze für `keepUIDsAbove`: bis zu welcher UID eine im Cache, aber
+    /// nicht mehr auf dem Server liegende Mail als gelöscht gilt.
+    ///
+    /// Verarbeitung: Maßgeblich ist UIDNEXT aus der Auswahl des Ordners.
+    /// Jede Mail darunter existierte bei der Auswahl schon; meldet der
+    /// Server sie nicht mehr, ist sie gelöscht oder verschoben – auch dann,
+    /// wenn sie die neueste im Ordner war. Später eintreffende Mails
+    /// bekommen eine UID ab UIDNEXT und bleiben geschützt. Meldet der
+    /// Server kein UIDNEXT (0), gilt ersatzweise die höchste gemeldete UID
+    /// (`highestUID`). (Allein die höchste UID genügt nicht: Nach dem
+    /// Löschen der neuesten Mails liegt sie unter deren UIDs, und die
+    /// gelöschten Mails blieben im Cache stehen.)
+    ///
+    /// - Parameters:
+    ///   - server: Server-Stand des Ordners.
+    ///   - uidNext: UIDNEXT aus der Auswahl des Ordners; 0 = unbekannt.
+    /// - Returns: Höchste UID, die als gelöscht gelten darf.
+    static func removalLimit(in server: ServerFolderState, uidNext: UInt32) -> UInt32 {
+        uidNext > 0 ? uidNext - 1 : highestUID(in: server)
+    }
+
+    /// Ersatzgrenze ohne UIDNEXT: die höchste UID, die der Server gemeldet
+    /// hat. Bei leerem Ordner gilt `.max`, damit ein geleerter Ordner auch
+    /// im Cache geleert wird.
     ///
     /// - Parameter server: Server-Stand des Ordners.
     /// - Returns: Höchste UID oder `.max`.
