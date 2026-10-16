@@ -3,9 +3,10 @@
 //  Mailwerk
 //
 //  Zweck: Zustand und Abläufe der Nachrichtenliste – welche Ansicht
-//  gewählt ist (alle Posteingänge, Gekennzeichnet, ein Ordner), welche
-//  Mails sie aus dem Cache zeigt, Abruf vom Server, „Ältere laden“,
-//  Spamfilter beim Abruf und Rückfragen zum Anlegen eines Spam-Ordners.
+//  gewählt ist (alle Posteingänge, Ungelesen, Gekennzeichnet, Spam, ein
+//  Ordner), welche Mails sie aus dem Cache zeigt, Abruf vom Server,
+//  „Ältere laden“, Spamfilter beim Abruf und Rückfragen zum Anlegen eines
+//  Spam-Ordners.
 //  Dazu die Aktionen an einzelnen Mails aus Wischaktionen und
 //  Kontextmenü (gelesen, kennzeichnen, verschieben, löschen, Spam) samt
 //  „Rückgängig“ für Kennzeichnung und Gelesen-Status, die Mehrfachauswahl
@@ -16,6 +17,15 @@
 //  Position. Mails, die beim Neuladen der Liste verschwinden, fallen aus
 //  der Auswahl; ein Wechsel der Ansicht und jede Sammelaktion beenden den
 //  Auswahlmodus.
+//
+//  Sicht „Ungelesen“: Mails, die während des Besuchs der Sicht gelesen
+//  werden, bleiben bis zum Verlassen der Sicht bzw. bis zum Herunterziehen
+//  stehen (`keptUnreadIDs`) – so lässt sich ein versehentliches „Gelesen“
+//  gleich wieder umkehren, und die Liste springt nicht unter dem Finger
+//  weg. Der Zähler in der Seitenleiste sinkt trotzdem sofort.
+//
+//  Sicht „Spam“: die Spam-Ordner aller Postfächer mit eingeschaltetem
+//  Abruf gemeinsam; „Ältere laden“ lädt in allen zugleich nach.
 //
 //  Suche: Während einer Suche zeigt die Liste nur die Treffer
 //  (`searchFilter`, Cache-IDs aus der lokalen Suche). Liste, Auswahl und
@@ -148,6 +158,10 @@ final class InboxViewModel {
     /// Ordner, für die der Server nichts Älteres mehr hat. Nur für diese
     /// Sitzung – nach einem Neustart stellt ein Tipp das erneut fest.
     private var exhaustedFolders: Set<FolderKey> = []
+    /// Sicht „Ungelesen“: Mails, die bei diesem Besuch der Sicht schon
+    /// gezeigt wurden. Sie bleiben stehen, auch wenn sie inzwischen gelesen
+    /// sind; ein Wechsel der Ansicht oder Herunterziehen leert die Menge.
+    @ObservationIgnored private var keptUnreadIDs: Set<String> = []
 
     /// Netzzustand (online/offline).
     private let network = NetworkMonitor.shared
@@ -178,6 +192,8 @@ final class InboxViewModel {
             endSelection()
             // Die Sortierung gilt nur für die bisherige Ansicht.
             sort = .standard
+            // Gelesene der Sicht „Ungelesen“ fallen beim Verlassen heraus.
+            keptUnreadIDs = []
             loadFromCache()
         }
     }
@@ -228,10 +244,11 @@ final class InboxViewModel {
     /// Lädt die Mails der aktuellen Ansicht aus dem lokalen Cache.
     ///
     /// Verarbeitung: Ermittelt den Stand der Ansicht und liest je nach
-    /// Auswahl alle Posteingänge, die gekennzeichneten Mails oder einen
-    /// Ordner – als Listeneinträge ohne Mailinhalt –, entfernt nicht mehr
-    /// vorhandene Mails aus der Mehrfachauswahl und liest die
-    /// Filterlisten für die Absenderbilder neu. Eine abweichende
+    /// Auswahl alle Posteingänge, die ungelesenen Mails (samt den bei
+    /// diesem Besuch schon gezeigten), die gekennzeichneten Mails, die
+    /// Spam-Ordner oder einen Ordner – als Listeneinträge ohne Mailinhalt –,
+    /// entfernt nicht mehr vorhandene Mails aus der Mehrfachauswahl und
+    /// liest die Filterlisten für die Absenderbilder neu. Eine abweichende
     /// Sortierung wird angewandt. In Debug-Builds werden Laufzeit, Anzahl
     /// und die zwischenzeitlichen Abfragen der Ansicht ausgegeben.
     func loadFromCache() {
@@ -246,10 +263,17 @@ final class InboxViewModel {
             messages = MessageStore.shared.allMessages(
                 accountIDs: accountIDs, folder: MailFolder.inboxPath
             )
+        case .unread:
+            messages = MessageStore.shared.unreadInboxMessages(
+                accountIDs: accountIDs, keeping: keptUnreadIDs
+            )
+            keptUnreadIDs.formUnion(messages.map(\.id))
         case .flagged:
             messages = MessageStore.shared.flaggedInboxMessages(
                 accountIDs: accountIDs
             )
+        case .spam:
+            messages = MessageStore.shared.messages(in: spamFolders)
         case .folder(let accountID, let path, _):
             messages = MessageStore.shared.folderMessages(
                 accountID: accountID, folder: path
@@ -267,6 +291,21 @@ final class InboxViewModel {
         #if DEBUG
         reportCacheLoad(startedAt: started)
         #endif
+    }
+
+    /// Sicht „Ungelesen“: lässt die bei diesem Besuch gelesenen Mails
+    /// fallen (Herunterziehen). Die Liste zeigt danach nur Ungelesenes.
+    func releaseKeptUnread() {
+        keptUnreadIDs = []
+    }
+
+    /// Spam-Ordner der Postfächer mit eingeschaltetem Abruf; Postfächer
+    /// ohne bekannten Spam-Ordner fehlen.
+    var spamFolders: [FolderKey] {
+        accountStore.fetchingAccounts.compactMap { account in
+            guard let folder = account.spamFolder, !folder.isEmpty else { return nil }
+            return FolderKey(accountID: account.id, folder: folder)
+        }
     }
 
     // MARK: - Sichtbare Einträge
@@ -350,16 +389,23 @@ final class InboxViewModel {
     /// Stand der gewählten Ansicht.
     ///
     /// Verarbeitung: Sammelansichten sind so aktuell wie der älteste
-    /// beteiligte Posteingang; ausgeschaltete Postfächer zählen nicht mit.
+    /// beteiligte Posteingang bzw. Spam-Ordner; ausgeschaltete Postfächer
+    /// zählen nicht mit.
     ///
     /// - Returns: Stand oder `nil`, wenn kein (beteiligtes) Postfach eingerichtet ist.
     private func currentSyncState() -> SyncState? {
         switch selection {
-        case .allInboxes, .flagged:
+        case .allInboxes, .unread, .flagged:
             let accounts = accountStore.fetchingAccounts
             guard !accounts.isEmpty else { return nil }
             return .oldest(accounts.map {
                 MessageStore.shared.lastSync(accountID: $0.id, folder: MailFolder.inboxPath)
+            })
+        case .spam:
+            let folders = spamFolders
+            guard !folders.isEmpty else { return nil }
+            return .oldest(folders.map {
+                MessageStore.shared.lastSync(accountID: $0.accountID, folder: $0.folder)
             })
         case .folder(let accountID, let path, _):
             return .oldest([MessageStore.shared.lastSync(accountID: accountID, folder: path)])
@@ -369,14 +415,21 @@ final class InboxViewModel {
     // MARK: - Ältere Nachrichten
 
     /// Ordner, deren Fenster die aktuelle Ansicht bilden: bei einem Ordner
-    /// dieser allein, bei „Alle Eingänge" die Posteingänge aller
-    /// eingeschalteten Postfächer. Die Kennzeichen-Sicht lädt nicht nach.
+    /// dieser allein, bei „Alle Eingänge" die Posteingänge und bei „Spam“
+    /// die Spam-Ordner aller eingeschalteten Postfächer. Die Sichten
+    /// „Ungelesen“ und „Mit Kennzeichnung“ laden nicht nach – ihre Mails
+    /// holt jeder Abruf unabhängig vom Alter.
     private var olderTargets: [(account: MailAccount, folder: String)] {
         switch selection {
         case .allInboxes:
             return accountStore.fetchingAccounts.map { ($0, MailFolder.inboxPath) }
-        case .flagged:
+        case .unread, .flagged:
             return []
+        case .spam:
+            return spamFolders.compactMap { key in
+                guard let account = accountStore.accounts.first(where: { $0.id == key.accountID }) else { return nil }
+                return (account: account, folder: key.folder)
+            }
         case .folder(let accountID, let path, _):
             guard let account = accountStore.accounts.first(where: { $0.id == accountID }) else { return [] }
             return [(account, path)]
@@ -388,8 +441,8 @@ final class InboxViewModel {
         olderTargets.filter { !exhaustedFolders.contains(FolderKey(accountID: $0.account.id, folder: $0.folder)) }
     }
 
-    /// Zeile „Ältere Nachrichten laden" anzeigen? Nicht in der
-    /// Kennzeichen-Sicht und nicht ohne Postfächer.
+    /// Zeile „Ältere Nachrichten laden" anzeigen? Nicht in den Sichten
+    /// „Ungelesen“ und „Mit Kennzeichnung“ und nicht ohne Postfächer.
     var showsOlderRow: Bool { !olderTargets.isEmpty }
 
     /// `true`, wenn der Server für alle Ordner der Ansicht nichts Älteres hat.
@@ -503,6 +556,16 @@ final class InboxViewModel {
             return nil
         }
         return "\(context): \(error.localizedDescription)"
+    }
+
+    /// Anzahl ungelesener Mails in den Posteingängen (für die Leiste).
+    var unreadCount: Int {
+        #if DEBUG
+        viewQueryCount += 1
+        #endif
+        return MessageStore.shared.unreadInboxCount(
+            accountIDs: accountStore.fetchingAccounts.map(\.id)
+        )
     }
 
     /// Anzahl gekennzeichneter Mails in den Posteingängen (für die Leiste).

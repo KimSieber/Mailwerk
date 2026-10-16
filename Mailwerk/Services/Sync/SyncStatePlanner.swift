@@ -4,7 +4,9 @@
 //
 //  Zweck: Entscheidet anhand des gespeicherten Sync-Zustands eines
 //  Ordners und der Werte des Servers, wie ein Abruf vorgeht, und
-//  bestimmt, welche neu angekommenen Mails nachzuladen sind.
+//  bestimmt, welche neu angekommenen Mails nachzuladen sind. Dazu plant
+//  es das Nachladen älterer ungelesener Mails des Posteingangs, damit
+//  die Sicht „Ungelesen“ vollständig ist.
 //
 //  Grundlage (Muster aus RFC 4549):
 //  - UIDVALIDITY: Solange sie gleich bleibt, sind die UIDs eines Ordners
@@ -156,5 +158,45 @@ nonisolated enum SyncStatePlanner {
         failedCount: Int
     ) -> UInt32 {
         failedCount == 0 ? plan.nextUIDNext : fromUID
+    }
+
+    // MARK: - Ältere ungelesene Mails
+
+    /// Höchstzahl der älteren ungelesenen Mails, die ein Abruf je
+    /// Posteingang nachlädt. Darüber hinausgehende folgen bei den nächsten
+    /// Abrufen.
+    static let unreadBackfillLimit = 200
+
+    /// Ergebnis der Planung für ältere ungelesene Mails.
+    struct UnreadBackfillPlan: Equatable {
+        /// UIDs, die jetzt geladen werden, höchste zuerst.
+        let toLoad: [UInt32]
+        /// Anzahl der ungelesenen Mails, die wegen der Obergrenze auf einen
+        /// späteren Abruf warten.
+        let deferredCount: Int
+    }
+
+    /// Bestimmt die ungelesenen Mails eines Ordners, die noch nicht im
+    /// Cache liegen.
+    ///
+    /// Verarbeitung: Der Abgleich kennt die Flags aller Mails des Ordners.
+    /// Ungelesene außerhalb des Zeitfensters fehlen sonst im Cache – und
+    /// damit in der Sicht „Ungelesen“ und ihrem Zähler. Geladen werden die
+    /// höchsten UIDs zuerst (zuletzt im Ordner angekommen), höchstens
+    /// `limit`; der Rest folgt bei den nächsten Abrufen.
+    ///
+    /// - Parameters:
+    ///   - unseen: UIDs ohne `\Seen` laut Server.
+    ///   - known: UIDs, die schon im Cache liegen.
+    ///   - limit: Höchstzahl je Abruf.
+    /// - Returns: Zu ladende UIDs und Anzahl der zurückgestellten.
+    static func unreadBackfill(
+        unseen: Set<UInt32>,
+        known: Set<UInt32>,
+        limit: Int = unreadBackfillLimit
+    ) -> UnreadBackfillPlan {
+        let candidates = unseen.subtracting(known).sorted(by: >)
+        let toLoad = Array(candidates.prefix(max(limit, 0)))
+        return UnreadBackfillPlan(toLoad: toLoad, deferredCount: candidates.count - toLoad.count)
     }
 }

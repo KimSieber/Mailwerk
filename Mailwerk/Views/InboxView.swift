@@ -3,8 +3,9 @@
 //  Mailwerk
 //
 //  Zweck: Hauptansicht mit der Nachrichtenliste. Zeigt die gewählte
-//  Ansicht (alle Posteingänge, Gekennzeichnet, ein Ordner), Titel mit
-//  Stand und Verbindungshinweis, Wischaktionen (gelesen, kennzeichnen),
+//  Ansicht (alle Posteingänge, Ungelesen, Gekennzeichnet, Spam, ein
+//  Ordner), Titel mit Stand und Verbindungshinweis, Wischaktionen
+//  (gelesen, kennzeichnen),
 //  das Kontextmenü einer Mail per langem Drücken (dasselbe Menü wie in
 //  der Mailansicht, siehe MessageMenu), „Rückgängig“ für Kennzeichnung
 //  und Gelesen-Status, die Mehrfachauswahl (über „Auswählen“ im
@@ -28,6 +29,10 @@
 //  eingerichtet) oder wird der Abruf eines Postfachs wieder
 //  eingeschaltet, wird automatisch abgerufen. Ein Ordner eines
 //  ausgeschalteten Postfachs lädt beim Öffnen auch dessen Ordnerliste.
+//
+//  Am Listenende steht „Ältere Nachrichten laden“; in den Sichten
+//  „Ungelesen“ und „Mit Kennzeichnung“, die jeder Abruf unabhängig vom
+//  Alter vollständig holt, stattdessen ein Hinweis darauf.
 //
 //  Die Liste liegt auf der getönten Fläche der App, die Zeilen als Karten
 //  (AppTheme); im Auswahlmodus sind ausgewählte Zeilen leicht getönt.
@@ -175,12 +180,16 @@ struct InboxView: View {
     /// Ruft die gerade angezeigte Ansicht ab.
     ///
     /// Verarbeitung: Ein gewählter Ordner wird allein abgerufen, sonst
-    /// alle Posteingänge samt Spam-Ordnern.
+    /// alle Posteingänge samt Spam-Ordnern. In der Sicht „Ungelesen“ fallen
+    /// dabei die schon gelesenen Mails heraus.
     @MainActor
     private func refreshCurrentView() async {
         if case .folder(let accountID, let path, _) = viewModel.selection {
             await viewModel.refreshFolder(accountID: accountID, path: path)
         } else {
+            if viewModel.selection == .unread {
+                viewModel.releaseKeptUnread()
+            }
             await viewModel.refresh()
         }
     }
@@ -407,6 +416,7 @@ struct InboxView: View {
                 catalog: folderCatalog,
                 expandedAccounts: $expandedFolderAccounts,
                 selection: $viewModel.selection,
+                unreadCount: viewModel.unreadCount,
                 flaggedCount: viewModel.flaggedCount,
                 onCreateFolder: { account, parentPath, name in
                     _ = try await MailActionService.createFolder(
@@ -588,7 +598,8 @@ struct InboxView: View {
     private func updateSearchScope() {
         search.updateScope(
             for: viewModel.selection,
-            fetchingAccountIDs: accountStore.fetchingAccounts.map(\.id)
+            fetchingAccountIDs: accountStore.fetchingAccounts.map(\.id),
+            spamFolders: viewModel.spamFolders
         )
     }
 
@@ -778,12 +789,35 @@ struct InboxView: View {
                     olderRow
                 }
                 .cardRowBackground()
+            } else if let note = completeListNote, !viewModel.isSelecting {
+                // Statt „Ältere laden“: Diese Sichten sind schon vollständig.
+                Section {
+                    Text(note)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                }
+                .cardRowBackground()
             }
         }
         #if os(iOS)
         // Auswahlmodus: Kreise vor den Zeilen, Tipp wählt aus statt zu öffnen.
         .environment(\.editMode, .constant(viewModel.isSelecting ? .active : .inactive))
         #endif
+    }
+
+    /// Hinweis am Listenende der Sichten, die jeder Abruf unabhängig vom
+    /// Alter vollständig holt („Ungelesen“, „Mit Kennzeichnung“) – dort
+    /// gibt es kein „Ältere laden“; der Hinweis zeigt, dass nichts fehlt.
+    /// `nil` in allen anderen Ansichten.
+    private var completeListNote: String? {
+        switch viewModel.selection {
+        case .unread:  return "Alle ungelesenen Nachrichten – unabhängig vom Alter"
+        case .flagged: return "Alle gekennzeichneten Nachrichten – unabhängig vom Alter"
+        case .allInboxes, .spam, .folder: return nil
+        }
     }
 
     /// Auswahlbindung der Liste: auf iPhone/iPad nur im Auswahlmodus. Auf
@@ -1264,7 +1298,7 @@ private struct EmptyMailboxView<Footer: View>: View {
                 VStack(spacing: 0) {
                     ContentUnavailableView(
                         title,
-                        systemImage: selection == .flagged ? "flag" : "tray",
+                        systemImage: systemImage,
                         description: Text(hint)
                     )
                     footer()
@@ -1274,17 +1308,32 @@ private struct EmptyMailboxView<Footer: View>: View {
         }
     }
 
+    /// Symbol des Hinweises – das der Ansicht, bei Ordnern ein Fach.
+    private var systemImage: String {
+        if case .folder = selection { return "tray" }
+        return selection.systemImage
+    }
+
     /// Überschrift des Hinweises.
     private var title: String {
-        selection == .flagged ? "Keine gekennzeichneten Nachrichten" : "Keine Nachrichten"
+        switch selection {
+        case .unread:  return "Keine ungelesenen Nachrichten"
+        case .flagged: return "Keine gekennzeichneten Nachrichten"
+        case .spam:    return "Kein Spam"
+        case .allInboxes, .folder: return "Keine Nachrichten"
+        }
     }
 
     /// Erklärender Text: was zu tun ist bzw. warum die Liste leer ist.
     private var hint: String {
         guard hasAccounts else { return "Richte zuerst ein Postfach ein." }
         switch selection {
+        case .unread:
+            return "In den Posteingängen ist alles gelesen."
         case .flagged:
             return "Kennzeichne Nachrichten, damit sie hier erscheinen."
+        case .spam:
+            return "Die Spam-Ordner der Postfächer sind leer."
         case .folder:
             return "Dieser Ordner enthält keine Nachrichten."
         case .allInboxes:

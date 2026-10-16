@@ -3,7 +3,8 @@
 //  MailwerkTests
 //
 //  Zweck: Tests für die Suchabfragen des MessageStore – Treffer im
-//  Suchbereich (Postfach, Ordner, Kennzeichnung), gewählte Person,
+//  Suchbereich (Postfach, Ordner, Ordner je Postfach, Kennzeichnung),
+//  gewählte Person,
 //  Teilzeichenfolgen und die Adressen für die Namensvorschläge.
 //
 
@@ -110,5 +111,22 @@ struct MessageStoreSearchTests {
         let scope = SearchScope(accountIDs: [Self.account], folder: "INBOX", flaggedOnly: false)
         let addresses = Set(store.participantAddresses(in: scope))
         #expect(addresses == ["Anna Muster <anna@example.org>", "kim@example.org", "Chef <chef@firma.de>"])
+    }
+
+    /// Spam-Sicht: je Postfach ein eigener Ordner; andere Ordner bleiben außen vor.
+    @Test func searchSpansFolderPairs() {
+        let store = makeStore()
+        let first = message(uid: 1, folder: "Spam", text: "Gewinn")
+        let second = message(uid: 2, account: Self.other, folder: "Junk", text: "Gewinn")
+        store.saveMessage(first)
+        store.saveMessage(second)
+        store.saveMessage(message(uid: 3, folder: "Junk", text: "Gewinn"))
+        store.saveMessage(message(uid: 4, text: "Gewinn"))
+        let scope = SearchScope(
+            folders: [FolderKey(accountID: Self.account, folder: "Spam"), FolderKey(accountID: Self.other, folder: "Junk")],
+            flaggedOnly: false,
+            serverSearchable: true
+        )
+        #expect(search(store, "gewinn", scope: scope) == [first.id, second.id].sorted())
     }
 }

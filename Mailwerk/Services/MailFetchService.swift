@@ -6,7 +6,8 @@
 //
 //  Zugangspunkte:
 //  - `refreshAndCache`: Abruf der letzten 30 Tage (plus gekennzeichnete
-//    im Posteingang) mit anschließendem Abgleich.
+//    und ungelesene im Posteingang, unabhängig vom Alter) mit
+//    anschließendem Abgleich.
 //  - `fetchOlder`: Zeitfenster blockweise zurückschieben.
 //  - `searchOnServer`: Suche in einem Ordner auf dem Server; liefert nur
 //    Kopfdaten der Treffer, die nicht im Cache liegen (nichts wird
@@ -109,7 +110,11 @@ enum MailFetchService {
     ///    (höchstens `SyncStatePlanner.arrivalLimit` je Abruf). Fehlt
     ///    danach eine, bleibt UIDNEXT stehen und der nächste Abruf
     ///    versucht sie erneut.
-    /// 6. Erst nach vollständigem Erfolg werden Zeitpunkt und Zustand
+    /// 6. Im Posteingang: ungelesene Mails, die nicht im Cache liegen (z. B.
+    ///    älter als das Zeitfenster), werden nachgeladen – höchstens
+    ///    `SyncStatePlanner.unreadBackfillLimit` je Abruf. Ihre UIDs kennt
+    ///    der Abgleich bereits; eine eigene Suche ist nicht nötig.
+    /// 7. Erst nach vollständigem Erfolg werden Zeitpunkt und Zustand
     ///    gespeichert. Bricht der Abruf ab, wiederholt der nächste ihn ab
     ///    dem alten Stand.
     ///
@@ -199,10 +204,28 @@ enum MailFetchService {
                     plan: arrivals, fromUID: fromUID, failedCount: failed
                 )
             }
+
+            // 6. Ältere ungelesene Mails des Posteingangs (für die Sicht
+            //    „Ungelesen“). Der Abgleich kennt ihre UIDs bereits – keine
+            //    zusätzliche Abfrage. Fehlgeschlagene folgen beim nächsten
+            //    Abruf, weil sie dann weiterhin im Cache fehlen.
+            if MailFolder.isInbox(folder) {
+                let backfill = SyncStatePlanner.unreadBackfill(
+                    unseen: serverState.unseen,
+                    known: MessageStore.shared.cachedUIDs(accountID: account.id, folder: folder)
+                )
+                if !backfill.toLoad.isEmpty {
+                    let result = try await cacheMessages(
+                        uids: backfill.toLoad.map { SwiftMail.UID($0) },
+                        server: server, account: account, folder: folder
+                    )
+                    Log.fetch.info("✉️ [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] Ältere ungelesene: \(result.saved) geladen, \(result.failed) fehlgeschlagen, \(backfill.deferredCount) zurückgestellt")
+                }
+            }
             return (decision: decision, uidValidity: serverValidity, uidNext: nextUIDNext)
         }
 
-        // 6. Stand und Zustand vermerken – erst hier, nach vollständigem
+        // 7. Stand und Zustand vermerken – erst hier, nach vollständigem
         //    Abruf einschließlich Abmelden.
         let state: FolderSyncState? = outcome.decision == .unsupported
             ? nil

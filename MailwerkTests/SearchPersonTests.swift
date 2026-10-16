@@ -58,4 +58,18 @@ struct SearchPersonTests {
         let folder = SearchScope.make(for: .folder(accountID: b, path: "Archiv", displayName: "Archiv"), fetchingAccountIDs: [a])
         #expect(folder == SearchScope(accountIDs: [b], folder: "Archiv", flaggedOnly: false))
     }
+
+    /// Ungelesen sucht in den Posteingängen ohne Server; Spam in den Spam-Ordnern mit Server.
+    @Test func scopeForUnreadAndSpam() {
+        let a = UUID()
+        let b = UUID()
+        let unread = SearchScope.make(for: .unread, fetchingAccountIDs: [a, b])
+        #expect(unread.folders == [FolderKey(accountID: a, folder: "INBOX"), FolderKey(accountID: b, folder: "INBOX")])
+        #expect(!unread.flaggedOnly && !unread.allowsServerSearch)
+        let spamFolders = [FolderKey(accountID: a, folder: "Spam"), FolderKey(accountID: b, folder: "[Gmail]/Spam")]
+        let spam = SearchScope.make(for: .spam, fetchingAccountIDs: [a, b], spamFolders: spamFolders)
+        #expect(spam.folders == spamFolders)
+        #expect(spam.allowsServerSearch)
+        #expect(!SearchScope.make(for: .spam, fetchingAccountIDs: [a]).allowsServerSearch)
+    }
 }

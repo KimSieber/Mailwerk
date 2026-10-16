@@ -3,9 +3,9 @@
 //  MailwerkTests
 //
 //  Zweck: Tests für SyncStatePlanner – Entscheidung über das Vorgehen
-//  eines Abrufs (Fälle A/B/C) und Planung der Neuankünfte inklusive
-//  Obergrenze. Die Fallnummern verweisen auf das Konzept
-//  „Sync-Zustand je Ordner“.
+//  eines Abrufs (Fälle A/B/C), Planung der Neuankünfte inklusive
+//  Obergrenze und Nachladen älterer ungelesener Mails. Die Fallnummern
+//  verweisen auf das Konzept „Sync-Zustand je Ordner“.
 //
 
 import Foundation
@@ -150,5 +150,31 @@ struct SyncStatePlannerTests {
         #expect(plan.toLoad.isEmpty)
         #expect(plan.deferredCount == 2)
         #expect(plan.nextUIDNext == 10)
+    }
+
+    // MARK: - Ältere ungelesene
+
+    /// Nur ungelesene, die nicht im Cache liegen, höchste UID zuerst.
+    @Test func unreadBackfillSkipsKnownNewestFirst() {
+        let plan = SyncStatePlanner.unreadBackfill(unseen: [3, 7, 12, 20], known: [7, 30])
+        #expect(plan.toLoad == [20, 12, 3])
+        #expect(plan.deferredCount == 0)
+    }
+
+    /// Über der Grenze wird zurückgestellt; die höchsten UIDs kommen zuerst.
+    @Test func unreadBackfillRespectsLimit() {
+        let plan = SyncStatePlanner.unreadBackfill(unseen: Set(1...250), known: [], limit: 200)
+        #expect(plan.toLoad.count == 200)
+        #expect(plan.toLoad.first == 250)
+        #expect(plan.toLoad.last == 51)
+        #expect(plan.deferredCount == 50)
+    }
+
+    /// Alles im Cache: nichts zu laden; Standardgrenze 200.
+    @Test func unreadBackfillNothingWhenAllKnown() {
+        let plan = SyncStatePlanner.unreadBackfill(unseen: [5, 6], known: [5, 6])
+        #expect(plan.toLoad.isEmpty)
+        #expect(plan.deferredCount == 0)
+        #expect(SyncStatePlanner.unreadBackfillLimit == 200)
     }
 }

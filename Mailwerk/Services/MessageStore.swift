@@ -23,7 +23,9 @@
 //
 //  Listen: Die Abfragen für die Nachrichtenliste liefern
 //  `MessageListItem` ohne Text- und HTML-Inhalt. Die vollständige
-//  Nachricht liefert `message(id:)`.
+//  Nachricht liefert `message(id:)`. Sammelsichten über mehrere Ordner
+//  (Spam-Ordner aller Postfächer) fragen Paare aus Postfach und Ordner ab
+//  (`FolderKey`).
 //
 //  Suchindex: Die FTS5-Tabelle `message_search` (Verfahren „trigram“:
 //  Teilzeichenfolgen ab drei Zeichen, ohne Groß-/Kleinschreibung) hält je
@@ -61,7 +63,8 @@
 //  Abhängigkeiten: SQLite3 (System-Framework), CachedMessage,
 //  CachedAttachment, SpamHeaderVerdict, FolderListing, MailFolder (Name des Posteingangs),
 //  ServerReconciliation (Plan-Typ), FolderSyncState, MessageListItem,
-//  SenderIconRecord, SearchText (Inhalt des Suchindex), SearchScope, Log.
+//  SenderIconRecord, SearchText (Inhalt des Suchindex), SearchScope,
+//  FolderKey (Ordner je Postfach), Log.
 //
 
 import Foundation
@@ -1147,6 +1150,81 @@ final class MessageStore: @unchecked Sendable {
         allMessages(accountIDs: [accountID], folder: folder)
     }
 
+    /// Listeneinträge mehrerer Ordner, je Postfach ein eigener Ordner
+    /// (z. B. die Spam-Ordner aller Postfächer).
+    ///
+    /// - Parameter folders: Ordner je Postfach.
+    /// - Returns: Listeneinträge ohne Mailinhalt, absteigend nach Datum.
+    func messages(in folders: [FolderKey]) -> [MessageListItem] {
+        guard !folders.isEmpty else { return [] }
+        let sql = """
+            SELECT \(Self.listColumns) FROM message
+            WHERE \(Self.folderCondition(folders.count))
+            ORDER BY date DESC
+            """
+        guard let stmt = prepare(sql) else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        _ = bind(stmt, folders: folders, from: 1)
+        var result: [MessageListItem] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            result.append(readListItem(stmt))
+        }
+        return result
+    }
+
+    /// Ungelesene Listeneinträge aus den Posteingängen mehrerer Postfächer,
+    /// dazu die übergebenen Mails, auch wenn sie inzwischen gelesen sind.
+    ///
+    /// Verarbeitung: Die Sicht „Ungelesen“ behält Mails, die während ihres
+    /// Besuchs gelesen wurden, bis sie verlassen wird – deshalb die Liste
+    /// `keeping`. Mails, die nicht mehr im Posteingang liegen (gelöscht,
+    /// verschoben), entfallen trotzdem.
+    ///
+    /// - Parameters:
+    ///   - accountIDs: Postfächer.
+    ///   - keeping: Cache-IDs, die unabhängig vom Gelesen-Status bleiben.
+    /// - Returns: Listeneinträge ohne Mailinhalt, absteigend nach Datum.
+    func unreadInboxMessages(accountIDs: [UUID], keeping: Set<String> = []) -> [MessageListItem] {
+        guard !accountIDs.isEmpty else { return [] }
+        let kept = Array(keeping)
+        let keepCondition = kept.isEmpty ? "" : " OR id IN (\(Self.placeholders(kept.count)))"
+        let sql = """
+            SELECT \(Self.listColumns) FROM message
+            WHERE accountID IN (\(Self.placeholders(accountIDs.count))) AND folder = ?
+            AND (isUnread = 1\(keepCondition))
+            ORDER BY date DESC
+            """
+        guard let stmt = prepare(sql) else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        let next = bind(stmt, accountIDs: accountIDs)
+        bind(stmt, next, MailFolder.inboxPath)
+        for (offset, id) in kept.enumerated() {
+            bind(stmt, next + 1 + Int32(offset), id)
+        }
+        var result: [MessageListItem] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            result.append(readListItem(stmt))
+        }
+        return result
+    }
+
+    /// Anzahl ungelesener Nachrichten in den Posteingängen.
+    ///
+    /// - Parameter accountIDs: Postfächer.
+    /// - Returns: Anzahl.
+    func unreadInboxCount(accountIDs: [UUID]) -> Int {
+        guard !accountIDs.isEmpty else { return 0 }
+        let sql = """
+            SELECT COUNT(*) FROM message
+            WHERE accountID IN (\(Self.placeholders(accountIDs.count))) AND folder = ? AND isUnread = 1
+            """
+        guard let stmt = prepare(sql) else { return 0 }
+        defer { sqlite3_finalize(stmt) }
+        let next = bind(stmt, accountIDs: accountIDs)
+        bind(stmt, next, MailFolder.inboxPath)
+        return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int(stmt, 0)) : 0
+    }
+
     // MARK: - Stand je Ordner
 
     /// Vermerkt einen erfolgreichen Abruf eines Ordners.
@@ -1677,18 +1755,17 @@ final class MessageStore: @unchecked Sendable {
     ///   - match: FTS5-Ausdruck (`SearchText.matchExpression`).
     /// - Returns: Cache-IDs der Treffer.
     func searchMessageIDs(in scope: SearchScope, match: String) -> Set<String> {
-        guard hasSearchIndex, !scope.accountIDs.isEmpty else { return [] }
+        guard hasSearchIndex, !scope.folders.isEmpty else { return [] }
         let sql = """
             SELECT id FROM message
-            WHERE accountID IN (\(Self.placeholders(scope.accountIDs.count))) AND folder = ?
+            WHERE \(Self.folderCondition(scope.folders.count))
             \(scope.flaggedOnly ? "AND isFlagged = 1" : "")
             AND rowid IN (SELECT rowid FROM message_search WHERE message_search MATCH ?)
             """
         guard let stmt = prepare(sql) else { return [] }
         defer { sqlite3_finalize(stmt) }
-        let next = bind(stmt, accountIDs: scope.accountIDs)
-        bind(stmt, next, scope.folder)
-        bind(stmt, next + 1, match)
+        let next = bind(stmt, folders: scope.folders, from: 1)
+        bind(stmt, next, match)
         var ids = Set<String>()
         while sqlite3_step(stmt) == SQLITE_ROW {
             ids.insert(str(stmt, 0))
@@ -1702,16 +1779,15 @@ final class MessageStore: @unchecked Sendable {
     /// - Parameter scope: Suchbereich.
     /// - Returns: Formatierte Adressen ohne Doppelte, ungeordnet.
     func participantAddresses(in scope: SearchScope) -> [String] {
-        guard !scope.accountIDs.isEmpty else { return [] }
+        guard !scope.folders.isEmpty else { return [] }
         let sql = """
             SELECT "from", toJSON, ccJSON FROM message
-            WHERE accountID IN (\(Self.placeholders(scope.accountIDs.count))) AND folder = ?
+            WHERE \(Self.folderCondition(scope.folders.count))
             \(scope.flaggedOnly ? "AND isFlagged = 1" : "")
             """
         guard let stmt = prepare(sql) else { return [] }
         defer { sqlite3_finalize(stmt) }
-        let next = bind(stmt, accountIDs: scope.accountIDs)
-        bind(stmt, next, scope.folder)
+        _ = bind(stmt, folders: scope.folders, from: 1)
         var addresses = Set<String>()
         // Gleiche JSON-Listen kommen oft vor (z. B. immer „An: ich“) –
         // jede nur einmal entschlüsseln.
@@ -2041,6 +2117,33 @@ final class MessageStore: @unchecked Sendable {
     /// - Returns: z. B. „?,?,?“ für drei Werte.
     private static func placeholders(_ count: Int) -> String {
         Array(repeating: "?", count: count).joined(separator: ",")
+    }
+
+    /// Bedingung „Mail liegt in einem dieser Ordner“ für mehrere Paare aus
+    /// Postfach und Ordner.
+    ///
+    /// - Parameter count: Anzahl der Paare (mindestens 1).
+    /// - Returns: z. B. „((accountID = ? AND folder = ?) OR (…))“.
+    private static func folderCondition(_ count: Int) -> String {
+        "(" + Array(repeating: "(accountID = ? AND folder = ?)", count: count).joined(separator: " OR ") + ")"
+    }
+
+    /// Bindet Paare aus Postfach und Ordner an die Platzhalter von
+    /// `folderCondition`.
+    ///
+    /// - Parameters:
+    ///   - s: Vorbereitetes Statement.
+    ///   - folders: Ordner je Postfach in Platzhalter-Reihenfolge.
+    ///   - start: Position des ersten Platzhalters.
+    /// - Returns: Nächste freie Platzhalter-Position.
+    private func bind(_ s: OpaquePointer?, folders: [FolderKey], from start: Int32) -> Int32 {
+        var index = start
+        for key in folders {
+            bind(s, index, key.accountID.uuidString)
+            bind(s, index + 1, key.folder)
+            index += 2
+        }
+        return index
     }
 
     /// Bindet Postfach-IDs ab Position 1 an die Platzhalter einer

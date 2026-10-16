@@ -10,8 +10,11 @@
 //    Suchbereichs; eine gewählte Person wird zur Marke (Mails von und an
 //    diese Adresse) und hebt die Mindestlänge auf.
 //  - Serversuche auf Knopfdruck: im gezeigten Ordner bzw. nacheinander in
-//    den Posteingängen; höchstens 100 Treffer je Ordner, nur Treffer, die
-//    nicht im Cache liegen. Eine geänderte Eingabe verwirft das Ergebnis.
+//    den Ordnern der Sammelansicht (Posteingänge, Spam-Ordner); höchstens
+//    100 Treffer je Ordner, nur Treffer, die nicht im Cache liegen. Eine
+//    geänderte Eingabe verwirft das Ergebnis. Die Sichten „Ungelesen“ und
+//    „Mit Kennzeichnung“ suchen nur im Cache – ihre Mails liegen dort
+//    vollständig.
 //
 //  Gesucht wird immer in der gezeigten Ansicht (`SearchScope`). Die
 //  lokale Suche liefert nur Cache-IDs; die Liste filtert damit ihre
@@ -22,7 +25,8 @@
 //  Serversuche im MailFetchService.
 //
 //  Abhängigkeiten: AccountStore (Zugangsdaten), MessageStore, SearchText,
-//  SearchScope, SearchPerson, MailFetchService, MailboxSelection, Log.
+//  SearchScope, SearchPerson, MailFetchService, MailboxSelection, FolderKey,
+//  Log.
 //
 
 import Foundation
@@ -139,8 +143,11 @@ final class SearchViewModel {
     /// - Parameters:
     ///   - selection: Gezeigte Ansicht.
     ///   - fetchingAccountIDs: Postfächer mit eingeschaltetem Abruf.
-    func updateScope(for selection: MailboxSelection, fetchingAccountIDs: [UUID]) {
-        let newScope = SearchScope.make(for: selection, fetchingAccountIDs: fetchingAccountIDs)
+    ///   - spamFolders: Spam-Ordner dieser Postfächer (Sicht „Spam“).
+    func updateScope(for selection: MailboxSelection, fetchingAccountIDs: [UUID], spamFolders: [FolderKey]) {
+        let newScope = SearchScope.make(
+            for: selection, fetchingAccountIDs: fetchingAccountIDs, spamFolders: spamFolders
+        )
         guard newScope != scope else { return }
         let hadScope = scope != nil
         scope = newScope
@@ -169,7 +176,7 @@ final class SearchViewModel {
 
     /// Sucht auf dem Server.
     ///
-    /// Verarbeitung: Nacheinander je Postfach des Bereichs (eine Verbindung
+    /// Verarbeitung: Nacheinander je Ordner des Bereichs (eine Verbindung
     /// nach der anderen). Ein nicht erreichbares Postfach wird gezählt, die
     /// übrigen werden trotzdem durchsucht. Die Treffer aller Postfächer
     /// stehen gemeinsam nach Datum (neueste zuerst). Ändert sich die
@@ -186,12 +193,12 @@ final class SearchViewModel {
             var hits: [MessageListItem] = []
             var hasMore = false
             var unreachable = 0
-            for accountID in scope.accountIDs {
+            for key in scope.folders {
                 if Task.isCancelled { return }
                 do {
-                    let credentials = try accountStore.credentials(for: accountID)
+                    let credentials = try accountStore.credentials(for: key.accountID)
                     let result = try await MailFetchService.searchOnServer(
-                        credentials, folder: scope.folder, query: query, address: address
+                        credentials, folder: key.folder, query: query, address: address
                     )
                     hits += result.hits
                     hasMore = hasMore || result.hasMore

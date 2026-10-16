@@ -4,8 +4,9 @@
 //
 //  Zweck: Tests für die Listenabfragen des MessageStore – Listeneinträge
 //  ohne Mailinhalt (samt Empfängern, Größe und Spam-Angabe), Sortierung,
-//  Migration auf Schema-Stufe 3 (Index angelegt) und weiter bis zur
-//  aktuellen Stufe (Vorschau-Spalte entfernt).
+//  die Sammelansichten „Ungelesen“ (samt Zähler und behaltenen Mails) und
+//  „Spam“ (mehrere Ordner), Migration auf Schema-Stufe 3 (Index angelegt)
+//  und weiter bis zur aktuellen Stufe (Vorschau-Spalte entfernt).
 //
 //  Jeder Test arbeitet auf einer eigenen Datei im Temp-Verzeichnis.
 //
@@ -26,20 +27,26 @@ struct MessageStoreListTests {
             .appendingPathComponent("MailwerkTests-\(UUID().uuidString).sqlite").path
     }
 
-    /// Testhilfe: Nachricht mit wählbarem Text, Datum und Kennzeichen.
+    /// Zweites Postfach für Sammelansichten.
+    private static let other = UUID(uuidString: "3F2504E0-4F89-11D3-9A0C-0305E82C3302")!
+
+    /// Testhilfe: Nachricht mit wählbarem Postfach, Text, Datum, Kennzeichen und Gelesen-Status.
     private func message(
         uid: UInt32,
+        account: UUID? = nil,
         folder: String = "INBOX",
         text: String? = "Text",
         date: Date = Date(timeIntervalSince1970: 1_700_000_000),
-        flagged: Bool = false
+        flagged: Bool = false,
+        unread: Bool = true
     ) -> CachedMessage {
-        CachedMessage(
-            id: CachedMessage.makeID(accountID: Self.account, folder: folder, uid: uid),
-            accountID: Self.account, accountDisplayName: "Test", folder: folder, uid: uid,
+        let account = account ?? Self.account
+        return CachedMessage(
+            id: CachedMessage.makeID(accountID: account, folder: folder, uid: uid),
+            accountID: account, accountDisplayName: "Test", folder: folder, uid: uid,
             subject: "Betreff \(uid)", from: "anna@example.org", to: "kim@example.org",
             date: date,
-            isUnread: true, isFlagged: flagged, isAnswered: false, isForwarded: true,
+            isUnread: unread, isFlagged: flagged, isAnswered: false, isForwarded: true,
             totalSizeBytes: 100, hasAttachments: true, textBody: text, htmlBody: "<p>HTML</p>",
             fetchedAt: Date(), headers: CachedMessageHeaders()
         )
@@ -106,6 +113,46 @@ struct MessageStoreListTests {
         #expect(store.folderMessages(accountID: Self.account, folder: "INBOX").map(\.uid) == [2, 3, 1])
         #expect(store.allMessages(accountIDs: [Self.account], folder: "INBOX").map(\.uid) == [2, 3, 1])
         #expect(store.flaggedInboxMessages(accountIDs: [Self.account]).map(\.uid) == [2, 3, 1])
+    }
+
+    /// Ungelesen: nur ungelesene Mails der Posteingänge; Zähler passend.
+    @Test func unreadListAndCountCoverInboxesOnly() {
+        let store = MessageStore(path: temporaryPath())
+        store.saveMessage(message(uid: 1, date: Date(timeIntervalSince1970: 1_000)))
+        store.saveMessage(message(uid: 2, date: Date(timeIntervalSince1970: 2_000), unread: false))
+        store.saveMessage(message(uid: 3, account: Self.other, date: Date(timeIntervalSince1970: 3_000)))
+        store.saveMessage(message(uid: 4, folder: "Archiv"))
+
+        let ids = [Self.account, Self.other]
+        #expect(store.unreadInboxMessages(accountIDs: ids).map(\.uid) == [3, 1])
+        #expect(store.unreadInboxCount(accountIDs: ids) == 2)
+        #expect(store.unreadInboxCount(accountIDs: [Self.account]) == 1)
+    }
+
+    /// Ungelesen: bereits gezeigte Mails bleiben, auch wenn sie inzwischen gelesen sind.
+    @Test func unreadListKeepsShownMails() {
+        let store = MessageStore(path: temporaryPath())
+        let read = message(uid: 2, date: Date(timeIntervalSince1970: 2_000), unread: false)
+        store.saveMessage(message(uid: 1, date: Date(timeIntervalSince1970: 1_000)))
+        store.saveMessage(read)
+        store.saveMessage(message(uid: 3, date: Date(timeIntervalSince1970: 3_000), unread: false))
+
+        let list = store.unreadInboxMessages(accountIDs: [Self.account], keeping: [read.id])
+        #expect(list.map(\.uid) == [2, 1])
+        #expect(store.unreadInboxCount(accountIDs: [Self.account]) == 1)
+    }
+
+    /// Spam-Sicht: je Postfach der eigene Ordner, gemeinsam nach Datum.
+    @Test func messagesFromSeveralFolders() {
+        let store = MessageStore(path: temporaryPath())
+        store.saveMessage(message(uid: 1, folder: "Spam", date: Date(timeIntervalSince1970: 1_000)))
+        store.saveMessage(message(uid: 2, account: Self.other, folder: "Junk", date: Date(timeIntervalSince1970: 2_000)))
+        store.saveMessage(message(uid: 3, folder: "Junk"))
+        store.saveMessage(message(uid: 4))
+
+        let folders = [FolderKey(accountID: Self.account, folder: "Spam"), FolderKey(accountID: Self.other, folder: "Junk")]
+        #expect(store.messages(in: folders).map(\.uid) == [2, 1])
+        #expect(store.messages(in: []).isEmpty)
     }
 
     /// Die vollständige Mail ist weiterhin über message(id:) mit Text und HTML erreichbar.

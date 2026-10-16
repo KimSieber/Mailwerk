@@ -2,9 +2,11 @@
 //  FolderSidebarView.swift
 //  Mailwerk
 //
-//  Zweck: Inhalt der Ordnerleiste. Oben „Alle Eingänge“ – die aktuelle
-//  Ansicht, ein Tipp darauf schließt die Leiste – und „Mit Kennzeichnung“.
-//  Darunter je Postfach ein aufklappbarer Abschnitt mit dem Ordnerbaum.
+//  Zweck: Inhalt der Ordnerleiste. Oben die Sammelansichten über alle
+//  Postfächer – „Alle Eingänge“, „Ungelesen“ (mit Zahl), „Mit
+//  Kennzeichnung“ (mit Zahl) und „Spam“ (alle Spam-Ordner, ohne Zahl); ein
+//  Tipp wählt die Ansicht und schließt die Leiste. Darunter je Postfach
+//  ein aufklappbarer Abschnitt mit dem Ordnerbaum.
 //
 //  Ein Postfach, dessen Abruf auf diesem Gerät ausgeschaltet ist, trägt
 //  vor dem Namen ein orangefarbenes Pause-Zeichen (FetchPausedBadge);
@@ -48,6 +50,8 @@ struct FolderSidebarView: View {
     @Binding var expandedAccounts: Set<UUID>
     /// Gewählte Ansicht.
     @Binding var selection: MailboxSelection
+    /// Anzahl ungelesener Mails der Posteingänge (Zahl an „Ungelesen“).
+    var unreadCount: Int = 0
     /// Anzahl gekennzeichneter Mails (Zahl an „Mit Kennzeichnung“).
     var flaggedCount: Int = 0
     /// Legt einen Ordner an: Postfach, Server-Pfad des Elternordners
@@ -73,20 +77,10 @@ struct FolderSidebarView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                SidebarRow(
-                    title: "Alle Eingänge",
-                    systemImage: "tray.2",
-                    isSelected: selection == .allInboxes,
-                    action: { select(.allInboxes) }
-                )
-
-                SidebarRow(
-                    title: "Mit Kennzeichnung",
-                    systemImage: "flag",
-                    badge: flaggedCount > 0 ? flaggedCount : nil,
-                    isSelected: selection == .flagged,
-                    action: { select(.flagged) }
-                )
+                collectionRow(.allInboxes)
+                collectionRow(.unread, badge: unreadCount)
+                collectionRow(.flagged, badge: flaggedCount)
+                collectionRow(.spam)
 
                 Divider()
                     .padding(.vertical, 8)
@@ -228,6 +222,22 @@ struct FolderSidebarView: View {
                 activeAlert = .failure("Ordner nicht gelöscht", error)
             }
         }
+    }
+
+    /// Zeile einer Sammelansicht; Titel und Symbol kommen aus der Ansicht.
+    ///
+    /// - Parameters:
+    ///   - view: Sammelansicht.
+    ///   - badge: Zahl rechts; 0 bzw. `nil` = keine.
+    /// - Returns: Die Zeile.
+    private func collectionRow(_ view: MailboxSelection, badge: Int? = nil) -> some View {
+        SidebarRow(
+            title: view.title,
+            systemImage: view.systemImage,
+            badge: badge,
+            isSelected: selection == view,
+            action: { select(view) }
+        )
     }
 
     /// Wählt eine Ansicht und schließt die Leiste.
