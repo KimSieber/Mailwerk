@@ -36,6 +36,8 @@ struct ServerMessageLoader: View {
     let onChange: () -> Void
     /// Wird beim Verlassen aufgerufen, wenn die Mail geladen wurde.
     let onReturn: () -> Void
+    /// Suche nach einer Person in der Liste („Suchen nach …“ im Mailkopf).
+    var onSearchPerson: ((SearchPerson) -> Void)? = nil
 
     /// Geladene Mail; `nil`, solange sie lädt oder das Laden scheiterte.
     @State private var message: CachedMessage?
@@ -53,7 +55,8 @@ struct ServerMessageLoader: View {
                     accountStore: accountStore,
                     spamFilter: spamFilter,
                     scoreLimit: scoreLimit,
-                    onChange: onChange
+                    onChange: onChange,
+                    onSearchPerson: onSearchPerson
                 )
             } else if let failure {
                 ContentUnavailableView {

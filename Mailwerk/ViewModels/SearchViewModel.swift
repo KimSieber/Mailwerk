@@ -156,6 +156,22 @@ final class SearchViewModel {
         }
     }
 
+    /// Startet die Suche nach einer Person (Marke im Suchfeld), z. B. aus
+    /// dem Menü einer Person im Mailkopf.
+    ///
+    /// Verarbeitung: Öffnet das Suchfeld, leert die Eingabe und setzt die
+    /// Person als Marke – die Liste zeigt dann die Mails von und an sie in
+    /// der gezeigten Ansicht.
+    ///
+    /// - Parameter person: Gesuchte Person.
+    func startSearch(for person: SearchPerson) {
+        if !isPresented {
+            isPresented = true
+        }
+        text = ""
+        tokens = [person]
+    }
+
     /// Führt die lokale Suche erneut aus, z. B. nachdem sich der Cache
     /// geändert hat (Abruf, Löschen, geladener Servertreffer).
     func refreshLocal() {

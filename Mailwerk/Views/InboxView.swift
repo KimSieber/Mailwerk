@@ -594,6 +594,20 @@ struct InboxView: View {
 
     // MARK: - Suche
 
+    /// Startet die Suche nach einer Person aus dem Mailkopf („Suchen nach …“).
+    ///
+    /// Verarbeitung: Die Mail schließt sich zuerst (animiert); das Suchfeld
+    /// öffnet sich erst danach, weil iOS ein Öffnen während des
+    /// Zurückgehens übergeht.
+    ///
+    /// - Parameter person: Gesuchte Person.
+    private func startPersonSearch(_ person: SearchPerson) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(400))
+            search.startSearch(for: person)
+        }
+    }
+
     /// Setzt den Suchbereich auf die gezeigte Ansicht.
     private func updateSearchScope() {
         search.updateScope(
@@ -642,7 +656,8 @@ struct InboxView: View {
                                 // Jetzt im Cache: wird zum lokalen Treffer.
                                 search.removeServerHit(hit.id)
                                 viewModel.loadFromCache()
-                            }
+                            },
+                            onSearchPerson: { startPersonSearch($0) }
                         )
                     } label: {
                         rowContent(for: hit, colorHex: colors[hit.accountID], showsRecipients: showsRecipients)
@@ -915,7 +930,8 @@ struct InboxView: View {
                         accountStore: accountStore,
                         spamFilter: viewModel.spamFilter,
                         scoreLimit: spamSettings.scoreLimit,
-                        onChange: { viewModel.loadFromCache() }
+                        onChange: { viewModel.loadFromCache() },
+                        onSearchPerson: { startPersonSearch($0) }
                     )
                 } label: {
                     rowContent(for: message, colorHex: colorHex, showsRecipients: showsRecipients)
@@ -1467,6 +1483,8 @@ private struct MessageDetailLoader: View {
     let scoreLimit: Double
     /// Wird nach Änderungen an der Mail aufgerufen (Liste neu laden).
     let onChange: () -> Void
+    /// Suche nach einer Person in der Liste („Suchen nach …“ im Mailkopf).
+    var onSearchPerson: ((SearchPerson) -> Void)? = nil
 
     /// Geladene Mail; `nil`, solange sie lädt oder fehlt.
     @State private var message: CachedMessage?
@@ -1482,7 +1500,8 @@ private struct MessageDetailLoader: View {
                     accountStore: accountStore,
                     spamFilter: spamFilter,
                     scoreLimit: scoreLimit,
-                    onChange: onChange
+                    onChange: onChange,
+                    onSearchPerson: onSearchPerson
                 )
             } else if isMissing {
                 ContentUnavailableView(

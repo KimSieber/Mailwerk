@@ -48,6 +48,12 @@
 //  nicht angesprochene Inline-Bilder; „Anlagen lokal löschen“ lässt die
 //  Bilder im Text stehen. Drucken und Teilen folgen der Anzeige.
 //
+//  Personen im Mailkopf (MessageDetailHeader) haben ein Menü: „Neue E-Mail
+//  an …“ öffnet das Verfassen-Fenster wie ein mailto-Link (Absender ist das
+//  Postfach dieser Mail), „Kontaktkarte anzeigen“ die Apple-Kontaktkarte
+//  (ContactCardView), „Suchen nach …“ schließt die Mail und sucht in der
+//  Liste (`onSearchPerson`).
+//
 //  Ganz unten im Menü, abgesetzt, steht „Originalquelle“ (RawSourceView):
 //  die Mail als reiner Text mit allen Kopfzeilen, für Analysen. Mit
 //  Tastatur auch per ⌥⌘U, wie in Apple Mail.
@@ -57,7 +63,7 @@
 //  SpamFilterService,
 //  AttachmentManager, MessageStore, MailPrintFormatter, RemoteContentPolicy,
 //  RawSourceView, InlineImages, InlineImageLoader, NetworkMonitor, Dialogs,
-//  AppTheme, Log.
+//  AppTheme, HeaderPerson, ContactCardView, MailtoLink, SearchPerson, Log.
 //
 
 import SwiftUI
@@ -78,6 +84,10 @@ struct MessageDetailView: View {
     let scoreLimit: Double
     /// Wird nach jeder Änderung aufgerufen (Liste neu laden).
     let onChange: (() -> Void)?
+    /// Startet in der Liste die Suche nach einer Person („Suchen nach …“
+    /// im Menü einer Person des Mailkopfs); `nil` = ohne Liste, der
+    /// Eintrag entfällt.
+    let onSearchPerson: ((SearchPerson) -> Void)?
 
     @Environment(\.dismiss) private var dismiss
 
@@ -118,8 +128,11 @@ struct MessageDetailView: View {
     @State private var showRawSource = false
     /// Zu verfassende Antwort bzw. Weiterleitung.
     @State private var composeRequest: ComposeRequest?
-    /// Getippter mailto:-Link aus der Mail → neue Mail in Mailwerk.
+    /// Getippter mailto:-Link aus der Mail bzw. „Neue E-Mail an …“ aus dem
+    /// Mailkopf → neue Mail in Mailwerk.
     @State private var mailtoRequest: MailtoLink?
+    /// Person, deren Kontaktkarte gezeigt wird.
+    @State private var contactPerson: HeaderPerson?
     /// Einziger Meldungskanal der Ansicht.
     @State private var activeAlert: AlertItem?
     /// Einziger Rückfragekanal der Ansicht.
@@ -141,18 +154,22 @@ struct MessageDetailView: View {
     ///   - spamFilter: Spamfilter für Blockieren und Vertrauen.
     ///   - scoreLimit: Score-Obergrenze für vertrauenswürdige Absender.
     ///   - onChange: Wird nach jeder Änderung aufgerufen.
+    ///   - onSearchPerson: Suche nach einer Person in der Liste; `nil` =
+    ///     ohne Liste.
     init(
         message: CachedMessage,
         accountStore: AccountStore,
         spamFilter: SpamFilterService,
         scoreLimit: Double,
-        onChange: (() -> Void)? = nil
+        onChange: (() -> Void)? = nil,
+        onSearchPerson: ((SearchPerson) -> Void)? = nil
     ) {
         self.message = message
         self.accountStore = accountStore
         self.spamFilter = spamFilter
         self.scoreLimit = scoreLimit
         self.onChange = onChange
+        self.onSearchPerson = onSearchPerson
         _isUnread = State(initialValue: message.isUnread)
         _isFlagged = State(initialValue: message.isFlagged)
     }
@@ -201,6 +218,9 @@ struct MessageDetailView: View {
             .sheet(isPresented: $showRawSource) {
                 RawSourceView(message: message, accountStore: accountStore)
             }
+            .sheet(item: $contactPerson) { person in
+                ContactCardView(person: person)
+            }
             .background { rawSourceShortcut }
             .quickLookPreview($previewURL)
             .confirmationRequest($activeConfirmation)
@@ -233,8 +253,21 @@ struct MessageDetailView: View {
     private var content: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                MessageDetailHeader(message: message, isFlagged: isFlagged)
-                    .padding()
+                MessageDetailHeader(
+                    message: message,
+                    isFlagged: isFlagged,
+                    onNewMail: { person in
+                        // Wie ein mailto-Link: Absender ist das Postfach dieser Mail.
+                        mailtoRequest = Self.mailto(to: person.address)
+                    },
+                    onContactCard: { contactPerson = $0 },
+                    onSearch: onSearchPerson == nil ? nil : { person in
+                        // Erst die Mail schließen, dann sucht die Liste.
+                        dismiss()
+                        onSearchPerson?(person.searchPerson)
+                    }
+                )
+                .padding()
                 messageBody
                     .padding()
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -277,6 +310,17 @@ struct MessageDetailView: View {
         } else {
             Text("Kein Inhalt verfügbar").foregroundStyle(.secondary)
         }
+    }
+
+    /// mailto-Link an eine einzelne Adresse.
+    ///
+    /// - Parameter address: Empfänger.
+    /// - Returns: Link für das Verfassen-Fenster; `nil`, wenn sich die
+    ///   Adresse nicht als Link darstellen lässt.
+    private static func mailto(to address: String) -> MailtoLink? {
+        guard let encoded = address.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "mailto:\(encoded)") else { return nil }
+        return MailtoLink(url: url)
     }
 
     // MARK: - Symbolleiste und Menü
