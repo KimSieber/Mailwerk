@@ -3,8 +3,8 @@
 //  Mailwerk
 //
 //  Zweck: Angebot „Rückgängig“ nach einer Änderung von Kennzeichnung oder
-//  Gelesen-Status in der Liste – welche Änderung, an welchen Mails, und
-//  der Text für den Hinweis am unteren Rand.
+//  Gelesen-Status in der Liste – welche Änderung, an welchen Mails, Text
+//  und Symbol für den Balken am unteren Rand sowie seine Laufzeit.
 //
 //  Enthalten sind nur die Mails, die sich tatsächlich geändert haben.
 //  „Rückgängig“ nimmt genau diese Änderung zurück.
@@ -26,8 +26,27 @@ struct UndoOffer: Identifiable {
     /// Mails, an denen sie ausgeführt wurde.
     let targets: [MessageActions.Target]
 
+    /// Laufzeit des Angebots; so lange läuft der Balken zurück.
+    static let duration: Duration = .seconds(5)
+
     /// Text des Hinweises.
     var text: String { Self.text(for: change, count: targets.count) }
+
+    /// SF-Symbol des Hinweises: der neue Zustand der Mail(s).
+    var systemImage: String { Self.systemImage(for: change) }
+
+    /// SF-Symbol zu einer Änderung – wie das Symbol der Wischaktion.
+    ///
+    /// - Parameter change: Ausgeführte Änderung.
+    /// - Returns: Name des Symbols.
+    static func systemImage(for change: MessageActions.StateChange) -> String {
+        switch change {
+        case .flagged(true):  return "flag.fill"
+        case .flagged(false): return "flag.slash"
+        case .read(true):     return "envelope.open"
+        case .read(false):    return "envelope.badge"
+        }
+    }
 
     /// Text des Hinweises zu einer Änderung.
     ///

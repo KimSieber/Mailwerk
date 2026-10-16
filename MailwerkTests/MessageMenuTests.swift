@@ -4,7 +4,8 @@
 //
 //  Zweck: Tests für das gemeinsame Mail-Menü – Beschriftungen und Symbole
 //  (MessageMenuLabels), Rückfragen und Meldungen (MessageActionDialogs)
-//  sowie Texte und Umkehrung von „Rückgängig“ (UndoOffer, StateChange).
+//  sowie Texte, Symbole, Laufzeit und Umkehrung von „Rückgängig“ (UndoOffer,
+//  StateChange).
 //
 
 import Foundation
@@ -93,5 +94,18 @@ struct MessageMenuTests {
         #expect(MessageMenuLabels.source.title == "Originalquelle")
         #expect(MessageMenuLabels.source.systemImage == "doc.plaintext")
         #expect(MessageMenuLabels.source.accessibility == "Originalquelle der Mail anzeigen")
+    }
+
+    /// Symbol des Rückgängig-Balkens: der neue Zustand, wie bei den Wischaktionen.
+    @Test func undoSymbolFollowsChange() {
+        #expect(UndoOffer.systemImage(for: .flagged(true)) == "flag.fill")
+        #expect(UndoOffer.systemImage(for: .flagged(false)) == "flag.slash")
+        #expect(UndoOffer.systemImage(for: .read(true)) == "envelope.open")
+        #expect(UndoOffer.systemImage(for: .read(false)) == "envelope.badge")
+    }
+
+    /// Laufzeit des Rückgängig-Angebots: 5 Sekunden.
+    @Test func undoDurationIsFiveSeconds() {
+        #expect(UndoOffer.duration == .seconds(5))
     }
 }

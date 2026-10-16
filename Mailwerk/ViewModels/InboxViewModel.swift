@@ -982,7 +982,8 @@ final class InboxViewModel {
 
     // MARK: - Rückgängig
 
-    /// Zeigt den „Rückgängig“-Hinweis und blendet ihn nach 5 Sekunden aus.
+    /// Zeigt den „Rückgängig“-Hinweis und blendet ihn nach
+    /// `UndoOffer.duration` (5 Sekunden) aus.
     ///
     /// Verarbeitung: Ein neues Angebot ersetzt ein noch sichtbares.
     ///
@@ -992,7 +993,7 @@ final class InboxViewModel {
         undoTask?.cancel()
         undoOffer = offer
         undoTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(5))
+            try? await Task.sleep(for: UndoOffer.duration)
             guard !Task.isCancelled else { return }
             self?.undoOffer = nil
         }

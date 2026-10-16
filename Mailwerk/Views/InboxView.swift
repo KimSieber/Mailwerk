@@ -4,21 +4,23 @@
 //
 //  Zweck: Hauptansicht mit der Nachrichtenliste. Zeigt die gewählte
 //  Ansicht (alle Posteingänge, Ungelesen, Gekennzeichnet, Spam, ein
-//  Ordner), Titel mit Stand und Verbindungshinweis, Wischaktionen
+//  Ordner), Titel mit Stand und Verbindungshinweis, die eigene untere
+//  Leiste (ListBottomBar: Sortieren, Suche als großer Kreis, Neue Mail),
+//  den Rückgängig-Balken mit ablaufender Füllung, Wischaktionen
 //  (gelesen, kennzeichnen),
 //  das Kontextmenü einer Mail per langem Drücken (dasselbe Menü wie in
 //  der Mailansicht, siehe MessageMenu), „Rückgängig“ für Kennzeichnung
 //  und Gelesen-Status, die Mehrfachauswahl (über „Auswählen“ im
 //  Kontextmenü; Auswahlkreise, „Alle auswählen“, „Fertig“ und schwebende
 //  Befehlsleiste unten), die Zeile „Ältere Nachrichten laden“, die
-//  Ordnerleiste sowie Einstellungen. Sortieren und Verfassen liegen auf dem
-//  iPhone/iPad in der Leiste am unteren Rand (einhändige Bedienung), auf
-//  dem Mac in der Symbolleiste; im Auswahlmodus ersetzt die Befehlsleiste
-//  die untere Leiste. Eine abweichende Sortierung hebt den Knopf hervor
-//  (blau getönter Glaskreis). Die drei Knöpfe stehen als Gruppe in der
-//  Mitte. Zwischen beiden sitzt die Suche
-//  (`searchable`; auf dem iPhone ein Knopf der unteren Leiste, der zum
-//  schwebenden Suchfeld über der Tastatur wird): Treffer aus dem Cache
+//  Ordnerleiste sowie Einstellungen. Sortieren, Suche und Verfassen liegen
+//  auf dem iPhone/iPad in der eigenen Leiste am unteren Rand (einhändige
+//  Bedienung, ListBottomBar), auf dem Mac in der Symbolleiste; im
+//  Auswahlmodus ersetzt die Befehlsleiste die untere Leiste. Eine
+//  abweichende Sortierung hebt den Knopf hervor (Kreis in der
+//  Akzentfarbe). Die Suche (`searchable`) öffnet der Suchkreis; ihr Feld
+//  steht auf dem iPhone/iPad oben unter dem Titel, nur dort stellt iOS
+//  keinen zweiten Suchknopf in die untere Leiste: Treffer aus dem Cache
 //  ersetzen die Liste, darunter Namensvorschläge als Marken und der
 //  Abschnitt „Auf dem Server“ (Serversuche auf Knopfdruck; ein Tipp lädt
 //  den Treffer und öffnet ihn). Eine neue Mail geht vom
@@ -61,7 +63,8 @@
 //  MessageDetailView, MessageMenu, MessageActionDialogs, FolderMoveSheet,
 //  MessageSelection, SelectionActionBar, MessageSort, SearchIndexBuilder,
 //  SearchViewModel, SearchPerson, ServerMessageLoader,
-//  ComposeView, DraftComposeLoader, Dialogs, AppTheme, Log.
+//  ComposeView, DraftComposeLoader, Dialogs, AppTheme, ListBottomBar,
+//  UndoOffer, Log.
 //
 
 import SwiftUI
@@ -245,6 +248,7 @@ struct InboxView: View {
                 text: $search.text,
                 tokens: $search.tokens,
                 isPresented: $search.isPresented,
+                placement: Self.searchPlacement,
                 prompt: "Suchen"
             ) { person in
                 Label(person.title, systemImage: "person.fill")
@@ -256,9 +260,6 @@ struct InboxView: View {
                 }
             }
             #if os(iOS)
-            // Die Suche ist ein Knopf der unteren Leiste und wird beim
-            // Antippen zum Suchfeld über der Tastatur.
-            .searchToolbarBehavior(.minimize)
             // Die obere Leiste (Ordner, Titel, Einstellungen bzw. „Alle
             // auswählen“ und „Fertig“) bleibt während der Suche stehen –
             // iOS blendet sie sonst aus.
@@ -285,26 +286,28 @@ struct InboxView: View {
             // Knöpfe nicht.
             .overlay(alignment: .bottom) {
                 if let offer = viewModel.undoOffer {
-                    UndoBanner(
+                    UndoBar(
                         text: offer.text,
+                        systemImage: offer.systemImage,
+                        duration: UndoOffer.duration,
                         onUndo: { Task { await viewModel.undo(offer) } },
                         onDismiss: { viewModel.dismissUndo() }
                     )
+                    // Neues Angebot = neuer Balken, der Lauf beginnt von vorn.
+                    .id(offer.id)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .padding(.bottom, 16)
-                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+                    .padding(.horizontal, 12)
                 }
             }
             .animation(.snappy(duration: 0.25), value: viewModel.undoOffer?.id)
-            // Befehlsleiste im Auswahlmodus – schwebt über der Liste am
-            // unteren Rand anstelle der unteren Leiste.
+            // Untere Leiste bzw. Befehlsleiste im Auswahlmodus – schwebt
+            // über der Liste am unteren Rand.
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                if viewModel.isSelecting {
-                    selectionBar
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
+                bottomInset
             }
             .animation(.snappy(duration: 0.25), value: viewModel.isSelecting)
+            .animation(.snappy(duration: 0.25), value: search.isPresented)
             .task {
                 guard !hasLoadedOnce else { return }
                 hasLoadedOnce = true
@@ -456,15 +459,6 @@ struct InboxView: View {
                     withAnimation(.snappy(duration: 0.25)) { viewModel.endSelection() }
                 }
             }
-            #if os(iOS)
-            if search.isPresented {
-                // Auswahl während einer Suche: Das Suchfeld bleibt unten.
-                // Ohne seinen Platz in der unteren Leiste wanderte das
-                // aktive Suchfeld in die obere Leiste und verdeckte
-                // „Alle auswählen“ und „Fertig“.
-                DefaultToolbarItem(kind: .search, placement: .bottomBar)
-            }
-            #endif
         } else {
             ToolbarItem(placement: Self.leadingPlacement) {
                 Button {
@@ -505,22 +499,10 @@ struct InboxView: View {
             ToolbarItem {
                 composeButton
             }
-            #else
-            // Untere Leiste: Sortieren, Suche und Verfassen als Gruppe in
-            // der Mitte – mit dem Daumen erreichbar. Die Abstandhalter
-            // außen zentrieren; zwischen den Knöpfen steht keiner, damit
-            // iOS sie unter einem gemeinsamen Glas zusammenfasst.
-            ToolbarSpacer(.flexible, placement: .bottomBar)
-            ToolbarItem(placement: .bottomBar) {
-                sortMenu
-            }
-            .sharedBackgroundVisibility(sortItemBackground)
-            DefaultToolbarItem(kind: .search, placement: .bottomBar)
-            ToolbarItem(placement: .bottomBar) {
-                composeButton
-            }
-            ToolbarSpacer(.flexible, placement: .bottomBar)
             #endif
+            // iPhone/iPad: Die untere Leiste ist ein Eigenbau (ListBottomBar,
+            // siehe `bottomInset`); das Suchfeld steht oben unter dem Titel
+            // (`searchPlacement`).
             ToolbarItem {
                 Menu {
                     Button {
@@ -542,26 +524,32 @@ struct InboxView: View {
 
     // MARK: - Sortieren und Verfassen
 
-    /// Sortiermenü: oben die Richtung, darunter das Feld; die aktive Wahl
-    /// trägt ein Häkchen. In Grundstellung ein normaler Knopf der Leiste;
-    /// weicht die Sortierung ab, ein kräftig blau getönter Glaskreis mit
-    /// weißem Symbol – so ist jederzeit erkennbar, dass die Liste nicht
+    /// Inhalt des Sortiermenüs: oben die Richtung, darunter das Feld; die
+    /// aktive Wahl trägt ein Häkchen.
+    @ViewBuilder
+    private var sortMenuContent: some View {
+        Picker("Richtung", selection: $viewModel.sort.ascending) {
+            Text("Aufsteigend").tag(true)
+            Text("Absteigend").tag(false)
+        }
+        .pickerStyle(.inline)
+        Picker("Sortieren nach", selection: $viewModel.sort.field) {
+            ForEach(MessageSort.Field.allCases) { field in
+                Text(field.title(showsRecipients: showsRecipients)).tag(field)
+            }
+        }
+        .pickerStyle(.inline)
+    }
+
+    /// Sortiermenü der Symbolleiste (Mac). In Grundstellung ein normaler
+    /// Knopf; weicht die Sortierung ab, ein Glaskreis in der Akzentfarbe
+    /// mit weißem Symbol – so ist jederzeit erkennbar, dass die Liste nicht
     /// nach Datum steht. Der gemeinsame Glashintergrund der Leiste wird
     /// dafür ausgeblendet (`sortItemBackground`), sonst überdeckte er die
     /// Tönung.
     private var sortMenu: some View {
         Menu {
-            Picker("Richtung", selection: $viewModel.sort.ascending) {
-                Text("Aufsteigend").tag(true)
-                Text("Absteigend").tag(false)
-            }
-            .pickerStyle(.inline)
-            Picker("Sortieren nach", selection: $viewModel.sort.field) {
-                ForEach(MessageSort.Field.allCases) { field in
-                    Text(field.title(showsRecipients: showsRecipients)).tag(field)
-                }
-            }
-            .pickerStyle(.inline)
+            sortMenuContent
         } label: {
             if viewModel.sort.isStandard {
                 Label("Sortieren", systemImage: "arrow.up.arrow.down")
@@ -570,16 +558,52 @@ struct InboxView: View {
                     .fontWeight(.semibold)
                     .foregroundStyle(.white)
                     .frame(width: 44, height: 44)
-                    .glassEffect(.regular.tint(.blue).interactive(), in: .circle)
+                    .glassEffect(.regular.tint(Color.accentColor).interactive(), in: .circle)
                     .accessibilityLabel("Sortieren, geändert")
             }
         }
     }
 
     /// Gemeinsamer Glashintergrund der Leiste hinter dem Sortierknopf:
-    /// nur in Grundstellung; der blaue Glaskreis bringt seinen eigenen mit.
+    /// nur in Grundstellung; der Glaskreis bringt seinen eigenen mit.
     private var sortItemBackground: Visibility {
         viewModel.sort.isStandard ? .automatic : .hidden
+    }
+
+    /// Untere Leiste auf iPhone/iPad (Eigenbau, siehe ListBottomBar):
+    /// Sortieren, Suche als großer Kreis, Neue Mail.
+    private var listBottomBar: some View {
+        ListBottomBar(
+            isComposeEnabled: !accountStore.accounts.isEmpty,
+            onSearch: { search.isPresented = true },
+            onCompose: { showingCompose = true }
+        ) {
+            Menu {
+                sortMenuContent
+            } label: {
+                SortBarLabel(isChanged: !viewModel.sort.isStandard)
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// Inhalt am unteren Rand: im Auswahlmodus die Befehlsleiste, sonst auf
+    /// iPhone/iPad die untere Leiste – außer während einer Suche, dann
+    /// gehört der untere Rand der Tastatur bzw. den Treffern.
+    @ViewBuilder
+    private var bottomInset: some View {
+        if viewModel.isSelecting {
+            selectionBar
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else {
+            #if os(iOS)
+            if !search.isPresented {
+                listBottomBar
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+            #endif
+        }
     }
 
     /// Knopf „Neue Nachricht“; gesperrt, solange kein Postfach eingerichtet ist.
@@ -1164,6 +1188,19 @@ struct InboxView: View {
     /// mittig, mal links.
     private static let toolbarButtonsWidth: CGFloat = 200
 
+    /// Platz des Suchfelds. iPhone/iPad: oben unter dem Titel – nur dort
+    /// stellt iOS keinen eigenen Suchknopf in die untere Leiste, die
+    /// Mailwerk selbst gestaltet (ListBottomBar). Geöffnet wird es über den
+    /// Suchkreis unten; die Tastatur bleibt unten, die Bedienung damit
+    /// einhändig. Mac: wie gehabt in der Symbolleiste.
+    private static var searchPlacement: SearchFieldPlacement {
+        #if os(iOS)
+        return .navigationBarDrawer(displayMode: .automatic)
+        #else
+        return .automatic
+        #endif
+    }
+
     /// Platz links in der Symbolleiste (Ordnerleiste, „Alle auswählen“).
     /// Auf dem iPhone/iPad fest `.topBarLeading` – `.navigation` ist dort nur
     /// ein Wunsch, und iOS schob den Knopf beim Umbau der Leiste
@@ -1431,37 +1468,91 @@ private struct ListComposeRequest: Identifiable {
     let original: CachedMessage
 }
 
-/// „Rückgängig"-Hinweis am unteren Rand. Verschwindet nach 5 Sekunden
-/// oder auf Tipp – je nachdem, was zuerst kommt.
-private struct UndoBanner: View {
+/// „Rückgängig“-Balken am unteren Rand: Symbol, Text und rechts
+/// „Rückgängig“ auf einer Kapsel in der Akzentfarbe. Eine hellere Füllung
+/// läuft in der Laufzeit des Angebots von rechts nach links zurück und
+/// zeigt so, wie lange „Rückgängig“ noch möglich ist. Ein Tipp irgendwo auf
+/// den Balken nimmt die Änderung zurück, Wischen nach unten blendet ihn
+/// sofort aus. Das Ausblenden nach Ablauf übernimmt das ViewModel.
+private struct UndoBar: View {
     /// Was geändert wurde, z. B. „Kennzeichnung entfernt“.
     let text: String
+    /// SF-Symbol des neuen Zustands.
+    let systemImage: String
+    /// Laufzeit des Angebots.
+    let duration: Duration
     /// Nimmt die Änderung zurück.
     let onUndo: () -> Void
     /// Blendet den Hinweis aus.
     let onDismiss: () -> Void
 
-    /// Hinweis mit „Rückgängig“ und Schließen.
+    /// Verschiebung beim Wischen nach unten.
+    @State private var dragOffset: CGFloat = 0
+    /// Beginn der Laufzeit; der Balken entsteht je Angebot neu (`id`).
+    @State private var start = Date.now
+
+    /// Balken mit ablaufender Füllung.
     var body: some View {
-        HStack {
-            Text(text)
-                .font(.subheadline)
-            Spacer()
-            Button("Rückgängig") { onUndo() }
-                .font(.subheadline.weight(.semibold))
-            Button {
-                onDismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+        Button(action: onUndo) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.body.weight(.semibold))
+                Text(text)
+                    .font(.subheadline)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Text("Rückgängig")
+                    .font(.subheadline.weight(.bold))
             }
-            .buttonStyle(.plain)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 20)
+            .frame(height: 52)
+            .frame(maxWidth: .infinity)
+            .background(alignment: .leading) {
+                // Ablaufende Füllung: hellt das Blau links auf und
+                // schrumpft nach links. Fortlaufend aus der verstrichenen
+                // Zeit berechnet – unabhängig von Animationen, die beim
+                // Einblenden sonst den Lauf übernähmen.
+                TimelineView(.animation) { context in
+                    GeometryReader { proxy in
+                        Rectangle()
+                            .fill(.white.opacity(0.22))
+                            .frame(width: proxy.size.width * remaining(at: context.date))
+                    }
+                }
+            }
+            .clipShape(Capsule())
+            // Getöntes Glas in der Akzentfarbe: Fläche, Lichtkante und
+            // Wölbung kommen vom System, in Hell und Dunkel.
+            .glassEffect(.regular.tint(Color.accentColor).interactive(), in: Capsule())
+            .contentShape(Capsule())
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
+        .buttonStyle(.plain)
+        .offset(y: max(0, dragOffset))
+        .gesture(
+            DragGesture(minimumDistance: 10)
+                .onChanged { dragOffset = $0.translation.height }
+                .onEnded { value in
+                    if value.translation.height > 30 {
+                        onDismiss()
+                    } else {
+                        withAnimation(.snappy(duration: 0.2)) { dragOffset = 0 }
+                    }
+                }
+        )
+        .accessibilityLabel("\(text). Rückgängig")
+        .accessibilityHint("Wischen nach unten blendet den Hinweis aus.")
+    }
+
+    /// Verbleibender Anteil der Laufzeit.
+    ///
+    /// - Parameter date: Zeitpunkt der Darstellung.
+    /// - Returns: 1 = voll, 0 = abgelaufen.
+    private func remaining(at date: Date) -> CGFloat {
+        let total = duration / .seconds(1)
+        guard total > 0 else { return 0 }
+        let elapsed = date.timeIntervalSince(start)
+        return CGFloat(min(1, max(0, 1 - elapsed / total)))
     }
 }
 
