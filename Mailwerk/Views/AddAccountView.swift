@@ -13,7 +13,8 @@
 //  → AddAccountViewModel; Bearbeiten → EditAccountView.
 //
 //  Abhängigkeiten: SwiftUI, AddAccountViewModel, AccountStore, Dialogs,
-//  LabeledInputField, PlatformInputModifiers (Eingabearten der Felder).
+//  LabeledInputField, PlatformInputModifiers (Eingabearten der Felder),
+//  AppTheme (getönte Fläche, Abschnitte als Karten).
 //
 
 import SwiftUI
@@ -57,6 +58,7 @@ struct AddAccountView: View {
                         }
                     }
                 }
+                .cardRowBackground()
 
                 Section("IMAP (Empfang)") {
                     LabeledInputField(label: "Host", example: "z. B. imap.mail.org",
@@ -66,6 +68,7 @@ struct AddAccountView: View {
                                       text: $viewModel.imapPort)
                         .numberInput()
                 }
+                .cardRowBackground()
 
                 Section {
                     LabeledInputField(label: "Host", example: "z. B. smtp.mail.org",
@@ -80,6 +83,7 @@ struct AddAccountView: View {
                 } footer: {
                     Text("Ausschalten, wenn der Anbieter gesendete Mails selbst in „Gesendet“ ablegt (z. B. Gmail) – sonst erscheinen sie dort doppelt.")
                 }
+                .cardRowBackground()
 
                 Section {
                     Button {
@@ -104,7 +108,9 @@ struct AddAccountView: View {
                         }
                     }
                 }
+                .cardRowBackground()
             }
+            .appBackground()
             .navigationTitle("Postfach hinzufügen")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

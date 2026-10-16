@@ -17,7 +17,7 @@
 //
 //  Abhängigkeiten: MailFetchService, MessageStore, AccountStore
 //  (Zugangsdaten), NetworkMonitor, MessageDetailView, SpamFilterService,
-//  MessageListItem.
+//  MessageListItem, AppTheme.
 //
 
 import SwiftUI
@@ -75,6 +75,8 @@ struct ServerMessageLoader: View {
                 }
             }
         }
+        // Auch Lade- und Hinweiszustand auf der getönten Fläche.
+        .appBackground()
         .task { await load() }
         .onDisappear {
             if message != nil { onReturn() }

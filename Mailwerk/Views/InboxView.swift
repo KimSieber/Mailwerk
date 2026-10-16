@@ -29,6 +29,9 @@
 //  eingeschaltet, wird automatisch abgerufen. Ein Ordner eines
 //  ausgeschalteten Postfachs lädt beim Öffnen auch dessen Ordnerliste.
 //
+//  Die Liste liegt auf der getönten Fläche der App, die Zeilen als Karten
+//  (AppTheme); im Auswahlmodus sind ausgewählte Zeilen leicht getönt.
+//
 //  Die Liste arbeitet mit Listeneinträgen ohne Mailinhalt
 //  (`MessageListItem`). Erst beim Öffnen einer Mail lädt
 //  `MessageDetailLoader` die vollständige Nachricht aus dem Cache. Im
@@ -53,7 +56,7 @@
 //  MessageDetailView, MessageMenu, MessageActionDialogs, FolderMoveSheet,
 //  MessageSelection, SelectionActionBar, MessageSort, SearchIndexBuilder,
 //  SearchViewModel, SearchPerson, ServerMessageLoader,
-//  ComposeView, DraftComposeLoader, Dialogs, Log.
+//  ComposeView, DraftComposeLoader, Dialogs, AppTheme, Log.
 //
 
 import SwiftUI
@@ -216,6 +219,8 @@ struct InboxView: View {
                     messageList
                 }
             }
+            // Getönte Fläche hinter Liste, Lade- und Leerzustand.
+            .appBackground()
             #if os(iOS)
             // iPhone/iPad: Aktualisieren durch Herunterziehen der Liste.
             // Auf dem Mac gibt es dafür einen eigenen Knopf (refreshButton).
@@ -654,6 +659,7 @@ struct InboxView: View {
         } header: {
             Text("Auf dem Server")
         }
+        .cardRowBackground()
     }
 
     // MARK: - Mehrfachauswahl
@@ -748,6 +754,11 @@ struct InboxView: View {
                     showsRecipients: recipients,
                     opensDraft: drafts
                 )
+                // Ausgewählte Zeilen tönt die Karte selbst – die eigene
+                // Zeilenfarbe ersetzt die Auswahlfarbe des Systems.
+                .cardRowBackground(
+                    isSelected: viewModel.isSelecting && viewModel.selectedIDs.contains(message.id)
+                )
             }
 
             // Letzte Zeile der Liste – gehört IN die List, damit
@@ -757,6 +768,7 @@ struct InboxView: View {
                     Text("Keine Treffer auf diesem Gerät")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                        .cardRowBackground()
                 }
                 if search.offersServerSearch && !viewModel.isSelecting {
                     serverSection(colors: colors, showsRecipients: recipients)
@@ -765,6 +777,7 @@ struct InboxView: View {
                 Section {
                     olderRow
                 }
+                .cardRowBackground()
             }
         }
         #if os(iOS)
@@ -1432,6 +1445,8 @@ private struct MessageDetailLoader: View {
                 ProgressView()
             }
         }
+        // Auch Lade- und Hinweiszustand auf der getönten Fläche.
+        .appBackground()
         .task { load() }
     }
 

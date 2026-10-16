@@ -10,6 +10,9 @@
 //
 //  Eine ungelesene Mail wird beim Öffnen als gelesen markiert.
 //
+//  Kopf und Anhänge liegen auf der getönten Fläche der App, der Inhalt
+//  der Mail ungetönt auf einer Karte über die volle Breite (AppTheme).
+//
 //  Aktionen an der Mail laufen über `MessageActions` (Server und Cache
 //  gemeinsam). Meldungen und Rückfragen haben je einen Kanal
 //  (`activeAlert`, `activeConfirmation`, siehe Dialogs.swift).
@@ -54,7 +57,7 @@
 //  SpamFilterService,
 //  AttachmentManager, MessageStore, MailPrintFormatter, RemoteContentPolicy,
 //  RawSourceView, InlineImages, InlineImageLoader, NetworkMonitor, Dialogs,
-//  Log.
+//  AppTheme, Log.
 //
 
 import SwiftUI
@@ -223,24 +226,31 @@ struct MessageDetailView: View {
 
     /// Kopfdaten, Inhalt und Anhänge in einem Scrollbereich. Trägt den
     /// Meldungskanal – getrennt vom Rückfragekanal am äußeren Element.
+    ///
+    /// Verarbeitung: Kopf und Anhänge liegen auf der getönten Fläche, der
+    /// Inhalt der Mail auf einer Karte über die volle Breite – so bleibt
+    /// die Mail ungetönt, und ihre Breite ist dieselbe wie ohne Karte.
     private var content: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 0) {
                 MessageDetailHeader(message: message, isFlagged: isFlagged)
-                Divider()
+                    .padding()
                 messageBody
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AppTheme.card)
                 if !visibleAttachments.isEmpty {
-                    Divider()
                     MessageAttachmentList(
                         attachments: visibleAttachments,
                         downloadingIDs: downloadingIDs,
                         shareURLs: shareURLs,
                         onTap: { handleTap($0) }
                     )
+                    .padding()
                 }
             }
-            .padding()
         }
+        .appBackground()
         .alertItem($activeAlert)
     }
 

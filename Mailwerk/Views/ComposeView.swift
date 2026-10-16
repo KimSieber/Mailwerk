@@ -20,6 +20,11 @@
 //  Fläche unterhalb des Inhalts setzt die Schreibmarke ans Textende.
 //  Auf dem iPhone blendet Herunterwischen im Inhalt die Tastatur aus.
 //
+//  Erscheinungsbild: Kopfbereich und untere Leiste liegen auf der getönten
+//  Fläche der App, die Schreibfläche (Editor, Signatur, Zitat) ungetönt
+//  auf der Kartenfarbe – so sieht die Mail aus wie beim Empfänger
+//  (AppTheme).
+//
 //  Schließen mit Eingaben fragt nach: „Als Entwurf sichern“ (ohne
 //  Verbindung ausgegraut), „Verwerfen“ oder „Weiter bearbeiten“. Ohne
 //  Absender wird zuerst um die Wahl eines Absenders gebeten; fehlt der
@@ -44,7 +49,7 @@
 //  Empfängerfelder → RecipientField; HTML-Signatur → SignatureBlockView.
 //
 //  Abhängigkeiten: SwiftUI, UniformTypeIdentifiers, PhotosUI (iOS), Dialogs,
-//  SignatureStore, SignatureBlockView, NetworkMonitor.
+//  SignatureStore, SignatureBlockView, NetworkMonitor, AppTheme.
 //
 
 import SwiftUI
@@ -147,6 +152,9 @@ struct ComposeView: View {
                 scrollingContent
                 bottomBar
             }
+            // Kopf und untere Leiste auf der getönten Fläche; die
+            // Schreibfläche liegt als Karte darauf (siehe scrollingContent).
+            .appBackground()
             #if os(macOS)
             .safeAreaInset(edge: .top, spacing: 0) { extensionHeaderBar }
             #endif
@@ -194,7 +202,9 @@ struct ComposeView: View {
     ///
     /// Verarbeitung: Ist der Inhalt kürzer als der sichtbare Bereich, füllt
     /// eine freie Fläche den Rest. Ein Tipp dorthin setzt die Schreibmarke
-    /// ans Textende – wie vorher, als der Editor den Rest ausfüllte.
+    /// ans Textende – wie vorher, als der Editor den Rest ausfüllte. Editor
+    /// und freie Fläche bilden zusammen die ungetönte Schreibfläche (Karte),
+    /// der Kopfbereich darüber liegt auf der getönten Fläche.
     private var scrollingContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -202,6 +212,7 @@ struct ComposeView: View {
                     header
                     Divider()
                     editor
+                        .background(AppTheme.card)
                 }
                 .onGeometryChange(for: CGFloat.self) { proxy in
                     proxy.size.height
@@ -209,7 +220,7 @@ struct ComposeView: View {
                     contentHeight = height
                 }
 
-                Color.clear
+                AppTheme.card
                     .frame(height: max(0, visibleHeight - contentHeight))
                     .contentShape(Rectangle())
                     .onTapGesture { model.controller.focusAtEnd() }

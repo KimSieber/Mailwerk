@@ -14,7 +14,8 @@
 //  der Eingabe → FilterListInput; Export → FilterListExporter.
 //
 //  Abhängigkeiten: SwiftUI, FilterListRepository, FilterListInput,
-//  FilterListExporter, FilterListCloudEvents, Dialogs, Log.
+//  FilterListExporter, FilterListCloudEvents, Dialogs, AppTheme (getönte
+//  Fläche, Abschnitte als Karten), Log.
 //
 
 import SwiftUI
@@ -61,9 +62,11 @@ struct FilterListView: View {
             } footer: {
                 Text("Mehrere Angaben auf einmal sind möglich. Eine Domain wie „firma.de“ gilt für alle Absender dieser Domain, eine Adresse nur für genau diesen Absender.")
             }
+            .cardRowBackground()
 
             if let statusMessage {
                 Section { Text(statusMessage).font(.footnote) }
+                    .cardRowBackground()
             }
 
             Section {
@@ -87,7 +90,9 @@ struct FilterListView: View {
             } header: {
                 Text("\(entries.count) Einträge")
             }
+            .cardRowBackground()
         }
+        .appBackground()
         .navigationTitle(list == .white ? "Whitelist" : "Blacklist")
         .toolbar {
             ToolbarItem {

@@ -11,12 +11,13 @@
 //  - Nicht wählbar: der aktuelle Ordner der Mail und reine Container.
 //  - Offline bleibt der Dialog offen und meldet, dass Verschieben nicht
 //    möglich ist. Verschoben wird nur zwischen Ordnern desselben Postfachs.
+//  - Getönte Fläche mit Zeilen als Karten wie in der ganzen App (AppTheme).
 //
 //  Abgrenzung: Das Verschieben selbst → MessageActions (Aufrufer);
 //  Ordnerliste → MailActionService.
 //
 //  Abhängigkeiten: SwiftUI, MailActionService, MessageStore,
-//  FolderTreeBuilder, FolderLabel, NetworkMonitor, Dialogs, Log.
+//  FolderTreeBuilder, FolderLabel, NetworkMonitor, Dialogs, AppTheme, Log.
 //
 
 import SwiftUI
@@ -51,6 +52,7 @@ struct FolderMoveSheet: View {
     var body: some View {
         NavigationStack {
             content
+                .appBackground()
                 .navigationTitle("In Ordner verschieben")
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
@@ -74,6 +76,7 @@ struct FolderMoveSheet: View {
         if let tree {
             List(tree.indented()) { entry in
                 row(entry)
+                    .cardRowBackground()
             }
         } else if let loadError {
             ContentUnavailableView {

@@ -4,14 +4,14 @@
 //
 //  Zweck: Leiste, die von links über den Inhalt fährt. Der Inhalt dahinter
 //  wird abgedunkelt; ein Tipp darauf oder die Escape-Taste schließt die
-//  Leiste.
+//  Leiste. Die Leiste liegt auf der getönten Fläche der App (AppTheme).
 //
 //  Bewusst schlicht gehalten, Fokus iPhone. Auf dem Mac und dem iPad im
 //  Querformat soll später eine feste Seitenleiste folgen.
 //
 //  Abgrenzung: Inhalt der Leiste → FolderSidebarView.
 //
-//  Abhängigkeiten: SwiftUI.
+//  Abhängigkeiten: SwiftUI, AppTheme.
 //
 
 import SwiftUI
@@ -68,7 +68,7 @@ private struct SideDrawerModifier<Drawer: View>: ViewModifier {
                                     alignment: .topLeading
                                 )
                                 .frame(maxHeight: .infinity, alignment: .top)
-                                .background(.background)
+                                .background(AppTheme.background)
                                 .accessibilityAddTraits(.isModal)
                                 .transition(reduceMotion ? .opacity : .move(edge: .leading))
                         }

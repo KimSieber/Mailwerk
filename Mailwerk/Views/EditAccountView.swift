@@ -24,7 +24,7 @@
 //  Abhängigkeiten: SwiftUI, AccountStore, MailConnectionTester,
 //  ColorPickerGrid, MailAddress (Prüfung der Adresse), Dialogs,
 //  LabeledInputField, PlatformInputModifiers, SignatureStore,
-//  SignatureEditorView.
+//  SignatureEditorView, AppTheme (getönte Fläche, Abschnitte als Karten).
 //
 
 import SwiftUI
@@ -154,6 +154,7 @@ struct EditAccountView: View {
                         }
                     }
                 }
+                .cardRowBackground()
 
                 Section("IMAP (Empfang)") {
                     LabeledInputField(label: "Host", example: "z. B. imap.mail.org",
@@ -163,6 +164,7 @@ struct EditAccountView: View {
                                       text: $imapPort)
                         .numberInput()
                 }
+                .cardRowBackground()
 
                 Section {
                     LabeledInputField(label: "Host", example: "z. B. smtp.mail.org",
@@ -177,10 +179,12 @@ struct EditAccountView: View {
                 } footer: {
                     Text("Ausschalten, wenn der Anbieter gesendete Mails selbst in „Gesendet“ ablegt (z. B. Gmail) – sonst erscheinen sie dort doppelt.")
                 }
+                .cardRowBackground()
 
                 Section("Farbe") {
                     ColorPickerGrid(selection: $selectedColor)
                 }
+                .cardRowBackground()
 
                 Section {
                     NavigationLink {
@@ -196,6 +200,7 @@ struct EditAccountView: View {
                 } footer: {
                     Text("Erscheint beim Verfassen unter dem eigenen Text, bei Antworten und Weiterleitungen über dem Zitat. Wird über iCloud auf allen Geräten abgeglichen.")
                 }
+                .cardRowBackground()
 
                 Section {
                     Toggle("Abruf über „Alle Eingänge“", isOn: Binding(
@@ -207,6 +212,7 @@ struct EditAccountView: View {
                 } footer: {
                     Text("Gilt nur auf diesem Gerät. Ausgeschaltet wird das Postfach nur abgerufen, wenn du einen seiner Ordner öffnest; seine Mails erscheinen dann nicht in „Alle Eingänge“.")
                 }
+                .cardRowBackground()
 
                 Section {
                     Button {
@@ -233,7 +239,9 @@ struct EditAccountView: View {
                         }
                     }
                 }
+                .cardRowBackground()
             }
+            .appBackground()
             .navigationTitle("Postfach bearbeiten")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

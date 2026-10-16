@@ -9,7 +9,8 @@
 //  FilterListView.
 //
 //  Abhängigkeiten: SwiftUI, SpamSettings, FilterListRepository,
-//  FilterListView, PlatformSheetSize.
+//  FilterListView, PlatformSheetSize, AppTheme (getönte Fläche,
+//  Abschnitte als Karten).
 //
 
 import SwiftUI
@@ -35,6 +36,7 @@ struct SpamSettingsView: View {
                 } footer: {
                     Text("Beim Abrufen werden ungeprüfte Mails der letzten 30 Tage bewertet. Erkannter Spam wandert in den Spam-Ordner des jeweiligen Postfachs.")
                 }
+                .cardRowBackground()
 
                 Section {
                     NavigationLink {
@@ -50,6 +52,7 @@ struct SpamSettingsView: View {
                 } footer: {
                     Text("Die Listen gelten für alle Postfächer gemeinsam und werden über iCloud abgeglichen.")
                 }
+                .cardRowBackground()
 
                 Section {
                     Stepper(
@@ -65,7 +68,9 @@ struct SpamSettingsView: View {
                 } footer: {
                     Text("Bewertet der Server eine Mail mit mindestens diesem Wert, wird sie auch dann aussortiert, wenn der Absender auf der Whitelist steht. Schutz gegen gefälschte Absenderadressen.")
                 }
+                .cardRowBackground()
             }
+            .appBackground()
             .navigationTitle("Spamfilter")
             #if !os(macOS)
             .navigationBarTitleDisplayMode(.inline)

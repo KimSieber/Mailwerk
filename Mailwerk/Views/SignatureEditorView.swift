@@ -25,7 +25,8 @@
 //  Abhängigkeiten: SwiftUI, PhotosUI, UniformTypeIdentifiers,
 //  SignatureStore, SignatureEditing, SignatureRules, EditorImageData,
 //  RichTextEditor, FormattingToolbar, CodeTextEditor, HTMLMailView,
-//  DecodedImage, Dialogs, MailAccount.
+//  DecodedImage, Dialogs, MailAccount, AppTheme (getönte Seite, Editor als
+//  Karte).
 //
 
 import SwiftUI
@@ -127,6 +128,8 @@ struct SignatureEditorView: View {
             }
             .padding()
         }
+        // Seite getönt, Editor bzw. Code-Feld ungetönt als Karte.
+        .appBackground()
         .navigationTitle("Signatur")
         .navigationBarBackButtonHidden(true)
         .toolbar {
@@ -172,6 +175,7 @@ struct SignatureEditorView: View {
                     .accessibilityLabel("Logo einsetzen")
                 })
             }
+            .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 8))
             .background(RoundedRectangle(cornerRadius: 8).stroke(.separator))
             Text("Das Logo erscheint an der Stelle der Schreibmarke (Knopf mit dem Bild-Symbol).")
                 .font(.footnote)
@@ -202,6 +206,7 @@ struct SignatureEditorView: View {
                         .frame(height: max(80, previewHeight))
                 }
             }
+            .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 8))
             .background(RoundedRectangle(cornerRadius: 8).stroke(.separator))
             if logoData != nil, !SignatureRules.containsLogo(code) {
                 Text("Das Logo erscheint erst, wenn der Code den Platzhalter <img src=\"logo\"> enthält.")

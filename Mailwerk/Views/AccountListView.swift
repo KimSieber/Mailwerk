@@ -13,11 +13,13 @@
 //  auch beim Wischen. Meldungen und Rückfragen laufen über je einen Kanal
 //  (siehe Dialogs.swift).
 //
+//  Getönte Fläche, Abschnitte als Karten wie in der ganzen App (AppTheme).
+//
 //  Abgrenzung: Anlegen → AddAccountView; Bearbeiten → EditAccountView;
 //  Speichern und Entfernen → AccountStore.
 //
 //  Abhängigkeiten: SwiftUI, AccountStore, SignatureStore, Dialogs, Log,
-//  FetchPausedBadge.
+//  FetchPausedBadge, AppTheme.
 //
 
 import SwiftUI
@@ -50,11 +52,16 @@ struct AccountListView: View {
                         systemImage: "envelope",
                         description: Text("Füge dein erstes Postfach hinzu.")
                     )
+                    // Hinweis frei auf der getönten Fläche, ohne Karte.
+                    .listRowBackground(Color.clear)
                 } else {
                     accountSection
+                        .cardRowBackground()
                     defaultAccountSection
+                        .cardRowBackground()
                 }
             }
+            .appBackground()
             .navigationTitle("Postfächer")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
