@@ -18,7 +18,7 @@
 import Foundation
 
 /// Ein erkannter Eintrag aus der Eingabe.
-nonisolated struct FilterListInputEntry: Equatable {
+nonisolated struct FilterListInputEntry: Hashable, Sendable {
     /// Normalisierter Wert.
     let value: String
     /// Adresse oder Domain.
@@ -101,5 +101,3 @@ nonisolated enum FilterListInput {
             .map { FilterListInputEntry(value: $0, kind: .domain) }
     }
 }
-
-extension FilterListInputEntry: Hashable {}

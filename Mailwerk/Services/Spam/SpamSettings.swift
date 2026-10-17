@@ -8,6 +8,9 @@
 //
 //  Änderungen von anderen Geräten werden auf dem Main-Thread übernommen.
 //
+//  Ohne gespeicherten Wert (Erstinstallation, neuer Speicher) ist der
+//  Filter eingeschaltet (`defaultEnabled`).
+//
 //  Abgrenzung: Oberfläche → SpamSettingsView; Anwendung der Obergrenze →
 //  SpamClassifier.
 //
@@ -26,9 +29,11 @@ final class SpamSettings {
     /// Schlüssel für die Score-Obergrenze im Key-Value-Store.
     private static let scoreLimitKey = "mailwerk.spam.scoreLimit"
 
-    /// Der Filter ist standardmäßig aus. Er verschiebt Mails selbsttätig,
-    /// deshalb wird er bewusst eingeschaltet und nicht stillschweigend aktiv.
-    static let defaultEnabled = false
+    /// Der Filter ist nach der Erstinstallation eingeschaltet. Von ihm hängen
+    /// auch die Sammelansicht „Spam“ und der Abruf der Spam-Ordner ab (er
+    /// ermittelt den Spam-Ordner je Postfach). Ein gespeicherter Wert – auch
+    /// „aus“ – hat immer Vorrang.
+    static let defaultEnabled = true
 
     /// iCloud-Key-Value-Store.
     private let store = NSUbiquitousKeyValueStore.default

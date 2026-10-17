@@ -11,6 +11,11 @@
 //    Eintrag; gespeichert wird mit derselben Prüfung wie beim Anlegen
 //    (nicht auf der anderen Liste), ohne den alten Eintrag zu verlieren
 //    (FilterListEditing). Löschen – auch per Wischen – fragt vorher nach.
+//  - „Importieren“ (Symbolleiste) liest eine Textdatei im Format des
+//    Exports – eine Angabe je Zeile, Domains als `*@firma.de` – in diese
+//    Liste ein. Vorher nennt eine Rückfrage, wie viele Einträge neu sind;
+//    jeder Eintrag wird wie bei „Neuer Eintrag …“ gegen die andere Liste
+//    geprüft. Das Ergebnis erscheint als Meldung.
 //  - Antippen allein bewirkt bewusst nichts: Bearbeiten ist die Ausnahme
 //    und soll beim Scrollen nicht versehentlich ausgelöst werden.
 //
@@ -19,15 +24,17 @@
 //  geöffnete Liste aktuell, ohne dass man sie schließen muss.
 //
 //  Abgrenzung: Speicherung und Abgleich → FilterListRepository; Zerlegen
-//  der Eingabe → FilterListInput; Export → FilterListExporter.
+//  der Eingabe → FilterListInput; Export → FilterListExporter; Lesen und
+//  Zusammenfassen des Imports → FilterListImport.
 //
 //  Abhängigkeiten: SwiftUI, FilterListRepository, FilterListInput,
 //  FilterListEditing, PlatformInputModifiers,
-//  FilterListExporter, FilterListCloudEvents, Dialogs, AppTheme (getönte
-//  Fläche, Abschnitte als Karten), Log.
+//  FilterListExporter, FilterListImport, FilterListCloudEvents, Dialogs,
+//  AppTheme (getönte Fläche, Abschnitte als Karten), Log.
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 import os
 
 /// Pflege der White- bzw. Blacklist.
@@ -67,11 +74,17 @@ struct FilterListView: View {
     @State private var isWorking = false
     /// Textdatei der Liste für das Teilen-Menü; `nil` bei leerer Liste.
     @State private var exportURL: URL?
+    /// Dateiauswahl für den Import geöffnet.
+    @State private var showingImporter = false
+
+    /// Name dieser Liste – für Rückfragen.
+    private var listName: String { list == .white ? "Whitelist" : "Blacklist" }
 
     /// Name der anderen Liste – für Hinweise auf Konflikte.
     private var otherListName: String { list == .white ? "Blacklist" : "Whitelist" }
 
-    /// „Neuer Eintrag …“, Einträge mit Kontextmenü; Teilen in der Symbolleiste.
+    /// „Neuer Eintrag …“, Einträge mit Kontextmenü; Importieren und Teilen
+    /// in der Symbolleiste.
     var body: some View {
         List {
             Section {
@@ -105,6 +118,14 @@ struct FilterListView: View {
         .navigationTitle(list == .white ? "Whitelist" : "Blacklist")
         .toolbar {
             ToolbarItem {
+                Button {
+                    showingImporter = true
+                } label: {
+                    Label("Importieren", systemImage: "square.and.arrow.down")
+                }
+                .disabled(isWorking)
+            }
+            ToolbarItem {
                 if let exportURL {
                     ShareLink(
                         item: exportURL,
@@ -114,6 +135,12 @@ struct FilterListView: View {
                     }
                 }
             }
+        }
+        .fileImporter(
+            isPresented: $showingImporter,
+            allowedContentTypes: [.plainText, .text]
+        ) { result in
+            prepareImport(result)
         }
         .alert(
             editorTitle,
@@ -282,10 +309,26 @@ struct FilterListView: View {
         defer { isWorking = false }
 
         let parsed = FilterListInput.parse(text)
+        guard let outcome = await add(parsed.entries) else { return }
+        activeAlert = AlertItem(
+            title: "Neuer Eintrag",
+            message: summary(added: outcome.added, invalid: parsed.invalid, conflicts: outcome.conflicts)
+        )
+    }
+
+    /// Trägt Einträge in diese Liste ein.
+    ///
+    /// Verarbeitung: Einträge, die schon auf der anderen Liste stehen,
+    /// werden gesammelt; ein anderer Fehler bricht ab, erscheint als
+    /// Meldung und liefert `nil`. Danach wird die Liste neu geladen.
+    ///
+    /// - Parameter entries: Erkannte Einträge.
+    /// - Returns: Anzahl eingetragener Einträge und abgelehnte Angaben;
+    ///   `nil` nach einem Fehler.
+    private func add(_ entries: [FilterListInputEntry]) async -> (added: Int, conflicts: [String])? {
         var added = 0
         var conflicts: [String] = []
-
-        for entry in parsed.entries {
+        for entry in entries {
             do {
                 try await repository.add(entry.value, kind: entry.kind, to: list)
                 added += 1
@@ -294,14 +337,84 @@ struct FilterListView: View {
             } catch {
                 report(error)
                 await reload()
-                return
+                return nil
             }
         }
-
         await reload()
+        return (added, conflicts)
+    }
+
+    // MARK: - Import
+
+    /// Liest die gewählte Datei und fragt vor dem Import nach.
+    ///
+    /// Verarbeitung: Die Datei liegt außerhalb der App (z. B. iCloud Drive)
+    /// und wird nur für das Lesen freigegeben. Enthält sie nichts Neues,
+    /// erscheint gleich die Zusammenfassung; sonst nennt die Rückfrage die
+    /// Zahl der neuen Einträge.
+    ///
+    /// - Parameter result: Ergebnis der Dateiauswahl.
+    private func prepareImport(_ result: Result<URL, Error>) {
+        let url: URL
+        switch result {
+        case .success(let picked): url = picked
+        case .failure(let error):
+            report(error)
+            return
+        }
+
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        let text: String
+        do {
+            guard let decoded = FilterListImport.text(from: try Data(contentsOf: url)) else {
+                activeAlert = AlertItem(title: "Import", message: "Die Datei „\(url.lastPathComponent)“ ist keine lesbare Textdatei.")
+                return
+            }
+            text = decoded
+        } catch {
+            activeAlert = .failure("Import", error)
+            return
+        }
+
+        let plan = FilterListImport.plan(text: text, existing: entries)
+        guard !plan.entries.isEmpty else {
+            activeAlert = AlertItem(
+                title: "Import",
+                message: FilterListImport.summary(
+                    added: 0, alreadyPresent: plan.alreadyPresent.count,
+                    conflicts: [], invalid: plan.invalid, otherListName: otherListName
+                )
+            )
+            return
+        }
+
+        let count = plan.entries.count
+        activeConfirmation = ConfirmationRequest(
+            title: "In die \(listName) importieren?",
+            message: "„\(url.lastPathComponent)“: \(count == 1 ? "1 neuer Eintrag" : "\(count) neue Einträge")."
+                + (plan.alreadyPresent.isEmpty ? "" : " \(plan.alreadyPresent.count) schon vorhanden.")
+                + " Jeder Eintrag wird wie bei „Neuer Eintrag …“ geprüft.",
+            confirmLabel: "Importieren",
+            isDestructive: false
+        ) {
+            Task { await runImport(plan) }
+        }
+    }
+
+    /// Trägt die neuen Einträge eines Imports ein und meldet das Ergebnis.
+    ///
+    /// - Parameter plan: Vorbereiteter Import.
+    private func runImport(_ plan: FilterListImport.Plan) async {
+        isWorking = true
+        defer { isWorking = false }
+        guard let outcome = await add(plan.entries) else { return }
         activeAlert = AlertItem(
-            title: "Neuer Eintrag",
-            message: summary(added: added, invalid: parsed.invalid, conflicts: conflicts)
+            title: "Import",
+            message: FilterListImport.summary(
+                added: outcome.added, alreadyPresent: plan.alreadyPresent.count,
+                conflicts: outcome.conflicts, invalid: plan.invalid, otherListName: otherListName
+            )
         )
     }
 
