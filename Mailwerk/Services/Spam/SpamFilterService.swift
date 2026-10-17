@@ -22,6 +22,9 @@
 //  die bei ausgeschaltetem Filter abgerufen wurden, prüft dieses Gerät
 //  später nicht nach.
 //
+//  Spam-Ordner ohne Filter: `locateSpamFolder` ermittelt und merkt den
+//  Ordner auch bei ausgeschaltetem Filter – für die Sammelansicht „Spam“.
+//
 //  Einzelaktionen: Absender oder Domain blockieren (Blacklist, Mail in den
 //  Spam-Ordner) bzw. vertrauen (Whitelist, Mail zurück in den Posteingang).
 //
@@ -203,6 +206,34 @@ final class SpamFilterService {
         )
         accountStore.setSpamFolder(created, for: account.id)
         return created
+    }
+
+    /// Ermittelt den Spam-Ordner eines Postfachs ohne Filterlauf und merkt
+    /// ihn beim Postfach.
+    ///
+    /// Verarbeitung: Für die Sammelansicht „Spam“ und den Abruf der
+    /// Spam-Ordner muss der Ordner auch bekannt sein, wenn der Spamfilter
+    /// ausgeschaltet ist. Gesucht wird wie beim Filterlauf
+    /// (SpamFolderResolver: gemerkter Ordner, `\Junk`, gebräuchliche
+    /// Namen). Fehlt ein Spam-Ordner, wird nichts angelegt und nicht
+    /// nachgefragt – das bleibt dem Spamfilter vorbehalten.
+    ///
+    /// - Parameter account: Postfach.
+    /// - Returns: Pfad des Spam-Ordners oder `nil`, wenn es keinen gibt.
+    /// - Throws: `MailCredentialError`, `OAuthError` oder IMAP-Fehler.
+    @discardableResult
+    func locateSpamFolder(for account: MailAccount) async throws -> String? {
+        let credentials = try accountStore.credentials(for: account)
+        let resolution = try await MailSession.withIMAP(credentials) { server in
+            try await resolveSpamFolder(for: account, on: server)
+        }
+        guard case .found(let folder) = resolution else {
+            Log.spam.info("🚧 [\(account.displayName, privacy: .private)] Kein Spam-Ordner gefunden (Filter aus, nichts angelegt)")
+            return nil
+        }
+        accountStore.setSpamFolder(folder, for: account.id)
+        Log.spam.info("📁 [\(account.displayName, privacy: .private)] Spam-Ordner \(folder, privacy: .public) ermittelt (Filter aus)")
+        return folder
     }
 
     // MARK: - Aktionen an einer einzelnen Mail

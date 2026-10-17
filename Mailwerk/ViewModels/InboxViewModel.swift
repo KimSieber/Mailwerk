@@ -25,7 +25,9 @@
 //  weg. Der Zähler in der Seitenleiste sinkt trotzdem sofort.
 //
 //  Sicht „Spam“: die Spam-Ordner aller Postfächer mit eingeschaltetem
-//  Abruf gemeinsam; „Ältere laden“ lädt in allen zugleich nach.
+//  Abruf gemeinsam; „Ältere laden“ lädt in allen zugleich nach. Die
+//  Spam-Ordner sind auch bei ausgeschaltetem Spamfilter bekannt
+//  (`locateSpamFolderIfNeeded`).
 //
 //  Suche: Während einer Suche zeigt die Liste nur die Treffer
 //  (`searchFilter`, Cache-IDs aus der lokalen Suche). Liste, Auswahl und
@@ -815,6 +817,8 @@ final class InboxViewModel {
         if OAuthSignInState.shared.isSignInRequired(account.id) {
             return errors
         }
+        // Filter aus: Spam-Ordner trotzdem ermitteln (Sammelansicht „Spam“).
+        await locateSpamFolderIfNeeded(for: account)
 
         do {
             try await MailFetchService.refreshAndCache(credentials)
@@ -862,6 +866,27 @@ final class InboxViewModel {
         } catch {
             Log.spam.error("⚠️ \(account.displayName, privacy: .private): Spamfilter fehlgeschlagen: \(error.localizedDescription, privacy: .public)")
             return classify(error, context: "\(account.displayName): Spamfilter")
+        }
+    }
+
+    /// Ermittelt den Spam-Ordner eines Postfachs, wenn der Spamfilter aus
+    /// ist und noch keiner gemerkt ist.
+    ///
+    /// Verarbeitung: Bei eingeschaltetem Filter übernimmt das der
+    /// Filterlauf. Sonst sucht der Spamfilter-Dienst den Ordner einmalig
+    /// (danach ist er gemerkt). Fehler werden nur protokolliert – der Abruf
+    /// des Posteingangs geht vor.
+    ///
+    /// - Parameter account: Postfach.
+    @MainActor
+    private func locateSpamFolderIfNeeded(for account: MailAccount) async {
+        guard !spamSettings.isEnabled else { return }
+        let current = accountStore.accounts.first(where: { $0.id == account.id }) ?? account
+        guard (current.spamFolder ?? "").isEmpty else { return }
+        do {
+            try await spamFilter.locateSpamFolder(for: current)
+        } catch {
+            Log.spam.error("⚠️ [\(account.displayName, privacy: .private)] Spam-Ordner nicht ermittelt: \(error.localizedDescription, privacy: .public)")
         }
     }
 
