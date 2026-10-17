@@ -59,6 +59,10 @@
 //  Meldungen und Rückfragen laufen über je einen Kanal (`alertItem`,
 //  `confirmationRequest`, siehe Dialogs.swift).
 //
+//  Jedes Blatt meldet sich als offenes Fenster (`countsAsOpenWindow`),
+//  damit ein mailto:-Link von außen erst danach eine neue Mail öffnet
+//  (ExternalMailtoRouter).
+//
 //  Abgrenzung: Zustand, Abruf und Aktionen an Mails im InboxViewModel,
 //  Aufbau einer Zeile in MessageRow, Mailansicht in MessageDetailView,
 //  Ordnerleiste in FolderSidebarView.
@@ -70,7 +74,8 @@
 //  MessageSelection, SelectionActionBar, MessageSort, SearchIndexBuilder,
 //  SearchViewModel, SearchPerson, ServerMessageLoader,
 //  ComposeView, DraftComposeLoader, Dialogs, AppTheme, ListBottomBar,
-//  UndoOffer, OAuthSignInState, SignInRequiredBar, Log.
+//  UndoOffer, OAuthSignInState, SignInRequiredBar, ExternalMailtoPresenter,
+//  Log.
 //
 
 import SwiftUI
@@ -416,6 +421,7 @@ struct InboxView: View {
             }
             .sheet(isPresented: $showingAccounts) {
                 AccountListView(accountStore: accountStore)
+                    .countsAsOpenWindow()
             }
             .confirmationRequest(confirmation)
             .sheet(isPresented: $showingSpamSettings, onDismiss: {
@@ -423,6 +429,7 @@ struct InboxView: View {
                 viewModel.reloadFilterLists()
             }) {
                 SpamSettingsView(settings: spamSettings, filterLists: filterLists)
+                    .countsAsOpenWindow()
             }
             .sheet(isPresented: $showingCompose) {
                 // Absender: Postfach des gezeigten Ordners; Sammelansichten
@@ -433,6 +440,7 @@ struct InboxView: View {
                     senderAccountID: viewModel.selection.accountID,
                     onSent: { viewModel.loadFromCache() }
                 )
+                .countsAsOpenWindow()
             }
             .sheet(item: $listCompose) { request in
                 ComposeView(
@@ -441,6 +449,7 @@ struct InboxView: View {
                     original: request.original,
                     onSent: { viewModel.loadFromCache() }
                 )
+                .countsAsOpenWindow()
             }
             .sheet(item: $draftToEdit) { request in
                 DraftComposeLoader(
@@ -448,20 +457,25 @@ struct InboxView: View {
                     accountStore: accountStore,
                     onSent: { refreshAfterDraft() }
                 )
+                .countsAsOpenWindow()
             }
             .sheet(isPresented: $showingSelectionMove) {
                 selectionMoveSheet
+                    .countsAsOpenWindow()
             }
             .sheet(item: $moveItem) { item in
-                if let account = accountStore.accounts.first(where: { $0.id == item.accountID }) {
-                    FolderMoveSheet(
-                        account: account,
-                        currentFolder: item.folder,
-                        accountStore: accountStore
-                    ) { path in
-                        Task { await viewModel.move(item, to: path) }
+                Group {
+                    if let account = accountStore.accounts.first(where: { $0.id == item.accountID }) {
+                        FolderMoveSheet(
+                            account: account,
+                            currentFolder: item.folder,
+                            accountStore: accountStore
+                        ) { path in
+                            Task { await viewModel.move(item, to: path) }
+                        }
                     }
                 }
+                .countsAsOpenWindow()
             }
         }
         // Einziger Meldungskanal der Liste – am äußeren Element, getrennt

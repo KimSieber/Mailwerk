@@ -20,7 +20,8 @@
 //  Speichern und Entfernen → AccountStore.
 //
 //  Abhängigkeiten: SwiftUI, AccountStore, SignatureStore, Dialogs, Log,
-//  FetchPausedBadge, SignInRequiredBadge, OAuthSignInState, AppTheme.
+//  FetchPausedBadge, SignInRequiredBadge, OAuthSignInState, AppTheme,
+//  ExternalMailtoPresenter (Blätter melden sich als offene Fenster).
 //
 
 import SwiftUI
@@ -82,9 +83,11 @@ struct AccountListView: View {
             }
             .sheet(isPresented: $showingAddAccount) {
                 AddAccountView(accountStore: accountStore)
+                    .countsAsOpenWindow()
             }
             .sheet(item: $editingAccount) { account in
                 EditAccountView(accountStore: accountStore, account: account)
+                    .countsAsOpenWindow()
             }
             .confirmationRequest($activeConfirmation)
         }

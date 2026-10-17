@@ -63,7 +63,8 @@
 //  SpamFilterService,
 //  AttachmentManager, MessageStore, MailPrintFormatter, RemoteContentPolicy,
 //  RawSourceView, InlineImages, InlineImageLoader, NetworkMonitor, Dialogs,
-//  AppTheme, HeaderPerson, ContactCardView, MailtoLink, SearchPerson, Log.
+//  AppTheme, HeaderPerson, ContactCardView, MailtoLink, SearchPerson,
+//  ExternalMailtoPresenter (Blätter melden sich als offene Fenster), Log.
 //
 
 import SwiftUI
@@ -195,6 +196,7 @@ struct MessageDetailView: View {
                     senderAccountID: message.accountID,
                     onSent: { onChange?() }
                 )
+                .countsAsOpenWindow()
             }
             .sheet(item: $composeRequest) { request in
                 ComposeView(
@@ -203,23 +205,29 @@ struct MessageDetailView: View {
                     original: message,
                     onSent: { onChange?() }
                 )
+                .countsAsOpenWindow()
             }
             .sheet(isPresented: $showFolderPicker) {
-                if let account = accountStore.accounts.first(where: { $0.id == message.accountID }) {
-                    FolderMoveSheet(
-                        account: account,
-                        currentFolder: message.folder,
-                        accountStore: accountStore
-                    ) { path in
-                        Task { await moveMessage(to: path) }
+                Group {
+                    if let account = accountStore.accounts.first(where: { $0.id == message.accountID }) {
+                        FolderMoveSheet(
+                            account: account,
+                            currentFolder: message.folder,
+                            accountStore: accountStore
+                        ) { path in
+                            Task { await moveMessage(to: path) }
+                        }
                     }
                 }
+                .countsAsOpenWindow()
             }
             .sheet(isPresented: $showRawSource) {
                 RawSourceView(message: message, accountStore: accountStore)
+                    .countsAsOpenWindow()
             }
             .sheet(item: $contactPerson) { person in
                 ContactCardView(person: person)
+                    .countsAsOpenWindow()
             }
             .background { rawSourceShortcut }
             .quickLookPreview($previewURL)

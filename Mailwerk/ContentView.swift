@@ -3,7 +3,8 @@
 //  Mailwerk
 //
 //  Zweck: Wurzelansicht der App. Reicht die beim Start angelegten,
-//  langlebigen Objekte an die Hauptansicht weiter.
+//  langlebigen Objekte an die Hauptansicht weiter und öffnet für
+//  mailto:-Links von außen das Verfassen-Fenster (ExternalMailtoPresenter).
 //
 //  Die Objekte selbst entstehen genau einmal in `MailwerkApp`. Würden sie
 //  hier als Startwerte von `@State` oder im `init` erzeugt, liefe diese
@@ -15,7 +16,7 @@
 //  InboxView.
 //
 //  Abhängigkeiten: InboxView, AppObjects, SignatureStore,
-//  ShareContextPublisher.
+//  ShareContextPublisher, ExternalMailtoPresenter.
 //
 
 import SwiftUI
@@ -26,6 +27,10 @@ struct ContentView: View {
     let objects: AppObjects
 
     /// Hauptansicht mit den gemeinsamen Objekten.
+    ///
+    /// Das Verfassen-Fenster für Links von außen hängt hier an der Wurzel,
+    /// nicht in der Liste: Es gehört zu keiner Ansicht und hält die
+    /// ohnehin große InboxView frei davon.
     var body: some View {
         InboxView(
             accountStore: objects.accountStore,
@@ -34,6 +39,10 @@ struct ContentView: View {
             viewModel: objects.inbox,
             folderCatalog: objects.folderCatalog
         )
+        // mailto:-Links von außen (Absender: Standard-Postfach)
+        .externalMailtoPresenter(accountStore: objects.accountStore) { [inbox = objects.inbox] in
+            inbox.loadFromCache()
+        }
         // Signaturen für alle Ansichten (Postfach bearbeiten, Verfassen)
         .environment(objects.signatures)
     }

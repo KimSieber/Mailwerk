@@ -20,11 +20,18 @@
 //  `body` der App wird von SwiftUI mehrfach ausgewertet; was dort erzeugt
 //  würde, entstünde jedes Mal neu.
 //
+//  mailto:-Links: Links, die das System an Mailwerk übergibt (Schema
+//  mailto in der Info.plist), nimmt das Fenster per `onOpenURL` an und
+//  reicht sie an den ExternalMailtoRouter weiter. Auf dem Mac sorgt
+//  `handlesExternalEvents` dafür, dass ein Link im vorhandenen Fenster
+//  landet, statt ein weiteres zu öffnen.
+//
 //  Abgrenzung: Wurzelansicht → ContentView.
 //
 //  Abhängigkeiten: SwiftUI, SwiftData, AttachmentManager (Aufräumen),
 //  MessageStore (Starthinweis), AppObjects, FilterEntry, AccountSignature,
-//  SignatureStore, Dialogs, OAuthSignInState, OAuthError, Log.
+//  SignatureStore, Dialogs, OAuthSignInState, OAuthError,
+//  ExternalMailtoRouter, Log.
 //
 
 import SwiftUI
@@ -64,11 +71,21 @@ struct MailwerkApp: App {
         AttachmentManager.cleanupTempFiles()
     }
 
-    /// Hauptfenster mit der Wurzelansicht und dem einmaligen Starthinweis.
+    /// Hauptfenster mit der Wurzelansicht, dem einmaligen Starthinweis und
+    /// der Annahme von mailto:-Links.
     var body: some Scene {
         WindowGroup {
             ContentView(objects: objects)
             .modifier(OAuthWebSignInInstaller())
+            .onOpenURL { url in
+                // Andere Schemata (z. B. die Rückkehr der Anmeldung) laufen
+                // nicht hierüber und werden vom Router ohnehin abgelehnt.
+                if ExternalMailtoRouter.shared.receive(url) {
+                    Log.view.info("✉️ mailto:-Link von außen angenommen")
+                }
+            }
+            // Mac: Links im vorhandenen Fenster annehmen statt ein neues zu öffnen.
+            .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
             .task {
                 // Einmalig abholen; der Speicher liefert ihn nur einmal.
                 if let notice = MessageStore.shared.consumeStartupNotice() {
