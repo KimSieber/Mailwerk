@@ -41,6 +41,11 @@
 //  die Liste schrittweise. Ohne Netz bleibt es beim Cache; der Zustand
 //  wird still im Titel angezeigt.
 //
+//  Abgelaufene Anmeldung (OAuth 2): Ein solches Postfach wird in der
+//  Abrufrunde übersprungen; seine Mails bleiben im Cache sichtbar. Der
+//  Fehler erscheint nicht als Meldung – das übernehmen Warnzeichen und
+//  Hinweisleiste (OAuthSignInState, InboxView).
+//
 //  Abrufe (Posteingänge, Ordner, „Ältere laden“) laufen über den
 //  `FetchCoordinator` nacheinander und ohne Doppelungen. Gleichzeitige
 //  Abrufe würden denselben Ordner über zwei Verbindungen bearbeiten und
@@ -66,7 +71,8 @@
 //  MailFetchService, MailSession (Zugangsdaten), MessageActions, UndoOffer,
 //  MessageActionDialogs, SpamMenuRequest, MessageSelection,
 //  MessageStore, MessageSort, NetworkMonitor, SyncWindow, FetchCoordinator,
-//  FolderKey, MailFolder, SpamClassifier, FilterAddress, Log.
+//  FolderKey, MailFolder, SpamClassifier, FilterAddress, OAuthError,
+//  OAuthSignInState, Log.
 //
 
 import Foundation
@@ -542,14 +548,21 @@ final class InboxViewModel {
 
     /// Ordnet einen Abruffehler ein.
     ///
-    /// Verarbeitung: Verbindungsfehler werden still vermerkt
-    /// (`connectionFailed`), alle anderen als Meldungstext zurückgegeben.
+    /// Verarbeitung: Eine abgelaufene Anmeldung (OAuth 2) wird nur
+    /// protokolliert – sie zeigen Warnzeichen und Hinweisleiste.
+    /// Verbindungsfehler werden still vermerkt (`connectionFailed`), alle
+    /// anderen als Meldungstext zurückgegeben.
     ///
     /// - Parameters:
     ///   - error: Aufgetretener Fehler.
     ///   - context: Bezeichnung für die Meldung (z. B. Postfachname).
-    /// - Returns: Meldungstext oder `nil` bei einem Verbindungsfehler.
+    /// - Returns: Meldungstext oder `nil` bei abgelaufener Anmeldung bzw.
+    ///   einem Verbindungsfehler.
     private func classify(_ error: Error, context: String) -> String? {
+        if let oauthError = error as? OAuthError, oauthError == .signInRequired {
+            Log.fetch.info("🔑 \(context, privacy: .private): Anmeldung abgelaufen – übersprungen")
+            return nil
+        }
         if MailFetchService.isConnectionError(error) || !network.isOnline {
             connectionFailed = true
             Log.fetch.info("📴 \(context, privacy: .private): keine Verbindung (\(error.localizedDescription, privacy: .public))")
@@ -750,6 +763,11 @@ final class InboxViewModel {
         var processed: Set<UUID> = []
         while let account = accountStore.fetchingAccounts.first(where: { !processed.contains($0.id) }) {
             processed.insert(account.id)
+            // Abgelaufene Anmeldung: nicht abrufen, bis neu angemeldet ist.
+            if OAuthSignInState.shared.isSignInRequired(account.id) {
+                Log.fetch.info("🔑 \(account.displayName, privacy: .private): Anmeldung abgelaufen – übersprungen")
+                continue
+            }
             errors += await refreshAccount(account)
             loadFromCache()
 
@@ -771,7 +789,7 @@ final class InboxViewModel {
     ///
     /// Verarbeitung: Erst filtern, dann abrufen – so landet erkannter Spam
     /// gar nicht erst im Posteingang. Ein Fehler des Filters verhindert den
-    /// Abruf nicht. Scheitert der Posteingang, entfällt der Spam-Ordner,
+    /// Abruf nicht – außer einer abgelaufenen Anmeldung. Scheitert der Posteingang, entfällt der Spam-Ordner,
     /// denn dann liegt meist die Verbindung danieder.
     ///
     /// - Parameter account: Postfach.
@@ -791,6 +809,11 @@ final class InboxViewModel {
         var errors: [String] = []
         if let message = await runSpamFilter(for: account) {
             errors.append(message)
+        }
+        // Hat der Spamfilter festgestellt, dass die Anmeldung abgelaufen
+        // ist, scheitert auch der Abruf – gar nicht erst versuchen.
+        if OAuthSignInState.shared.isSignInRequired(account.id) {
+            return errors
         }
 
         do {

@@ -32,6 +32,12 @@
 //  eingeschaltet, wird automatisch abgerufen. Ein Ordner eines
 //  ausgeschalteten Postfachs lädt beim Öffnen auch dessen Ordnerliste.
 //
+//  Ist die Anmeldung eines Postfachs (OAuth 2) abgelaufen, steht über der
+//  Liste eine schmale Leiste „Anmeldung für ‚…‘ abgelaufen – Neu
+//  anmelden“ (SignInRequiredBar); ein Tipp öffnet direkt das
+//  Anmeldefenster. Nach erfolgreicher Anmeldung wird die Ansicht sofort
+//  abgerufen.
+//
 //  Am Listenende steht „Ältere Nachrichten laden“; in den Sichten
 //  „Ungelesen“ und „Mit Kennzeichnung“, die jeder Abruf unabhängig vom
 //  Alter vollständig holt, stattdessen ein Hinweis darauf.
@@ -64,7 +70,7 @@
 //  MessageSelection, SelectionActionBar, MessageSort, SearchIndexBuilder,
 //  SearchViewModel, SearchPerson, ServerMessageLoader,
 //  ComposeView, DraftComposeLoader, Dialogs, AppTheme, ListBottomBar,
-//  UndoOffer, Log.
+//  UndoOffer, OAuthSignInState, SignInRequiredBar, Log.
 //
 
 import SwiftUI
@@ -112,6 +118,10 @@ struct InboxView: View {
     @State private var showingSelectionMove = false
     /// Netzzustand (online/offline).
     private let network = NetworkMonitor.shared
+    /// Postfächer, deren Anmeldung abgelaufen ist.
+    private let signInState = OAuthSignInState.shared
+    /// Postfach, das gerade neu angemeldet wird; `nil` = keins.
+    @State private var renewingAccountID: UUID?
     /// Zustand der Suche. Bewusst als `@State`: Das Anlegen ist billig
     /// (kein Laden im `init`), SwiftUI behält das erste Objekt.
     @State private var search: SearchViewModel
@@ -197,6 +207,34 @@ struct InboxView: View {
         }
     }
 
+    /// Postfächer, deren Anmeldung abgelaufen ist, in ihrer Reihenfolge.
+    private var expiredAccounts: [MailAccount] {
+        accountStore.accounts.filter { signInState.isSignInRequired($0.id) }
+    }
+
+    /// Meldet ein Postfach neu an (Tipp auf die Hinweisleiste).
+    ///
+    /// Verarbeitung: Öffnet das Anmeldefenster des Anbieters. Gelingt die
+    /// Anmeldung, verschwindet die Leiste und die Ansicht wird abgerufen
+    /// (siehe `onChange` auf `signInRequired`). Schließt der Nutzer das
+    /// Fenster, bleibt die Leiste ohne Meldung stehen; andere Fehler
+    /// erscheinen als Meldung.
+    ///
+    /// - Parameter account: Postfach mit abgelaufener Anmeldung.
+    @MainActor
+    private func renewSignIn(_ account: MailAccount) async {
+        guard renewingAccountID == nil else { return }
+        renewingAccountID = account.id
+        defer { renewingAccountID = nil }
+        do {
+            try await signInState.renewSignIn(for: account, accountStore: accountStore)
+        } catch OAuthError.cancelled {
+            return
+        } catch {
+            viewModel.alert = .failure("Anmeldung für „\(account.displayName)“", error)
+        }
+    }
+
     /// Farbe des Postfachs, wenn ein einzelner Ordner gewählt ist.
     private var selectedAccountColor: Color? {
         guard let id = viewModel.selection.accountID,
@@ -240,9 +278,20 @@ struct InboxView: View {
                 await refreshCurrentView()
             }
             #endif
-            // Feine Linie als Abgrenzung unter der Überschrift
+            // Feine Linie als Abgrenzung unter der Überschrift, darunter
+            // ggf. die Hinweise „Anmeldung abgelaufen“.
             .safeAreaInset(edge: .top, spacing: 0) {
-                Divider()
+                VStack(spacing: 0) {
+                    Divider()
+                    ForEach(expiredAccounts) { account in
+                        SignInRequiredBar(
+                            accountName: account.displayName,
+                            isRenewing: renewingAccountID == account.id,
+                            onRenew: { Task { await renewSignIn(account) } }
+                        )
+                        Divider()
+                    }
+                }
             }
             .searchable(
                 text: $search.text,
@@ -351,6 +400,12 @@ struct InboxView: View {
                     }
                 }
             }
+            .onChange(of: signInState.signInRequired) { oldExpired, newExpired in
+                // Wieder angemeldet (hier, unter „Postfach bearbeiten“ oder
+                // über die Ordnerleiste): gleich abrufen.
+                guard !oldExpired.isSubset(of: newExpired) else { return }
+                Task { await refreshCurrentView() }
+            }
             .onChange(of: accountStore.pausedAccountIDs) { oldPaused, newPaused in
                 // Abruf ein-/ausgeschaltet: Sammelsichten neu zusammenstellen;
                 // wieder eingeschaltete Postfächer gleich abrufen.
@@ -416,6 +471,7 @@ struct InboxView: View {
             FolderSidebarView(
                 accounts: accountStore.accounts,
                 pausedAccountIDs: accountStore.pausedAccountIDs,
+                signInRequiredIDs: signInState.signInRequired,
                 catalog: folderCatalog,
                 expandedAccounts: $expandedFolderAccounts,
                 selection: $viewModel.selection,

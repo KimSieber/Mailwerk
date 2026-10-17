@@ -28,13 +28,18 @@
 //  Store aus der Abschrift der App an (ShareContext); Änderungen werden
 //  dann nicht nach iCloud geschrieben.
 //
+//  Anmeldung per OAuth 2: Statt des Passworts liegt das Refresh-Token im
+//  Schlüsselbund (`addAccount(_:refreshToken:)`, `updateRefreshToken`).
+//  Beim Entfernen wird es mit gelöscht, ebenso der Zustand im
+//  OAuthTokenService und die Anzeige „neu anmelden“.
+//
 //  Abgrenzung: Zugangsdaten für Verbindungen → MailSession
 //  (`credentials(for:)` als Erweiterung dort); Cache je Postfach →
 //  MessageStore.
 //
 //  Abhängigkeiten: NSUbiquitousKeyValueStore, UserDefaults, KeychainService,
 //  MessageStore (Cache beim Entfernen leeren), MailAccount, FetchSelection,
-//  ShareContext, Log.
+//  ShareContext, OAuthTokenService, OAuthSignInState, Log.
 //
 
 import Foundation
@@ -137,16 +142,49 @@ final class AccountStore {
         saveAccounts()
     }
 
+    /// Richtet ein Postfach mit Anmeldung per OAuth 2 ein.
+    ///
+    /// Verarbeitung: Erst das Refresh-Token in den Schlüsselbund, dann das
+    /// Postfach in die Liste – scheitert der Schlüsselbund, entsteht kein
+    /// Postfach ohne Anmeldung.
+    ///
+    /// - Parameters:
+    ///   - account: Neues Postfach (mit `oauthProvider`).
+    ///   - refreshToken: Refresh-Token der Anmeldung.
+    /// - Throws: Fehler des Schlüsselbunds (dann wird nichts gespeichert).
+    func addAccount(_ account: MailAccount, refreshToken: String) throws {
+        try KeychainService.saveRefreshToken(refreshToken, for: account.id)
+        accounts.append(account)
+        saveAccounts()
+    }
+
+    /// Ersetzt das Refresh-Token eines Postfachs nach einer erneuten
+    /// Anmeldung.
+    ///
+    /// - Parameters:
+    ///   - refreshToken: Neues Refresh-Token.
+    ///   - accountID: Postfach.
+    /// - Throws: Fehler des Schlüsselbunds.
+    func updateRefreshToken(_ refreshToken: String, for accountID: UUID) throws {
+        try KeychainService.saveRefreshToken(refreshToken, for: accountID)
+    }
+
     /// Entfernt ein Postfach samt Passwort und Cache.
     ///
     /// Verarbeitung: Ohne Postfach hat sein Cache keinen Zweck mehr – Mails,
     /// Anhänge, Stände, Zeitfenster und Ordnerliste werden entfernt. War es
-    /// das Standard-Postfach, wird der Standard zurückgesetzt.
+    /// das Standard-Postfach, wird der Standard zurückgesetzt. Bei Anmeldung
+    /// per OAuth 2 werden Refresh-Token, Tokens im Speicher und die Anzeige
+    /// „neu anmelden“ mit entfernt.
     ///
     /// - Parameter account: Zu entfernendes Postfach.
     /// - Throws: Fehler des Schlüsselbunds (dann bleibt das Postfach erhalten).
     func removeAccount(_ account: MailAccount) throws {
         try KeychainService.deletePassword(for: account.id)
+        try KeychainService.deleteRefreshToken(for: account.id)
+        let accountID = account.id
+        Task { await OAuthTokenService.shared.forget(accountID) }
+        OAuthSignInState.shared.setSignInRequired(false, for: accountID)
         accounts.removeAll { $0.id == account.id }
         saveAccounts()
 

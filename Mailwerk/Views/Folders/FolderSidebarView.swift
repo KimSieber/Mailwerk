@@ -11,6 +11,8 @@
 //  Ein Postfach, dessen Abruf auf diesem Gerät ausgeschaltet ist, trägt
 //  vor dem Namen ein orangefarbenes Pause-Zeichen (FetchPausedBadge);
 //  seine Ordnerliste wird nicht von selbst geladen (siehe FolderCatalog).
+//  Ist die Anmeldung eines Postfachs abgelaufen, steht davor ein rotes
+//  Warnzeichen (SignInRequiredBadge).
 //
 //  Ordner sind auswählbar: Ein Tipp zeigt den Ordnerinhalt. Unterordner
 //  sind immer sichtbar und nur durch Einrückung erkennbar; auf- und
@@ -32,7 +34,7 @@
 //  FolderCatalog.
 //
 //  Abhängigkeiten: SwiftUI, FolderCatalog, FolderNode, FolderLabel, Dialogs,
-//  FetchPausedBadge.
+//  FetchPausedBadge, SignInRequiredBadge.
 //
 
 import SwiftUI
@@ -43,6 +45,8 @@ struct FolderSidebarView: View {
     let accounts: [MailAccount]
     /// Postfächer, deren Abruf auf diesem Gerät ausgeschaltet ist.
     var pausedAccountIDs: Set<UUID> = []
+    /// Postfächer, deren Anmeldung abgelaufen ist.
+    var signInRequiredIDs: Set<UUID> = []
     /// Ordnerbäume der Postfächer.
     let catalog: FolderCatalog
     /// Aufgeklappte Postfächer. Liegt beim Aufrufer, damit der Zustand
@@ -95,6 +99,7 @@ struct FolderSidebarView: View {
                         AccountFolderSection(
                             account: account,
                             isPaused: pausedAccountIDs.contains(account.id),
+                            needsSignIn: signInRequiredIDs.contains(account.id),
                             state: catalog.state(for: account.id),
                             isBusy: busyAccountID == account.id,
                             isExpanded: expansionBinding(for: account.id),
@@ -275,6 +280,8 @@ private struct AccountFolderSection: View {
     let account: MailAccount
     /// `true`, wenn der Abruf des Postfachs auf diesem Gerät ausgeschaltet ist.
     var isPaused = false
+    /// `true`, wenn die Anmeldung des Postfachs abgelaufen ist.
+    var needsSignIn = false
     /// Ladezustand des Ordnerbaums.
     let state: FolderCatalog.State
     /// Eine Aktion im Postfach läuft (etwa: Ordner wird angelegt).
@@ -303,7 +310,8 @@ private struct AccountFolderSection: View {
         }
     }
 
-    /// Kopfzeile: Pfeil, Farbpunkt, Pause-Zeichen (Abruf aus), Name,
+    /// Kopfzeile: Pfeil, Farbpunkt, Warnzeichen (Anmeldung abgelaufen),
+    /// Pause-Zeichen (Abruf aus), Name,
     /// Ladeanzeige; Kontextmenü „Neuer Ordner …“.
     private var header: some View {
         Button {
@@ -318,6 +326,9 @@ private struct AccountFolderSection: View {
                 Circle()
                     .fill(account.colorHex.map { Color(hex: $0) } ?? Color.secondary)
                     .frame(width: 8, height: 8)
+                if needsSignIn {
+                    SignInRequiredBadge(font: .subheadline)
+                }
                 if isPaused {
                     FetchPausedBadge(font: .subheadline)
                 }

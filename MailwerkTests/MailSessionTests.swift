@@ -4,7 +4,8 @@
 //
 //  Zweck: Tests für das Bestimmen der Zugangsdaten in MailSession –
 //  Postfach gefunden, Postfach fehlt, Passwort fehlt, Lesefehler des
-//  Schlüsselbunds wird unverändert weitergegeben.
+//  Schlüsselbunds wird unverändert weitergegeben, Anmeldung per OAuth 2
+//  braucht kein Passwort.
 //
 
 import Foundation
@@ -28,7 +29,7 @@ struct MailSessionTests {
         let a = account("a"), b = account("b")
         let credentials = try MailSession.resolve(accountID: b.id, in: [a, b]) { $0.id == b.id ? "geheim" : nil }
         #expect(credentials.account.id == b.id)
-        #expect(credentials.password == "geheim")
+        #expect(credentials.secret == .password("geheim"))
     }
 
     /// Unbekannte Postfach-ID: Postfach nicht gefunden.
@@ -52,5 +53,13 @@ struct MailSessionTests {
         #expect(throws: KeychainFailure()) {
             try MailSession.resolve(account: a) { _ in throw KeychainFailure() }
         }
+    }
+
+    /// Anmeldung per OAuth 2: Anbieter statt Passwort, das Passwort wird nicht gelesen.
+    @Test func oauthAccountNeedsNoPassword() throws {
+        var a = account("a")
+        a.oauthProvider = .microsoft
+        let credentials = try MailSession.resolve(account: a) { _ in throw KeychainFailure() }
+        #expect(credentials.secret == .oauth(.microsoft))
     }
 }

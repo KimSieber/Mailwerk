@@ -11,6 +11,14 @@
 //  gespeicherte Passwort unverändert. Scheitert das Speichern, bleibt das
 //  Formular offen und eine Meldung erklärt den Grund.
 //
+//  Postfach mit Anmeldung per OAuth 2 (z. B. Microsoft): Die Server sind
+//  fest. E-Mail-Adresse und Benutzername sind wie bei anderen Postfächern
+//  änderbar (keine neue Anmeldung nötig). Statt Passwort und Servern
+//  zeigt das Formular den Stand der
+//  Anmeldung und den Knopf „Erneut bei … anmelden“ (Anmeldefenster, danach
+//  sofort gespeichert – unabhängig von „Sichern“). Der Schalter „Kopie in
+//  ‚Gesendet‘ ablegen“ bleibt.
+//
 //  Die E-Mail-Adresse ist Pflicht und muss gültig sein. Der Benutzername
 //  erscheint nur, wenn er von der Adresse abweicht; leer heißt „Anmeldung
 //  mit der E-Mail-Adresse“ (`MailAccount.loginName`). Ältere Postfächer
@@ -24,7 +32,8 @@
 //  Abhängigkeiten: SwiftUI, AccountStore, MailConnectionTester,
 //  ColorPickerGrid, MailAddress (Prüfung der Adresse), Dialogs,
 //  LabeledInputField, PlatformInputModifiers, SignatureStore,
-//  SignatureEditorView, AppTheme (getönte Fläche, Abschnitte als Karten).
+//  SignatureEditorView, OAuthSignInState, SignInRequiredBadge, AppTheme
+//  (getönte Fläche, Abschnitte als Karten).
 //
 
 import SwiftUI
@@ -70,6 +79,12 @@ struct EditAccountView: View {
     @State private var isTesting = false
     /// Ergebnis des letzten Verbindungstests.
     @State private var testResult: TestResult?
+    /// Erneute Anmeldung beim Anbieter läuft.
+    @State private var isRenewing = false
+    /// Ergebnis der letzten erneuten Anmeldung; `nil` = keine.
+    @State private var renewResult: TestResult?
+    /// Zustand „neu anmelden“ der Postfächer.
+    private let signInState = OAuthSignInState.shared
 
     /// Ergebnis des Verbindungstests.
     enum TestResult: Equatable {
@@ -118,9 +133,25 @@ struct EditAccountView: View {
         }
     }
 
-    /// Pflichtfelder gefüllt, Ports als Zahl lesbar und E-Mail-Adresse gültig.
+    /// Postfach mit Anmeldename und Adresse aus dem Formular – für
+    /// Verbindungstest und erneute Anmeldung vor dem Sichern.
+    private var formAccount: MailAccount {
+        var copy = account
+        copy.username = loginName
+        copy.emailAddress = MailAccount.normalized(emailAddress)
+        return copy
+    }
+
+    /// Anbieter der Anmeldung per OAuth 2; `nil` = Anmeldung mit Passwort.
+    private var provider: OAuthProvider? {
+        account.oauthConfiguration
+    }
+
+    /// Pflichtfelder gefüllt, Ports als Zahl lesbar und E-Mail-Adresse gültig;
+    /// bei Anmeldung per OAuth 2 ohne Ports und Server (die sind fest).
     private var isValid: Bool {
-        !displayName.isEmpty && hasValidEmailAddress
+        if provider != nil { return !displayName.isEmpty && hasValidEmailAddress }
+        return !displayName.isEmpty && hasValidEmailAddress
             && !imapHost.isEmpty && !smtpHost.isEmpty
             && Int(imapPort) != nil && Int(smtpPort) != nil
     }
@@ -129,57 +160,11 @@ struct EditAccountView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    LabeledInputField(label: "Bezeichnung", example: "z. B. Privat",
-                                      text: $displayName)
-                    LabeledInputField(label: "Absendername", example: "z. B. Max Müller",
-                                      text: $senderName)
-                        .textContentType(.name)
-                    LabeledInputField(label: "E-Mail-Adresse", example: "z. B. max.mueller@mail.org",
-                                      text: $emailAddress)
-                        .emailInput()
-                    LabeledInputField(label: "Benutzername", example: "leer = E-Mail-Adresse",
-                                      text: $username)
-                        .plainTextInput()
-                    LabeledInputField(label: "Passwort", example: "leer = unverändert",
-                                      text: $password, isSecure: true)
-                } header: {
-                    Text("Konto")
-                } footer: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Die Bezeichnung dient nur zur Anzeige in Mailwerk, der Absendername erscheint beim Empfänger vor der Adresse. Den Benutzernamen nur eintragen, wenn sich der Anbieter nicht mit der E-Mail-Adresse anmeldet.")
-                        if !emailAddress.isEmpty && !hasValidEmailAddress {
-                            Text("Die E-Mail-Adresse ist ungültig.")
-                                .foregroundStyle(.red)
-                        }
-                    }
+                if let provider {
+                    oauthSections(provider)
+                } else {
+                    passwordSections
                 }
-                .cardRowBackground()
-
-                Section("IMAP (Empfang)") {
-                    LabeledInputField(label: "Host", example: "z. B. imap.mail.org",
-                                      text: $imapHost)
-                        .plainTextInput()
-                    LabeledInputField(label: "Port", example: "z. B. 993",
-                                      text: $imapPort)
-                        .numberInput()
-                }
-                .cardRowBackground()
-
-                Section {
-                    LabeledInputField(label: "Host", example: "z. B. smtp.mail.org",
-                                      text: $smtpHost)
-                        .plainTextInput()
-                    LabeledInputField(label: "Port", example: "z. B. 587",
-                                      text: $smtpPort)
-                        .numberInput()
-                    Toggle("Kopie in „Gesendet“ ablegen", isOn: $savesSentCopy)
-                } header: {
-                    Text("SMTP (Versand)")
-                } footer: {
-                    Text("Ausschalten, wenn der Anbieter gesendete Mails selbst in „Gesendet“ ablegt (z. B. Gmail) – sonst erscheinen sie dort doppelt.")
-                }
-                .cardRowBackground()
 
                 Section("Farbe") {
                     ColorPickerGrid(selection: $selectedColor)
@@ -257,23 +242,167 @@ struct EditAccountView: View {
         .macSheetFrame(.form)
     }
 
+    // MARK: - Abschnitte
+
+    /// Abschnitte eines Postfachs mit Passwort: Konto, IMAP, SMTP.
+    @ViewBuilder
+    private var passwordSections: some View {
+        Section {
+            LabeledInputField(label: "Bezeichnung", example: "z. B. Privat",
+                              text: $displayName)
+            LabeledInputField(label: "Absendername", example: "z. B. Max Müller",
+                              text: $senderName)
+                .textContentType(.name)
+            LabeledInputField(label: "E-Mail-Adresse", example: "z. B. max.mueller@mail.org",
+                              text: $emailAddress)
+                .emailInput()
+            LabeledInputField(label: "Benutzername", example: "leer = E-Mail-Adresse",
+                              text: $username)
+                .plainTextInput()
+            LabeledInputField(label: "Passwort", example: "leer = unverändert",
+                              text: $password, isSecure: true)
+        } header: {
+            Text("Konto")
+        } footer: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Die Bezeichnung dient nur zur Anzeige in Mailwerk, der Absendername erscheint beim Empfänger vor der Adresse. Den Benutzernamen nur eintragen, wenn sich der Anbieter nicht mit der E-Mail-Adresse anmeldet.")
+                if !emailAddress.isEmpty && !hasValidEmailAddress {
+                    Text("Die E-Mail-Adresse ist ungültig.")
+                        .foregroundStyle(.red)
+                }
+            }
+        }
+        .cardRowBackground()
+
+        Section("IMAP (Empfang)") {
+            LabeledInputField(label: "Host", example: "z. B. imap.mail.org",
+                              text: $imapHost)
+                .plainTextInput()
+            LabeledInputField(label: "Port", example: "z. B. 993",
+                              text: $imapPort)
+                .numberInput()
+        }
+        .cardRowBackground()
+
+        Section {
+            LabeledInputField(label: "Host", example: "z. B. smtp.mail.org",
+                              text: $smtpHost)
+                .plainTextInput()
+            LabeledInputField(label: "Port", example: "z. B. 587",
+                              text: $smtpPort)
+                .numberInput()
+            Toggle("Kopie in „Gesendet“ ablegen", isOn: $savesSentCopy)
+        } header: {
+            Text("SMTP (Versand)")
+        } footer: {
+            Text("Ausschalten, wenn der Anbieter gesendete Mails selbst in „Gesendet“ ablegt (z. B. Gmail) – sonst erscheinen sie dort doppelt.")
+        }
+        .cardRowBackground()
+    }
+
+    /// Abschnitte eines Postfachs mit Anmeldung per OAuth 2: Konto,
+    /// Anmeldung mit Stand und „Erneut anmelden“, Versand.
+    ///
+    /// - Parameter provider: Anbieter.
+    /// - Returns: Die Abschnitte.
+    @ViewBuilder
+    private func oauthSections(_ provider: OAuthProvider) -> some View {
+        Section {
+            LabeledInputField(label: "Bezeichnung", example: "z. B. Outlook",
+                              text: $displayName)
+            LabeledInputField(label: "Absendername", example: "z. B. Max Müller",
+                              text: $senderName)
+                .textContentType(.name)
+            LabeledInputField(label: "E-Mail-Adresse", example: "z. B. max.mueller@outlook.com",
+                              text: $emailAddress)
+                .emailInput()
+            LabeledInputField(label: "Benutzername", example: "leer = E-Mail-Adresse",
+                              text: $username)
+                .emailInput()
+        } header: {
+            Text("Konto")
+        } footer: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Die Bezeichnung dient nur zur Anzeige in Mailwerk, der Absendername erscheint beim Empfänger vor der Adresse. Den Benutzernamen nur eintragen, wenn du dich bei \(provider.name) mit einer anderen Adresse anmeldest als mit der E-Mail-Adresse.")
+                if !emailAddress.isEmpty && !hasValidEmailAddress {
+                    Text("Die E-Mail-Adresse ist ungültig.")
+                        .foregroundStyle(.red)
+                }
+            }
+        }
+        .cardRowBackground()
+
+        Section {
+            if signInState.isSignInRequired(account.id) {
+                Label {
+                    Text("Anmeldung abgelaufen")
+                } icon: {
+                    SignInRequiredBadge(font: .body)
+                }
+                .foregroundStyle(.red)
+            } else {
+                Label("Angemeldet bei \(provider.name)", systemImage: "checkmark.seal")
+                    .foregroundStyle(.secondary)
+            }
+
+            Button {
+                Task { await renewSignIn() }
+            } label: {
+                if isRenewing {
+                    ProgressView()
+                } else {
+                    Label("Erneut bei \(provider.name) anmelden", systemImage: "person.badge.key")
+                }
+            }
+            .disabled(isRenewing || !signInState.canSignIn)
+
+            if let result = renewResult {
+                switch result {
+                case .success:
+                    Label("Neu angemeldet", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                case .failure(let message):
+                    Label(message, systemImage: "xmark.circle.fill")
+                        .foregroundStyle(.red)
+                }
+            }
+        } header: {
+            Text("Anmeldung")
+        } footer: {
+            Text("Mailwerk meldet sich mit einer Freigabe von \(provider.name) an, nicht mit dem Passwort. Nach einer Passwortänderung oder wenn die Anmeldung abgelaufen ist, hier erneut anmelden.")
+        }
+        .cardRowBackground()
+
+        Section {
+            Toggle("Kopie in „Gesendet“ ablegen", isOn: $savesSentCopy)
+        } header: {
+            Text("Versand")
+        } footer: {
+            Text("Ausschalten, wenn der Anbieter gesendete Mails selbst in „Gesendet“ ablegt – sonst erscheinen sie dort doppelt.")
+        }
+        .cardRowBackground()
+    }
+
     // MARK: - Aktionen
 
     /// Speichert die Änderungen und schließt das Formular.
     ///
     /// Verarbeitung: Ungültige Ports fallen auf die Standardwerte zurück
-    /// (die Eingabe ist durch `isValid` geprüft). Scheitert das Speichern
-    /// (z. B. Schlüsselbund), bleibt das Formular offen.
+    /// (die Eingabe ist durch `isValid` geprüft). Bei Anmeldung per OAuth 2
+    /// bleiben die Server unverändert. Scheitert das Speichern (z. B.
+    /// Schlüsselbund), bleibt das Formular offen.
     private func save() {
         var updated = account
         updated.displayName = displayName
         updated.senderName = MailAccount.normalized(senderName)
         updated.username = loginName
         updated.emailAddress = MailAccount.normalized(emailAddress)
-        updated.imapHost = imapHost
-        updated.imapPort = Int(imapPort) ?? 993
-        updated.smtpHost = smtpHost
-        updated.smtpPort = Int(smtpPort) ?? 587
+        if provider == nil {
+            updated.imapHost = imapHost
+            updated.imapPort = Int(imapPort) ?? 993
+            updated.smtpHost = smtpHost
+            updated.smtpPort = Int(smtpPort) ?? 587
+        }
         updated.storesSentCopy = savesSentCopy
         updated.colorHex = selectedColor?.rawValue
 
@@ -295,6 +424,10 @@ struct EditAccountView: View {
     /// zu erscheinen. Das Ergebnis steht in `testResult`.
     @MainActor
     private func testConnection() async {
+        if provider != nil {
+            await testStoredConnection()
+            return
+        }
         guard let imapPortInt = Int(imapPort),
               let smtpPortInt = Int(smtpPort) else {
             testResult = .failure("Ungültiger Port")
@@ -326,15 +459,56 @@ struct EditAccountView: View {
         do {
             try await MailConnectionTester.testIMAP(
                 host: imapHost, port: imapPortInt,
-                username: loginName, password: testPassword
+                username: loginName, login: .password(testPassword)
             )
             try await MailConnectionTester.testSMTP(
                 host: smtpHost, port: smtpPortInt,
-                username: loginName, password: testPassword
+                username: loginName, login: .password(testPassword)
             )
             testResult = .success
         } catch {
             testResult = .failure(error.localizedDescription)
+        }
+    }
+
+    /// Prüft IMAP und SMTP eines Postfachs mit Anmeldung per OAuth 2.
+    ///
+    /// Verarbeitung: Geprüft wird mit dem Benutzernamen aus dem Formular;
+    /// das Access-Token holt der OAuthTokenService (bei Bedarf erneuert).
+    /// Ist die Anmeldung abgelaufen, sagt das die Meldung.
+    @MainActor
+    private func testStoredConnection() async {
+        guard let provider else { return }
+        isTesting = true
+        defer { isTesting = false }
+        do {
+            try await MailConnectionTester.test(
+                MailCredentials(account: formAccount, secret: .oauth(provider))
+            )
+            testResult = .success
+        } catch {
+            testResult = .failure(error.localizedDescription)
+        }
+    }
+
+    /// Meldet das Postfach erneut beim Anbieter an.
+    ///
+    /// Verarbeitung: Öffnet das Anmeldefenster mit dem Benutzernamen aus
+    /// dem Formular; das neue Refresh-Token wird sofort gespeichert
+    /// (`OAuthSignInState.renewSignIn`), unabhängig von „Sichern“. Schließt
+    /// der Nutzer das Fenster, bleibt alles, wie es war.
+    @MainActor
+    private func renewSignIn() async {
+        isRenewing = true
+        defer { isRenewing = false }
+        renewResult = nil
+        do {
+            try await signInState.renewSignIn(for: formAccount, accountStore: accountStore)
+            renewResult = .success
+        } catch OAuthError.cancelled {
+            return
+        } catch {
+            renewResult = .failure(error.localizedDescription)
         }
     }
 }

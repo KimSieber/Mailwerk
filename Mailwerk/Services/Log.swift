@@ -13,6 +13,7 @@
 //  - Versand   – Versand und Gesendet-Kopie
 //  - Cache     – lokale Ablage und Postfach-Konfiguration
 //  - Ansicht   – Ansichten (Ordnerleiste, Mail, Drucken, Messungen)
+//  - Anmeldung – Anmeldung per OAuth 2 (nie Tokens, nur Abläufe)
 //
 //  Stufen: `.error` für Fehler, `.info` für Abläufe und Ergebnisse,
 //  `.debug` für Messwerte und Diagnose.
@@ -48,4 +49,6 @@ nonisolated enum Log {
     static let store = Logger(subsystem: subsystem, category: "Cache")
     /// Ansichten.
     static let view = Logger(subsystem: subsystem, category: "Ansicht")
+    /// Anmeldung per OAuth 2 (Abläufe, nie Tokens).
+    static let auth = Logger(subsystem: subsystem, category: "Anmeldung")
 }

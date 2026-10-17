@@ -9,6 +9,12 @@
 //  Hinweis, falls der lokale Mail-Speicher beim Start neu angelegt
 //  werden musste oder nicht verfügbar ist.
 //
+//  Anmeldefenster: Die App stellt dem OAuthSignInState das Anmeldefenster
+//  von Apple bereit (`OAuthWebSignInInstaller`, ASWebAuthenticationSession
+//  in einer privaten Browser-Sitzung). Das geschieht nur hier, weil diese
+//  Datei nicht zu den Teilen-Erweiterungen gehört – dort gibt es kein
+//  Anmeldefenster.
+//
 //  Alle langlebigen Objekte (Postfächer, Einstellungen, ViewModel der
 //  Liste, Ordnerkatalog) entstehen hier genau einmal (`AppObjects`). Der
 //  `body` der App wird von SwiftUI mehrfach ausgewertet; was dort erzeugt
@@ -18,11 +24,12 @@
 //
 //  Abhängigkeiten: SwiftUI, SwiftData, AttachmentManager (Aufräumen),
 //  MessageStore (Starthinweis), AppObjects, FilterEntry, AccountSignature,
-//  SignatureStore, Dialogs, Log.
+//  SignatureStore, Dialogs, OAuthSignInState, OAuthError, Log.
 //
 
 import SwiftUI
 import SwiftData
+import AuthenticationServices
 import os
 
 @main
@@ -61,6 +68,7 @@ struct MailwerkApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(objects: objects)
+            .modifier(OAuthWebSignInInstaller())
             .task {
                 // Einmalig abholen; der Speicher liefert ihn nur einmal.
                 if let notice = MessageStore.shared.consumeStartupNotice() {
@@ -118,5 +126,59 @@ struct MailwerkApp: App {
 
         // Alle drei Varianten gescheitert – dann stimmt etwas Grundlegendes nicht.
         fatalError("Kein Speicher für Filterlisten und Signaturen verfügbar")
+    }
+}
+
+// MARK: - Anmeldefenster
+
+/// Stellt dem OAuthSignInState das Anmeldefenster von Apple bereit.
+///
+/// Die Sitzung kommt aus der Umgebung des Fensters
+/// (`webAuthenticationSession`); sie öffnet sich über dem Fenster, auch
+/// wenn darin gerade ein Blatt (z. B. „Postfach hinzufügen“) offen ist.
+private struct OAuthWebSignInInstaller: ViewModifier {
+    /// Anmeldefenster des Systems für dieses Fenster.
+    @Environment(\.webAuthenticationSession) private var webAuthenticationSession
+
+    /// Hinterlegt beim Erscheinen die Funktion zum Öffnen des Anmeldefensters.
+    ///
+    /// - Parameter content: Wurzelansicht.
+    /// - Returns: Unveränderte Ansicht.
+    func body(content: Content) -> some View {
+        content.onAppear {
+            let session = webAuthenticationSession
+            OAuthSignInState.shared.webSignIn = { url, callbackScheme in
+                try await Self.authenticate(session, url: url, callbackScheme: callbackScheme)
+            }
+        }
+    }
+
+    /// Öffnet das Anmeldefenster und wartet auf die Rückkehr.
+    ///
+    /// Verarbeitung: Private Browser-Sitzung (`.ephemeral`) – keine Cookies
+    /// anderer Anmeldungen, kein Systemdialog „möchte sich anmelden“.
+    /// Schließt der Nutzer das Fenster, wird daraus `OAuthError.cancelled`.
+    ///
+    /// - Parameters:
+    ///   - session: Anmeldefenster des Systems.
+    ///   - url: Adresse der Anmeldeseite.
+    ///   - callbackScheme: Schema der Weiterleitung zurück zu Mailwerk.
+    /// - Returns: Adresse, mit der das Anmeldefenster zurückkehrte.
+    /// - Throws: `OAuthError.cancelled` oder Fehler des Systems.
+    @MainActor
+    private static func authenticate(
+        _ session: WebAuthenticationSession,
+        url: URL,
+        callbackScheme: String
+    ) async throws -> URL {
+        do {
+            return try await session.authenticate(
+                using: url,
+                callbackURLScheme: callbackScheme,
+                preferredBrowserSession: .ephemeral
+            )
+        } catch let error as ASWebAuthenticationSessionError where error.code == .canceledLogin {
+            throw OAuthError.cancelled
+        }
     }
 }

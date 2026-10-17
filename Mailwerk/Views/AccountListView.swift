@@ -5,8 +5,9 @@
 //  Zweck: Postfachverwaltung – Liste der Postfächer mit Farbe, Name und
 //  E-Mail-Adresse; Hinzufügen, Bearbeiten (Tipp) und Entfernen (Wischen);
 //  je Postfach der Schalter „Abruf“ (nur dieses Gerät; aus = nicht über
-//  „Alle Eingänge“ abrufen, Pause-Zeichen vor dem Namen); Wahl des
-//  Standard-Postfachs für neue Mails.
+//  „Alle Eingänge“ abrufen, Pause-Zeichen vor dem Namen); rotes
+//  Warnzeichen, wenn die Anmeldung eines Postfachs abgelaufen ist; Wahl
+//  des Standard-Postfachs für neue Mails.
 //
 //  Ein Postfach zu entfernen löscht auch seinen gesamten Cache, sein
 //  Passwort aus dem Schlüsselbund und seine Signatur. Deshalb gibt es davor eine Rückfrage –
@@ -19,7 +20,7 @@
 //  Speichern und Entfernen → AccountStore.
 //
 //  Abhängigkeiten: SwiftUI, AccountStore, SignatureStore, Dialogs, Log,
-//  FetchPausedBadge, AppTheme.
+//  FetchPausedBadge, SignInRequiredBadge, OAuthSignInState, AppTheme.
 //
 
 import SwiftUI
@@ -114,6 +115,9 @@ struct AccountListView: View {
                             }
                             VStack(alignment: .leading) {
                                 HStack(spacing: 6) {
+                                    if OAuthSignInState.shared.isSignInRequired(account.id) {
+                                        SignInRequiredBadge(font: .headline)
+                                    }
                                     if !accountStore.isFetchEnabled(account.id) {
                                         FetchPausedBadge(font: .headline)
                                     }
@@ -190,7 +194,7 @@ struct AccountListView: View {
             : "\(accounts.count) Postfächer entfernen?"
         activeConfirmation = ConfirmationRequest(
             title: title,
-            message: "Die gespeicherten Mails und das Passwort werden gelöscht. Auf dem Server bleibt alles erhalten.",
+            message: "Die gespeicherten Mails und die Zugangsdaten werden gelöscht. Auf dem Server bleibt alles erhalten.",
             confirmLabel: "Entfernen"
         ) {
             removeAccounts(accounts)

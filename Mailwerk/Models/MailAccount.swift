@@ -24,9 +24,15 @@
 //  (KeychainService), referenziert über `id`. Verbindungen sind immer
 //  verschlüsselt (MailServerFactory), deshalb gibt es keine TLS-Schalter.
 //
+//  Anmeldeart: Ohne `oauthProvider` meldet sich Mailwerk mit Benutzername
+//  und Passwort an (alle älteren Postfächer). Mit `oauthProvider` (z. B.
+//  Microsoft) per OAuth 2: Statt des Passworts liegt dann ein
+//  Refresh-Token im Schlüsselbund, angemeldet wird mit XOAUTH2. Das Feld
+//  ist optional, damit gespeicherte Postfächer ohne es weiter lesbar sind.
+//
 //  Abgrenzung: Speichern und Abgleich über iCloud → AccountStore.
 //
-//  Abhängigkeiten: Foundation.
+//  Abhängigkeiten: Foundation, OAuthProvider.
 //
 
 import Foundation
@@ -81,6 +87,10 @@ struct MailAccount: Identifiable, Codable, Equatable {
     /// über `savesSentCopy`.
     var storesSentCopy: Bool?
 
+    /// Anbieter der Anmeldung per OAuth 2; `nil` = Anmeldung mit Passwort
+    /// (auch alle älteren gespeicherten Postfächer).
+    var oauthProvider: OAuthProvider.ID?
+
     /// Legt ein Postfach an.
     ///
     /// Verarbeitung: Ein leerer Absendername wird zu `nil` (`normalized`).
@@ -98,6 +108,8 @@ struct MailAccount: Identifiable, Codable, Equatable {
     ///   - colorHex: Farbe als Hex-Wert.
     ///   - spamFolder: gemerkter Spam-Ordner.
     ///   - storesSentCopy: Kopie in „Gesendet“ ablegen.
+    ///   - oauthProvider: Anbieter der Anmeldung per OAuth 2; `nil` =
+    ///     Passwort.
     init(
         id: UUID = UUID(),
         displayName: String,
@@ -110,7 +122,8 @@ struct MailAccount: Identifiable, Codable, Equatable {
         smtpPort: Int = 465,
         colorHex: String? = nil,
         spamFolder: String? = nil,
-        storesSentCopy: Bool = true
+        storesSentCopy: Bool = true,
+        oauthProvider: OAuthProvider.ID? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -124,6 +137,17 @@ struct MailAccount: Identifiable, Codable, Equatable {
         self.colorHex = colorHex
         self.spamFolder = spamFolder
         self.storesSentCopy = storesSentCopy
+        self.oauthProvider = oauthProvider
+    }
+
+    /// `true`, wenn sich das Postfach per OAuth 2 anmeldet.
+    var usesOAuth: Bool {
+        oauthProvider != nil
+    }
+
+    /// Konfiguration des OAuth-Anbieters; `nil` bei Anmeldung mit Passwort.
+    var oauthConfiguration: OAuthProvider? {
+        oauthProvider.map { OAuthProvider.provider(for: $0) }
     }
 
     /// `true`, wenn nach dem Versand eine Kopie in „Gesendet“ abgelegt wird;

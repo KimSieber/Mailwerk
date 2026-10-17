@@ -12,6 +12,16 @@
 //  So trägt die Nachricht ihre Kennzeichnung mit in den Zielordner, auch
 //  wenn die Verbindung mittendrin abbricht.
 //
+//  Server ohne eigene Schlüsselwörter (z. B. Outlook, erkannt an
+//  `PERMANENTFLAGS`, siehe KeywordSupport): Dort gibt es kein
+//  `$MailwerkChecked`. Als „schon geprüft“ gilt dann eine Mail, die
+//  bereits im lokalen Cache des Posteingangs liegt – der Filter läuft vor
+//  jedem Abruf des Posteingangs, neue Mails sind also genau die noch nicht
+//  gecachten. Gesetzt werden die Schlüsselwörter dort nicht; Blockieren,
+//  Vertrauen und Verschieben laufen sonst gleich. Einschränkung: Mails,
+//  die bei ausgeschaltetem Filter abgerufen wurden, prüft dieses Gerät
+//  später nicht nach.
+//
 //  Einzelaktionen: Absender oder Domain blockieren (Blacklist, Mail in den
 //  Spam-Ordner) bzw. vertrauen (Whitelist, Mail zurück in den Posteingang).
 //
@@ -29,7 +39,8 @@
 //  Zugangsdaten), AccountStore, FilterListRepository, SpamFilterPlanner,
 //  SpamFolderResolver, SpamHeaderParser, SpamClassifier, FilterAddress,
 //  MailActionService (Ordnerliste, Ordner anlegen), MessageStore (Cache
-//  nachziehen), SyncWindow (Zeitraum), MailFolder (Posteingang), Log.
+//  nachziehen, schon gecachte Mails), SyncWindow (Zeitraum), MailFolder
+//  (Posteingang), KeywordSupport, Log.
 //
 
 import Foundation
@@ -125,25 +136,38 @@ final class SpamFilterService {
             }
             accountStore.setSpamFolder(spamFolder, for: account.id)
 
-            // 2. Ungeprüfte Mails des Standardfensters suchen
-            _ = try await server.selectMailbox(MailFolder.inboxPath)
+            // 2. Ungeprüfte Mails des Standardfensters suchen – mit
+            //    `$MailwerkChecked`, sofern der Server eigene Schlüsselwörter
+            //    speichert, sonst alle noch nicht gecachten.
+            let inbox = try await server.selectMailbox(MailFolder.inboxPath)
+            let usesKeywords = Self.storesKeywords(inbox)
+            if !usesKeywords {
+                Log.spam.info("🛡️ [\(account.displayName, privacy: .private)] Server speichert keine eigenen Schlüsselwörter (PERMANENTFLAGS: \(Self.flagNames(inbox.permanentFlags).joined(separator: " "), privacy: .public)) – geprüft wird, was noch nicht im Cache liegt")
+            }
             let sinceDate = SyncWindow.standardStart()
+            let criteria: [SwiftMail.SearchCriteria] = usesKeywords
+                ? [.unkeyword(SpamKeyword.checked), .since(sinceDate)]
+                : [.since(sinceDate)]
             // Ohne Sortierung: Die Reihenfolge spielt keine Rolle, der Plan
             // sortiert ohnehin. Das spart die SORT-Erweiterung des Servers.
             let searchResult: ExtendedSearchResult<SwiftMail.UID> = try await server.extendedSearch(
-                criteria: [.unkeyword(SpamKeyword.checked), .since(sinceDate)],
+                criteria: criteria,
                 calendar: SyncWindow.calendar
             )
             // `all` liefert ESEARCH, `ordered` eine einfache SEARCH-Antwort.
             let matches = searchResult.all ?? UIDSet(searchResult.ordered ?? [])
-            let uids = matches.toArray()
+            var uids = matches.toArray()
+            if !usesKeywords {
+                let known = MessageStore.shared.cachedUIDs(accountID: account.id, folder: MailFolder.inboxPath)
+                uids = uids.filter { !known.contains($0.value) }
+            }
             Log.spam.info("🛡️ [\(account.displayName, privacy: .private)] \(uids.count) ungeprüfte Mails seit \(sinceDate, privacy: .public)")
 
             guard !uids.isEmpty else { return .completed }
 
             // 3. Absender und Spam-Header holen – PEEK, die Mails bleiben ungelesen
             let infos = try await server.fetchMessageInfosBulk(
-                using: matches,
+                using: usesKeywords ? matches : UIDSet(uids),
                 options: .slim,
                 headerFields: SpamHeaderParser.fieldNames
             )
@@ -155,7 +179,9 @@ final class SpamFilterService {
             )
 
             // 5. Ausführen – Keywords zuerst, dann verschieben
-            try await apply(plan, on: server, account: account, spamFolder: spamFolder)
+            try await apply(
+                plan, on: server, account: account, spamFolder: spamFolder, storesKeywords: usesKeywords
+            )
 
             Log.spam.info("🛡️ [\(account.displayName, privacy: .private)] Fertig: \(plan.checked.count) geprüft, \(plan.moveToSpam.count) nach \(spamFolder, privacy: .public), \(plan.keep.count) behalten")
             return .completed
@@ -186,8 +212,9 @@ final class SpamFilterService {
     ///
     /// Verarbeitung: Die Mail erhält `$MailwerkChecked` und
     /// `$MailwerkBlacklisted`, damit ein späterer Filterlauf sie nicht
-    /// erneut prüft. Ohne Spam-Ordner wird nichts verschoben; angelegt wird
-    /// er nur nach Bestätigung.
+    /// erneut prüft – sofern der Server eigene Schlüsselwörter speichert.
+    /// Ohne Spam-Ordner wird nichts verschoben; angelegt wird er nur nach
+    /// Bestätigung.
     ///
     /// - Parameters:
     ///   - message: Betroffene Mail.
@@ -204,15 +231,17 @@ final class SpamFilterService {
         return try await MailSession.withIMAP(credentials) { server -> Bool in
             let spamFolder = try await requireSpamFolder(for: account, on: server)
 
-            _ = try await server.selectMailbox(message.folder)
-            try await server.store(
-                flags: [
-                    SwiftMail.Flag.custom(SpamKeyword.checked),
-                    SwiftMail.Flag.custom(SpamKeyword.blacklisted)
-                ],
-                on: uidSet([message.uid]),
-                operation: .add
-            )
+            let selection = try await server.selectMailbox(message.folder)
+            if Self.storesKeywords(selection) {
+                try await server.store(
+                    flags: [
+                        SwiftMail.Flag.custom(SpamKeyword.checked),
+                        SwiftMail.Flag.custom(SpamKeyword.blacklisted)
+                    ],
+                    on: uidSet([message.uid]),
+                    operation: .add
+                )
+            }
 
             guard message.folder != spamFolder else { return false }
             return try await move(message, to: spamFolder, on: server, account: account)
@@ -224,7 +253,9 @@ final class SpamFilterService {
     ///
     /// Verarbeitung: `$MailwerkBlacklisted` wird entfernt, `$MailwerkChecked`
     /// bleibt bzw. wird gesetzt – die Mail ist geprüft, und ohne das Keyword
-    /// liefe sie nach dem Verschieben erneut durch den Filter.
+    /// liefe sie nach dem Verschieben erneut durch den Filter. Speichert der
+    /// Server keine eigenen Schlüsselwörter, entfällt beides; die Mail liegt
+    /// nach dem Verschieben im Cache und gilt damit als geprüft.
     ///
     /// - Parameters:
     ///   - message: Betroffene Mail.
@@ -245,17 +276,19 @@ final class SpamFilterService {
                 return nil
             }()
 
-            _ = try await server.selectMailbox(message.folder)
-            try await server.store(
-                flags: [SwiftMail.Flag.custom(SpamKeyword.blacklisted)],
-                on: uidSet([message.uid]),
-                operation: .remove
-            )
-            try await server.store(
-                flags: [SwiftMail.Flag.custom(SpamKeyword.checked)],
-                on: uidSet([message.uid]),
-                operation: .add
-            )
+            let selection = try await server.selectMailbox(message.folder)
+            if Self.storesKeywords(selection) {
+                try await server.store(
+                    flags: [SwiftMail.Flag.custom(SpamKeyword.blacklisted)],
+                    on: uidSet([message.uid]),
+                    operation: .remove
+                )
+                try await server.store(
+                    flags: [SwiftMail.Flag.custom(SpamKeyword.checked)],
+                    on: uidSet([message.uid]),
+                    operation: .add
+                )
+            }
 
             guard message.folder == spamFolder else { return false }
             return try await move(
@@ -335,36 +368,42 @@ final class SpamFilterService {
 
     /// Setzt die Entscheidung des Filters auf dem Server um.
     ///
-    /// Verarbeitung: Zuerst `$MailwerkBlacklisted` und `$MailwerkChecked`,
-    /// danach das Verschieben in den Spam-Ordner samt Cache.
+    /// Verarbeitung: Zuerst `$MailwerkBlacklisted` und `$MailwerkChecked`
+    /// (nur wenn der Server eigene Schlüsselwörter speichert), danach das
+    /// Verschieben in den Spam-Ordner samt Cache.
     ///
     /// - Parameters:
     ///   - plan: Entscheidung des Filters.
     ///   - server: Angemeldete Verbindung mit ausgewähltem Posteingang.
     ///   - account: Postfach.
     ///   - spamFolder: Spam-Ordner des Postfachs.
+    ///   - storesKeywords: `true`, wenn der Server eigene Schlüsselwörter
+    ///     speichert.
     /// - Throws: IMAP-Fehler.
     private func apply(
         _ plan: SpamFilterPlan,
         on server: SwiftMail.IMAPServer,
         account: MailAccount,
-        spamFolder: String
+        spamFolder: String,
+        storesKeywords: Bool
     ) async throws {
         guard !plan.isEmpty else { return }
 
-        if !plan.blacklisted.isEmpty {
+        if storesKeywords {
+            if !plan.blacklisted.isEmpty {
+                try await server.store(
+                    flags: [SwiftMail.Flag.custom(SpamKeyword.blacklisted)],
+                    on: uidSet(plan.blacklisted),
+                    operation: .add
+                )
+            }
+
             try await server.store(
-                flags: [SwiftMail.Flag.custom(SpamKeyword.blacklisted)],
-                on: uidSet(plan.blacklisted),
+                flags: [SwiftMail.Flag.custom(SpamKeyword.checked)],
+                on: uidSet(plan.checked),
                 operation: .add
             )
         }
-
-        try await server.store(
-            flags: [SwiftMail.Flag.custom(SpamKeyword.checked)],
-            on: uidSet(plan.checked),
-            operation: .add
-        )
 
         guard !plan.moveToSpam.isEmpty else { return }
 
@@ -377,6 +416,33 @@ final class SpamFilterService {
             account: account,
             spamFolder: spamFolder
         )
+    }
+
+    /// Prüft, ob der ausgewählte Ordner die Schlüsselwörter des Filters
+    /// dauerhaft speichert.
+    ///
+    /// - Parameter selection: Antwort auf die Auswahl des Ordners.
+    /// - Returns: `true`, wenn `$MailwerkChecked` gespeichert werden kann.
+    private static func storesKeywords(_ selection: SwiftMail.Mailbox.Selection) -> Bool {
+        KeywordSupport.allows(SpamKeyword.checked, permanentFlags: flagNames(selection.permanentFlags))
+    }
+
+    /// Namen der Kennzeichen für Prüfung und Protokoll.
+    ///
+    /// - Parameter flags: Kennzeichen von SwiftMail.
+    /// - Returns: Eigene Kennzeichen mit Namen, die übrigen mit ihrem
+    ///   IMAP-Namen (z. B. `\Seen`).
+    private static func flagNames(_ flags: [SwiftMail.Flag]) -> [String] {
+        flags.map { flag in
+            switch flag {
+            case .seen: return "\\Seen"
+            case .answered: return "\\Answered"
+            case .flagged: return "\\Flagged"
+            case .deleted: return "\\Deleted"
+            case .draft: return "\\Draft"
+            case .custom(let name): return name
+            }
+        }
     }
 
     /// Zieht die verschobenen Mails im lokalen Cache nach.

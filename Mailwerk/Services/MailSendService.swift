@@ -24,7 +24,12 @@
 //
 //  Fehler und Protokoll: Der erreichte Schritt (Verbinden, Anmelden,
 //  Senden) wird protokolliert; eine gescheiterte Anmeldung erscheint als
-//  verständliche Meldung (SMTPLoginFailure) statt als NIO-Fehler.
+//  verständliche Meldung (SMTPLoginFailure) statt als NIO-Fehler. Ist die
+//  Anmeldung per OAuth 2 abgelaufen, kommt `OAuthError.signInRequired`
+//  unverändert beim Aufrufer an („Bitte in Mailwerk neu anmelden“).
+//
+//  Anmeldung: mit Passwort oder per OAuth 2 (XOAUTH2) – beides über
+//  `MailSession.authenticate`.
 //
 //  Zeilenenden: `makeEmail` bringt Text und HTML auf CRLF (MailLineEndings),
 //  damit Versand, Gesendet-Kopie und Entwurf kein einzelnes LF enthalten.
@@ -34,7 +39,8 @@
 //  Entwürfe → DraftService (nutzt `makeEmail` und `addingBccHeader`).
 //
 //  Abhängigkeiten: SwiftMail (SMTP/IMAP), MailServerFactory (TLS-Vorgaben
-//  für SMTP), MailSession (IMAP-Verbindung und Zugangsdaten), AccountStore,
+//  für SMTP), MailSession (IMAP-Verbindung, Zugangsdaten und Anmeldung),
+//  OAuthError, AccountStore,
 //  MessageStore (Cache-Markierung), FlagState (Keyword `$Forwarded`),
 //  MailLineEndings (Zeilenenden), SMTPLoginFailure (Meldung bei
 //  gescheiterter Anmeldung), Log.
@@ -159,6 +165,9 @@ enum MailSendService {
         /// Die Anmeldung am Versandserver ist gescheitert; Antwort des
         /// Servers, falls bekannt (`nil`, wenn er die Verbindung beendet hat).
         case loginRejected(String?)
+        /// Die Anmeldung per OAuth 2 am Versandserver ist gescheitert;
+        /// Antwort des Servers, falls bekannt.
+        case tokenRejected(String?)
         /// Der Server hat die Nachricht endgültig abgelehnt.
         case rejected(String)
         /// Abbruch an einer Stelle, an der die Nachricht schon raus sein kann.
@@ -185,6 +194,10 @@ enum MailSendService {
                 return "Die Nachricht ist mit \(Self.megabytes(size)) zu groß. Der Server erlaubt höchstens \(Self.megabytes(limit))."
             case .loginRejected(let reply):
                 return SMTPLoginFailure.message(serverReply: reply)
+            case .tokenRejected(let reply):
+                let detail = reply?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let suffix = detail.isEmpty ? "" : " (\(detail))"
+                return "Der Versandserver hat die Anmeldung nicht angenommen\(suffix). Bitte unter „Postfach bearbeiten“ erneut anmelden."
             case .rejected(let detail):
                 return "Der Server hat die Nachricht abgelehnt: \(detail)"
             case .uncertain(let detail):
@@ -231,15 +244,15 @@ enum MailSendService {
     ///
     /// - Parameters:
     ///   - mail: Versandfertige Nachricht.
-    ///   - accountStore: Quelle für Postfach und Passwort.
+    ///   - accountStore: Quelle für Postfach und Zugang.
     /// - Returns: Ablageort der Gesendet-Kopie und Warnungen.
     /// - Throws: `MailCredentialError`, wenn Postfach oder Passwort fehlen,
-    ///   sonst `SendError`, wenn die Nachricht nicht oder nicht sicher
-    ///   versendet wurde.
+    ///   `OAuthError.signInRequired`, wenn die Anmeldung per OAuth 2
+    ///   abgelaufen ist, sonst `SendError`, wenn die Nachricht nicht oder
+    ///   nicht sicher versendet wurde.
     static func send(_ mail: OutgoingMail, accountStore: AccountStore) async throws -> SendReport {
         let credentials = try accountStore.credentials(for: mail.accountID)
         let account = credentials.account
-        let password = credentials.password
 
         // Absender prüfen – E-Mail-Adresse des Postfachs, sonst Benutzername
         let senderAddress = account.senderAddress
@@ -258,7 +271,7 @@ enum MailSendService {
         Log.send.info("✉️ [\(account.displayName, privacy: .private)] Versand beginnt über \(account.smtpHost, privacy: .public):\(account.smtpPort, privacy: .public)")
 
         // 1. Versand – Fehler brechen hier ab
-        try await submit(email, account: account, password: password)
+        try await submit(email, credentials: credentials)
         Log.send.info("✉️ [\(account.displayName, privacy: .private)] Nachricht versendet: \(email.messageID?.description ?? "-", privacy: .private)")
 
         // 2. + 3. Nacharbeiten – Fehler werden zu Warnungen
@@ -359,19 +372,26 @@ enum MailSendService {
     /// Kopfzeilen, Trennlinien); eine Schätzung würde knapp unter dem Limit
     /// falsch entscheiden. Geprüft wird nur, wenn der Server ein Limit meldet.
     ///
+    /// Ist die Anmeldung per OAuth 2 abgelaufen (`OAuthError`), geht dieser
+    /// Fehler unverändert weiter – er ist keine Ablehnung durch den Server.
+    /// Lehnt der Server ein Token ab, wird daraus `tokenRejected` (statt
+    /// des Hinweises auf Benutzername und Passwort).
+    ///
     /// - Parameters:
     ///   - email: Versandfertige Nachricht.
-    ///   - account: Absende-Postfach (SMTP-Server, Benutzername).
-    ///   - password: Passwort des Postfachs.
-    /// - Throws: `SendError` bei jedem Fehlschlag.
-    private static func submit(_ email: Email, account: MailAccount, password: String) async throws {
+    ///   - credentials: Absende-Postfach (SMTP-Server, Benutzername) und
+    ///     Zugang.
+    /// - Throws: `SendError` bei jedem Fehlschlag, `OAuthError` bei der
+    ///   Anmeldung per OAuth 2.
+    private static func submit(_ email: Email, credentials: MailCredentials) async throws {
+        let account = credentials.account
         let smtp = MailServerFactory.smtpServer(for: account)
         var failure: Error?
         var step = SMTPStep.connect
         do {
             try await smtp.connect()
             step = .login
-            try await smtp.login(username: account.username, password: password)
+            try await MailSession.authenticate(smtp, as: credentials)
             step = .send
 
             // Größenlimit des Servers vorab prüfen → verständliche Meldung
@@ -390,6 +410,12 @@ enum MailSendService {
         try? await smtp.disconnect()
         if let failure {
             Log.send.error("❌ [\(account.displayName, privacy: .private)] Versand gescheitert beim Schritt \(step.rawValue, privacy: .public): \(failure.localizedDescription, privacy: .public)")
+            if let oauthError = failure as? OAuthError { throw oauthError }
+            if case .oauth = credentials.secret, step == .login {
+                var reply: String?
+                if case SMTPError.authenticationFailed(let text) = failure { reply = text }
+                throw SendError.tokenRejected(reply)
+            }
             throw sendError(for: failure, step: step)
         }
     }
@@ -442,7 +468,7 @@ enum MailSendService {
     /// - Parameters:
     ///   - email: Versendete Nachricht.
     ///   - bcc: Blindkopie-Empfänger für den Bcc-Header der Kopie.
-    ///   - credentials: Absende-Postfach und Passwort.
+    ///   - credentials: Absende-Postfach und Zugang.
     /// - Returns: Pfad des Gesendet-Ordners.
     /// - Throws: Verbindungsfehler oder `PostSendError.sentFolderNotFound`.
     private static func saveSentCopy(
@@ -518,7 +544,7 @@ enum MailSendService {
     ///
     /// - Parameters:
     ///   - origin: Bezug auf die Originalnachricht (Postfach, Ordner, UID).
-    ///   - accountStore: Quelle für Postfach und Passwort.
+    ///   - accountStore: Quelle für Postfach und Zugang.
     /// - Throws: `MailCredentialError` oder Verbindungsfehler.
     private static func markOriginal(
         _ origin: OutgoingMail.Origin,
