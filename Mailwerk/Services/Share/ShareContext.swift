@@ -16,6 +16,10 @@
 //  Passwörter stehen nicht darin; die Erweiterung liest sie über die
 //  gemeinsame Schlüsselbundgruppe (KeychainService).
 //
+//  App Group: Die Kennung kommt aus der Info.plist (`MailwerkAppGroupID`),
+//  damit „Mailwerk Dev“ (Debug) und die TestFlight-App je eine eigene
+//  haben (`appGroupID`).
+//
 //  Abgrenzung: Schreiben bei Änderungen → ShareContextPublisher; Lesen
 //  in der Erweiterung → ShareRootView.
 //
@@ -61,8 +65,34 @@ struct ShareContext: Codable, Equatable {
 /// Ablage der Abschrift im gemeinsamen Ordner der App Group.
 enum ShareContextFile {
 
+    /// Schlüssel der App-Group-Kennung in der Info.plist.
+    static let appGroupInfoKey = "MailwerkAppGroupID"
+    /// Kennung, falls die Info.plist keine nennt (Fassung ohne Eintrag).
+    static let defaultAppGroupID = "group.de.sieber-bw.Mailwerk"
+
     /// Kennung der App Group von App und Teilen-Erweiterung.
-    static let appGroupID = "group.de.sieber-bw.Mailwerk"
+    ///
+    /// Sie steht in der Info.plist (`MailwerkAppGroupID`) und folgt dort
+    /// der Build-Einstellung `MAILWERK_BUNDLE_SUFFIX`: Die Entwicklungs-App
+    /// („Mailwerk Dev“, Debug) nutzt `group.de.sieber-bw.Mailwerk.dev`, die
+    /// TestFlight-/App-Store-App `group.de.sieber-bw.Mailwerk`. So stören
+    /// sich die Teilen-Erweiterungen beider Apps auf einem Gerät nicht.
+    static var appGroupID: String {
+        appGroupID(from: Bundle.main.object(forInfoDictionaryKey: appGroupInfoKey))
+    }
+
+    /// Bestimmt die App-Group-Kennung aus dem Wert der Info.plist.
+    ///
+    /// Verarbeitung: Ein leerer, fehlender oder nicht aufgelöster Wert
+    /// (enthält noch `$(`) fällt auf `defaultAppGroupID` zurück.
+    ///
+    /// - Parameter value: Wert des Schlüssels `MailwerkAppGroupID`.
+    /// - Returns: Kennung der App Group.
+    static func appGroupID(from value: Any?) -> String {
+        guard let text = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty, !text.contains("$(") else { return defaultAppGroupID }
+        return text
+    }
     /// Dateiname der Abschrift.
     static let fileName = "ShareContext.json"
 

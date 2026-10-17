@@ -116,4 +116,13 @@ struct ShareContextTests {
         #expect(model.body.attribute(.link, at: linkRange.location, effectiveRange: nil) as? URL == link)
         #expect(!model.hasContent)
     }
+
+    /// App-Group-Kennung aus der Info.plist; fehlt sie oder ist sie nicht aufgelöst, gilt die bisherige.
+    @Test("App Group: Kennung aus der Info.plist, sonst die bisherige")
+    func appGroupFromInfoPlist() {
+        #expect(ShareContextFile.appGroupID(from: "group.de.sieber-bw.Mailwerk.dev") == "group.de.sieber-bw.Mailwerk.dev")
+        #expect(ShareContextFile.appGroupID(from: nil) == "group.de.sieber-bw.Mailwerk")
+        #expect(ShareContextFile.appGroupID(from: "  ") == "group.de.sieber-bw.Mailwerk")
+        #expect(ShareContextFile.appGroupID(from: "group.de.sieber-bw.Mailwerk$(MAILWERK_BUNDLE_SUFFIX)") == "group.de.sieber-bw.Mailwerk")
+    }
 }
