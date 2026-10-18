@@ -18,7 +18,7 @@ v0.1.20 schließt den Rest aus „Spam und Optik“ ab und ergänzt eine Hilfsfu
 | MW-34 | App-Icon Dunkelmodus | umgesetzt (Entwurf 3 „Nachtblau negativ“), auch auf dem Mac | `4865053`, `10a25f9`, `6b159e0` |
 | – | Bug: TestFlight-App heißt „Mailwerk Dev“ | behoben | `3903fe6` |
 
-Tests: 698 → **705** Testfunktionen (`@Test`, 7 neu), alle grün. `MARKETING_VERSION` 0.1.20 in Mailwerk, MailwerkShare und MailwerkShareMac. Alle Punkte auf iPhone und Mac abgenommen; TestFlight-Build 0.1.20 hochgeladen.
+Tests: 698 → **705** Testfunktionen (`@Test`, 7 neu), alle grün. `MARKETING_VERSION` 0.1.20 in Mailwerk, MailwerkShare und MailwerkShareMac. Alle Punkte auf iPhone und Mac abgenommen; TestFlight-Build 0.1.20 (2) verteilt, App heißt „Mailwerk“. Build 0.1.20 (1) trug noch „Mailwerk Dev“ und ist überholt.
 
 ---
 
@@ -135,7 +135,7 @@ Stolperstein beim Test: Apps mit ohnehin dunklem Icon (z. B. Firefox, Obsidian) 
 
 **Folge:** Nur der Name war falsch. Bundle-IDs (`de.sieber-bw.Mailwerk` bzw. `.dev`), Daten und App-Gruppen blieben getrennt.
 
-**Lösung:** Release wieder `Mailwerk`, Debug bleibt `Mailwerk Dev`. Mit dem TestFlight-Build 0.1.20 heißt die App auf allen Geräten wieder richtig; eine Neuinstallation ist nicht nötig.
+**Lösung:** Release wieder `Mailwerk`, Debug bleibt `Mailwerk Dev`. Mit dem TestFlight-Build 0.1.20 (2) heißt die App auf allen Geräten wieder richtig; eine Neuinstallation ist nicht nötig.
 
 **Rückfall beim ersten Upload von 0.1.20:** Beim Archivieren stand im lokalen Projekt erneut `"Mailwerk Dev"` für Release (in Xcode als nicht committete Änderung an `project.pbxproj` sichtbar). Xcode hatte die Projektdatei mit dem alten Wert zurückgeschrieben – wahrscheinlich, weil das Projekt beim Branchwechsel geöffnet war und Xcode den alten Stand im Speicher hielt.
 
