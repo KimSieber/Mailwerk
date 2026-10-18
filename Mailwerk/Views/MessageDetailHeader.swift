@@ -7,6 +7,11 @@
 //  Spam-Einschätzung, z. B. `[SPAM score=7.2]` oder `[NoSpam]`) – sowie der
 //  schmale Hinweis „Externe Inhalte blockiert“ mit dem Knopf „Laden“.
 //
+//  Links neben Personen und Datum steht wie in Apple Mail derselbe Kreis
+//  wie in der Mailliste (SenderAvatarView): Kontaktbild, Logo oder
+//  Initialen des Absenders, in Gesendet/Entwürfen des ersten Empfängers;
+//  leer, wenn kein Bild gezeigt werden darf.
+//
 //  Betreff: lässt sich markieren (Mac) bzw. per langem Drücken kopieren
 //  (iPhone/iPad).
 //
@@ -26,8 +31,9 @@
 //  Adressen → HeaderPerson.
 //
 //  Abhängigkeiten: SwiftUI, UIKit (iOS) bzw. AppKit (macOS) für die
-//  Zwischenablage, CachedMessage, HeaderPerson, FlowLayout (Text der
-//  Spam-Einschätzung kommt fertig von MessageDetailView/SpamMark).
+//  Zwischenablage, CachedMessage, HeaderPerson, FlowLayout,
+//  SenderAvatarView (Inhalt des Kreises und Text der Spam-Einschätzung
+//  kommen fertig von MessageDetailView).
 //
 
 import SwiftUI
@@ -53,6 +59,9 @@ struct MessageDetailHeader: View {
     var onSearch: ((HeaderPerson) -> Void)?
     /// Text zur Spam-Einschätzung; `nil` = keiner.
     var spamMark: String? = nil
+    /// Kreis wie in der Mailliste (Kontaktbild, Logo, Initialen oder leer);
+    /// `nil` = kein Kreis.
+    var avatar: SenderAvatar? = nil
 
     /// Betreff, Kennzeichnung, Personen und Datum.
     var body: some View {
@@ -67,28 +76,41 @@ struct MessageDetailHeader: View {
                         .foregroundStyle(.orange)
                 }
             }
-            VStack(alignment: .leading, spacing: 4) {
-                peopleRow("Von", HeaderPerson.list([message.from]))
-                peopleRow("An", HeaderPerson.list(toAddresses))
-                peopleRow("Kopie", HeaderPerson.list(message.headers.ccList))
-                peopleRow("Antwort an", HeaderPerson.replyTo(message.headers.replyToList, sender: message.from))
-            }
-            if message.date != nil || spamMark != nil {
-                // Datum links, Spam-Einschätzung rechtsbündig.
-                HStack {
-                    if let date = message.date {
-                        Text(date, format: .dateTime.weekday(.abbreviated).day(.twoDigits).month(.twoDigits).year().hour(.defaultDigits(amPM: .omitted)).minute(.twoDigits))
-                    }
-                    Spacer(minLength: 8)
-                    if let spamMark {
-                        Text(spamMark)
-                            .lineLimit(1)
-                            .accessibilityLabel("Spam-Einschätzung \(spamMark)")
-                    }
+            // Wie in Apple Mail: der Kreis links neben Personen und Datum.
+            HStack(alignment: .top, spacing: 10) {
+                if let avatar {
+                    SenderAvatarView(avatar: avatar)
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        peopleRow("Von", HeaderPerson.list([message.from]))
+                        peopleRow("An", HeaderPerson.list(toAddresses))
+                        peopleRow("Kopie", HeaderPerson.list(message.headers.ccList))
+                        peopleRow("Antwort an", HeaderPerson.replyTo(message.headers.replyToList, sender: message.from))
+                    }
+                    dateLine
+                }
             }
+        }
+    }
+
+    /// Datum links, Spam-Einschätzung rechtsbündig; entfällt ohne beides.
+    @ViewBuilder
+    private var dateLine: some View {
+        if message.date != nil || spamMark != nil {
+            HStack {
+                if let date = message.date {
+                    Text(date, format: .dateTime.weekday(.abbreviated).day(.twoDigits).month(.twoDigits).year().hour(.defaultDigits(amPM: .omitted)).minute(.twoDigits))
+                }
+                Spacer(minLength: 8)
+                if let spamMark {
+                    Text(spamMark)
+                        .lineLimit(1)
+                        .accessibilityLabel("Spam-Einschätzung \(spamMark)")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 

@@ -38,6 +38,8 @@ struct ServerMessageLoader: View {
     let onReturn: () -> Void
     /// Suche nach einer Person in der Liste („Suchen nach …“ im Mailkopf).
     var onSearchPerson: ((SearchPerson) -> Void)? = nil
+    /// `true` in Gesendet und Entwürfen (Kreis im Mailkopf zeigt den Empfänger).
+    var showsRecipients = false
 
     /// Geladene Mail; `nil`, solange sie lädt oder das Laden scheiterte.
     @State private var message: CachedMessage?
@@ -56,7 +58,8 @@ struct ServerMessageLoader: View {
                     spamFilter: spamFilter,
                     scoreLimit: scoreLimit,
                     onChange: onChange,
-                    onSearchPerson: onSearchPerson
+                    onSearchPerson: onSearchPerson,
+                    showsRecipients: showsRecipients
                 )
             } else if let failure {
                 ContentUnavailableView {

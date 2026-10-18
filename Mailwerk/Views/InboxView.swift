@@ -751,7 +751,8 @@ struct InboxView: View {
                                 search.removeServerHit(hit.id)
                                 viewModel.loadFromCache()
                             },
-                            onSearchPerson: { startPersonSearch($0) }
+                            onSearchPerson: { startPersonSearch($0) },
+                            showsRecipients: showsRecipients
                         )
                     } label: {
                         rowContent(for: hit, colorHex: colors[hit.accountID], showsRecipients: showsRecipients)
@@ -1025,7 +1026,8 @@ struct InboxView: View {
                         spamFilter: viewModel.spamFilter,
                         scoreLimit: spamSettings.scoreLimit,
                         onChange: { viewModel.loadFromCache() },
-                        onSearchPerson: { startPersonSearch($0) }
+                        onSearchPerson: { startPersonSearch($0) },
+                        showsRecipients: showsRecipients
                     )
                 } label: {
                     rowContent(for: message, colorHex: colorHex, showsRecipients: showsRecipients)
@@ -1647,6 +1649,8 @@ private struct MessageDetailLoader: View {
     let onChange: () -> Void
     /// Suche nach einer Person in der Liste („Suchen nach …“ im Mailkopf).
     var onSearchPerson: ((SearchPerson) -> Void)? = nil
+    /// `true` in Gesendet und Entwürfen (Kreis im Mailkopf zeigt den Empfänger).
+    var showsRecipients = false
 
     /// Geladene Mail; `nil`, solange sie lädt oder fehlt.
     @State private var message: CachedMessage?
@@ -1663,7 +1667,8 @@ private struct MessageDetailLoader: View {
                     spamFilter: spamFilter,
                     scoreLimit: scoreLimit,
                     onChange: onChange,
-                    onSearchPerson: onSearchPerson
+                    onSearchPerson: onSearchPerson,
+                    showsRecipients: showsRecipients
                 )
             } else if isMissing {
                 ContentUnavailableView(

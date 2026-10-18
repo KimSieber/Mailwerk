@@ -59,6 +59,11 @@
 //  (ContactCardView), „Suchen nach …“ schließt die Mail und sucht in der
 //  Liste (`onSearchPerson`).
 //
+//  Neben den Kopfdaten steht der Kreis aus der Liste (Kontaktbild, Logo,
+//  Initialen; in Gesendet/Entwürfen der erste Empfänger). Ob ein Bild
+//  erlaubt ist, entscheidet beim Öffnen dieselbe Regel wie in der Liste
+//  (SpamFilterService.allowsSenderImage).
+//
 //  Ganz unten im Menü, abgesetzt, steht „Originalquelle“ (RawSourceView):
 //  die Mail als reiner Text mit allen Kopfzeilen, für Analysen. Mit
 //  Tastatur auch per ⌥⌘U, wie in Apple Mail.
@@ -69,7 +74,9 @@
 //  AttachmentManager, MessageStore, MailPrintFormatter, RemoteContentPolicy,
 //  RawSourceView, InlineImages, InlineImageLoader, NetworkMonitor, Dialogs,
 //  AppTheme, HeaderPerson, ContactCardView, MailtoLink, SearchPerson,
-//  ExternalMailtoPresenter (Blätter melden sich als offene Fenster), Log.
+//  ExternalMailtoPresenter (Blätter melden sich als offene Fenster),
+//  MessageRowParty, SenderAvatarView, ContactImageDirectory,
+//  SenderIconCache, Log.
 //
 
 import SwiftUI
@@ -94,6 +101,9 @@ struct MessageDetailView: View {
     /// im Menü einer Person des Mailkopfs); `nil` = ohne Liste, der
     /// Eintrag entfällt.
     let onSearchPerson: ((SearchPerson) -> Void)?
+    /// `true` in Gesendet und Entwürfen – der Kreis im Kopf zeigt dann wie
+    /// in der Liste den ersten Empfänger statt des Absenders.
+    let showsRecipients: Bool
 
     @Environment(\.dismiss) private var dismiss
 
@@ -101,6 +111,9 @@ struct MessageDetailView: View {
     @State private var webViewHeight: CGFloat = 100
     /// Text zur Spam-Einschätzung im Kopf; `nil` = keiner.
     @State private var spamMark: String?
+    /// `true`, wenn der Kreis im Kopf ein Bild bzw. Initialen zeigen darf
+    /// (wie in der Liste); bis zur Prüfung bleibt er leer.
+    @State private var showsSenderImage = false
     /// `true`, wenn die Mail externe Inhalte enthält (Hinweis anzeigen).
     @State private var hasRemoteContent = false
     /// `true`, wenn externe Inhalte für diese Anzeige freigegeben sind.
@@ -164,13 +177,15 @@ struct MessageDetailView: View {
     ///   - onChange: Wird nach jeder Änderung aufgerufen.
     ///   - onSearchPerson: Suche nach einer Person in der Liste; `nil` =
     ///     ohne Liste.
+    ///   - showsRecipients: `true` in Gesendet und Entwürfen.
     init(
         message: CachedMessage,
         accountStore: AccountStore,
         spamFilter: SpamFilterService,
         scoreLimit: Double,
         onChange: (() -> Void)? = nil,
-        onSearchPerson: ((SearchPerson) -> Void)? = nil
+        onSearchPerson: ((SearchPerson) -> Void)? = nil,
+        showsRecipients: Bool = false
     ) {
         self.message = message
         self.accountStore = accountStore
@@ -178,6 +193,7 @@ struct MessageDetailView: View {
         self.scoreLimit = scoreLimit
         self.onChange = onChange
         self.onSearchPerson = onSearchPerson
+        self.showsRecipients = showsRecipients
         _isUnread = State(initialValue: message.isUnread)
         _isFlagged = State(initialValue: message.isFlagged)
     }
@@ -281,7 +297,8 @@ struct MessageDetailView: View {
                         dismiss()
                         onSearchPerson?(person.searchPerson)
                     },
-                    spamMark: spamMark
+                    spamMark: spamMark,
+                    avatar: headerAvatar
                 )
                 .padding()
                 messageBody
@@ -458,6 +475,29 @@ struct MessageDetailView: View {
         visibleAttachments.contains { $0.data != nil }
     }
 
+    // MARK: - Kreis im Kopf
+
+    /// Inhalt des Kreises neben den Kopfdaten – dieselbe Reihenfolge wie
+    /// in der Liste: leer ohne Erlaubnis, sonst Kontaktbild, Logo und
+    /// ersatzweise die Initialen.
+    ///
+    /// Verarbeitung: Bilder werden nur bei Erlaubnis abgefragt, damit Spam
+    /// keinen Logo-Abruf auslöst. Die Abfrage im `body` beobachtet
+    /// Kontaktbilder und Logos; ein später geladenes Logo erscheint so
+    /// ohne erneutes Öffnen.
+    private var headerAvatar: SenderAvatar {
+        let recipients = message.headers.toList.isEmpty ? [message.to] : message.headers.toList
+        let party = MessageRowParty.make(
+            from: message.from,
+            recipients: recipients,
+            showsRecipients: showsRecipients
+        )
+        guard showsSenderImage else { return .empty }
+        if let image = ContactImageDirectory.shared.image(for: party.address) { return .image(image) }
+        if let logo = SenderIconCache.shared.image(forAddress: party.address) { return .logo(logo) }
+        return .initials(party.initials, colorIndex: party.colorIndex)
+    }
+
     // MARK: - Beim Öffnen
 
     /// Liest die Anhänge, setzt die eingebetteten Bilder ein, entscheidet
@@ -478,6 +518,7 @@ struct MessageDetailView: View {
             await decideRemoteContent()
         }
         spamMark = await spamFilter.spamMark(of: message, scoreLimit: scoreLimit)
+        showsSenderImage = await spamFilter.allowsSenderImage(of: message, scoreLimit: scoreLimit)
         writeMailFile()
 
         if isUnread {

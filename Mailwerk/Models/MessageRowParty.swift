@@ -5,7 +5,8 @@
 //  Zweck: Wen eine Zeile der Mailliste zeigt – in Posteingang und Ordnern
 //  den Absender, in Gesendet und Entwürfen den ersten Empfänger (bei
 //  mehreren mit „+n“). Liefert dazu die Texte der Namenszeile, die
-//  Initialen und eine feste Farbe für den Platzhalter.
+//  Initialen und eine feste Farbe für den Platzhalter. Die Mailansicht
+//  nutzt dieselbe Ermittlung für den Kreis neben den Kopfdaten.
 //
 //  Die Farbe wird aus der Adresse abgeleitet, damit derselbe Absender
 //  immer dieselbe Farbe hat – auf allen Geräten und nach jedem Neustart.
@@ -47,8 +48,21 @@ struct MessageRowParty: Equatable {
     ///   - showsRecipients: `true` in Gesendet und Entwürfen.
     /// - Returns: Gezeigte Person.
     static func make(for item: MessageListItem, showsRecipients: Bool) -> MessageRowParty {
+        make(from: item.from, recipients: item.recipients, showsRecipients: showsRecipients)
+    }
+
+    /// Ermittelt die gezeigte Person aus Absender und Empfängern – auch für
+    /// die Mailansicht, die eine vollständige Nachricht statt eines
+    /// Listeneintrags hat.
+    ///
+    /// - Parameters:
+    ///   - from: Absender als formatierte Adresse.
+    ///   - recipients: Empfänger (To), je Eintrag eine formatierte Adresse.
+    ///   - showsRecipients: `true` in Gesendet und Entwürfen.
+    /// - Returns: Gezeigte Person.
+    static func make(from: String, recipients: [String], showsRecipients: Bool) -> MessageRowParty {
         if showsRecipients {
-            let recipients = item.recipients.filter {
+            let recipients = recipients.filter {
                 !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
             guard let first = recipients.first else {
@@ -56,7 +70,7 @@ struct MessageRowParty: Equatable {
             }
             return parse(first, additionalCount: recipients.count - 1)
         }
-        return parse(item.from, additionalCount: 0)
+        return parse(from, additionalCount: 0)
     }
 
     /// Zerlegt eine formatierte Adresse wie `Anna Muster <anna@example.org>`.
