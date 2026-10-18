@@ -16,15 +16,30 @@
     {
       "layers" : [
         {
-          "fill" : "automatic",
-          "hidden" : true,
           "image-name" : "umschlag_hell.png",
-          "name" : "umschlag_hell"
+          "name" : "umschlag_hell",
+          "hidden-specializations" : [
+            {
+              "value" : false
+            },
+            {
+              "appearance" : "dark",
+              "value" : true
+            }
+          ]
         },
         {
-          "hidden" : false,
           "image-name" : "umschlag_dunkel.png",
-          "name" : "umschlag_dunkel"
+          "name" : "umschlag_dunkel",
+          "hidden-specializations" : [
+            {
+              "value" : true
+            },
+            {
+              "appearance" : "dark",
+              "value" : false
+            }
+          ]
         }
       ],
       "shadow" : {
