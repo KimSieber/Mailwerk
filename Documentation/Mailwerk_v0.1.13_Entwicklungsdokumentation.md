@@ -14,7 +14,7 @@ v0.1.13 wurde in drei Paketen mit je eigenem Test- und Commit-Punkt umgesetzt:
 | **v0.1.13b** | Abruf je Postfach ein-/ausschalten (nur dieses Gerät), Pause-Kennzeichen | `405af3f` | `Mailwerk_v0.1.13b_Entwicklungsdokumentation.md` |
 | **v0.1.13c** | Als Entwurf sichern (c1) | dieser Commit | unten |
 
-**Bewusst offen geblieben:** c2 „Entwurf weiterbearbeiten“ (Entwurf aus dem Ordner „Entwürfe“ im Verfassen-Fenster öffnen, alte Fassung ersetzen, „Beantwortet“ beim Senden eines Antwort-Entwurfs). Das Format der Entwürfe ist dafür schon vollständig angelegt (Marken und Datenblock, siehe unten). Kim hat v0.1.13 nach c1 abgeschlossen; c2 ist in die Planung übernommen (siehe Übergabe v0.1.14).
+**Bewusst offen geblieben:** c2 „Entwurf weiterbearbeiten“ (Entwurf aus dem Ordner „Entwürfe“ im Verfassen-Fenster öffnen, alte Fassung ersetzen, „Beantwortet“ beim Senden eines Antwort-Entwurfs). Das Format der Entwürfe ist dafür schon vollständig angelegt (Marken und Datenblock, siehe unten). v0.1.13 wurde nach c1 abgeschlossen; c2 ist in die Planung übernommen (siehe Übergabe v0.1.14).
 
 Tests: 477 → 519 (a) → 523 (b) → **528**, alle grün.
 
@@ -40,7 +40,7 @@ Tests: 477 → 519 (a) → 523 (b) → **528**, alle grün.
 
 **Problem:** Beim Schließen eines Fensters mit Eingaben gab es nur „Entwurf verwerfen?“ mit „Verwerfen“ oder „Weiter bearbeiten“. Eine angefangene Mail ließ sich nicht für später sichern.
 
-**Entschieden (Kim):**
+**Entschieden:**
 1. Beim Schließen drei Möglichkeiten: **Als Entwurf sichern** · **Verwerfen** · **Weiter bearbeiten**; der Text passt für alle („Nachricht schließen?“).
 2. **Offline** ist „Als Entwurf sichern“ ausgegraut; der Text nennt den Grund. Nur Verwerfen und Weiter bearbeiten sind dann möglich.
 3. **Ohne Absender** Hinweis „Bitte zuerst einen Absender wählen“, das Fenster bleibt offen.
@@ -105,6 +105,6 @@ Pakete a und b: siehe deren Entwicklungsdokumentationen.
 
 ## Nächste Schritte
 
-- **v0.1.14 – Fehler-Patch-Version** (Inhalt mit Kim abstimmen).
+- **v0.1.14 – Fehler-Patch-Version** (Inhalt vorab abstimmen).
 - **v0.1.15 – Teilen mit Mailwerk** (Share Extension, MW-15), danach v0.1.16 Suche (MW-6).
 - **c2 „Entwurf weiterbearbeiten“** einplanen (Vorschlag: in v0.1.14, da Entwürfe sonst nur außerhalb von Mailwerk weiterbearbeitet werden können).

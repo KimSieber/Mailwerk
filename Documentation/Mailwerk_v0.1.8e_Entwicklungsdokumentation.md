@@ -43,12 +43,12 @@ Weil eine Abfrage nun den ganzen Ordner abdeckt, ist die Sonderbehandlung älter
 
 | Ordner | Mails | v0.1.8d | v0.1.8e |
 |---|---|---|---|
-| sieber-bw INBOX | 150 | 1268 ms | **313 ms** |
-| sieber-bw Junk | 69 | 1277 ms | **305 ms** |
-| ordinum Junk | 992 | – | **418 ms** |
-| ordinum INBOX | 5954 | 1330 ms | **818 ms** |
-| Kim.Sieber Junk | 513 | 1166 ms | **393 ms** |
-| Kim.Sieber INBOX | 8780 | 1273 ms | **1204 ms** |
+| Postfach A INBOX | 150 | 1268 ms | **313 ms** |
+| Postfach A Junk | 69 | 1277 ms | **305 ms** |
+| Postfach B Junk | 992 | – | **418 ms** |
+| Postfach B INBOX | 5954 | 1330 ms | **818 ms** |
+| Postfach C Junk | 513 | 1166 ms | **393 ms** |
+| Postfach C INBOX | 8780 | 1273 ms | **1204 ms** |
 | **Summe** | | **≈ 7,3 s** | **≈ 3,5 s** |
 
 Grob gerechnet: rund 300 ms Grundkosten je Ordner plus etwa 100 ms je 1000 Mails. Zum Vergleich deckte v0.1.8d bei gleicher oder höherer Laufzeit nur 150 bis 165 Mails je Ordner ab.

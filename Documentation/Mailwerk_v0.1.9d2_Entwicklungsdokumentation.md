@@ -17,7 +17,7 @@ v0.1.9d2 bereinigt die Struktur dort, wo dieselbe Logik mehrfach stand. Die Stuf
   - Jede Ansicht hat **einen** Meldungs- und **einen** Rückfragekanal.
   - Alle Rückfragen erscheinen einheitlich mittig.
 
-**Entschieden (Kim):**
+**Entschieden:**
 - Postfächer werden **nicht** parallel abgerufen. Das gehört zu H6 und bringt zu viel Komplexität ohne gesicherten Gewinn.
 - Alle Rückfragen erscheinen als `alert`.
 - d2 läuft in zwei Schritten statt vier.
@@ -168,7 +168,7 @@ Spam-Aktionen lassen sich im Simulator gefahrlos testen: Dort gleichen die Filte
 
 ## Abhängigkeiten / Xcode-Konfiguration
 
-Unverändert gegenüber v0.1.9d1. `MARKETING_VERSION` je Schritt von Kim gesetzt.
+Unverändert gegenüber v0.1.9d1. `MARKETING_VERSION` je Schritt manuell gesetzt.
 
 ---
 
@@ -177,7 +177,7 @@ Unverändert gegenüber v0.1.9d1. `MARKETING_VERSION` je Schritt von Kim gesetzt
 | Schritt | Commit |
 |---|---|
 | d2a | `6f50177` |
-| d2b + Doku | *von Kim nach diesem Dokument* |
+| d2b + Doku | *manuell nach diesem Dokument* |
 
 ---
 

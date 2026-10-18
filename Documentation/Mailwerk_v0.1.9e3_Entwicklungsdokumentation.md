@@ -11,7 +11,7 @@ Die Funde aus v0.1.9e2 in einem Schritt mit einem Commit:
 1. **Trennzeichen bei gleichlautenden Ordnernamen:** `FolderTreeBuilder` holt den Servernamen aus derselben Zerlegung wie der Baum, statt „.“ zu raten.
 2. **Toter Code:** `Models/InboxMessage.swift` entfernt.
 3. **Zahlentastatur:** Die Port-Felder in „Postfach hinzufügen“ nutzen `.numberInput()` wie in „Postfach bearbeiten“.
-4. **N13 (`MessageDetailView` aufteilen):** nicht in v0.1.9, steht auf der Liste offener Punkte (Entscheidung Kim: v0.1.9 abschließen, Funktionen haben Vorrang).
+4. **N13 (`MessageDetailView` aufteilen):** nicht in v0.1.9, steht auf der Liste offener Punkte (Entscheidung: v0.1.9 abschließen, Funktionen haben Vorrang).
 
 Die Beobachtung „Löschen per Menü reagiert manchmal nicht“ ist nicht wieder aufgetreten und bleibt zurückgestellt.
 

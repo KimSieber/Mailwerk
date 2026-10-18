@@ -16,7 +16,7 @@ v0.1.12 wurde in zwei Paketen mit je einem Test- und Commit-Punkt umgesetzt:
   - Drucken und Teilen enthalten sie, Antworten und Weiterleiten senden sie mit.
   - Mails aus Apple Mail mit Fotos zwischen Textteilen erscheinen vollständig.
 
-**Entschieden (Kim):**
+**Entschieden:**
 - **Dunkelmodus wie Apple Mail:** Eine Mail mit eigener Hintergrund- *oder* Schriftfarbe wird hell dargestellt. Mails ohne eigene Farben und Textmails folgen dem Dunkelmodus.
 - **Zoom:** Jede HTML-Mail lässt sich per Geste zoomen. Der Zoom gilt nur für die geöffnete Mail; es gibt keine Schriftgrößen-Einstellung. Textmails bleiben unverändert, sie folgen der Textgröße des Systems.
 - **Originalquelle:**
@@ -150,7 +150,7 @@ Mailwerk/
     ├── MessageDetailView.swift      # Originalquelle (P1); Bilder, sichtbare Anhänge (P2)
     ├── MessageMenu.swift            # MessageMenuLabels.source                            (P1)
     └── RawSourceView.swift          # neu                                                 (P1)
-Mailwerk.xcodeproj/project.pbxproj   # Version 0.1.12 (Kim)
+Mailwerk.xcodeproj/project.pbxproj   # Version 0.1.12 (manuell)
 MailwerkTests/
 ├── InlineImagesTests.swift          # neu, 6 Tests                                        (P2)
 ├── MailAppearanceTests.swift        # neu, 6 Tests                                        (P1)
@@ -193,9 +193,9 @@ MailwerkTests/
 - SwiftMail bricht `fetchRawMessage` nach festen 10 Sekunden ab, gerechnet ab dem Senden. Bei sehr langsamer Verbindung kann das auch unter 5 MB vorkommen; dann erscheint die Fehlermeldung im Blatt.
 - Bereits geladene Mails im Aufbau „Text – Bild – Text“ bleiben im Cache unvollständig, bis sie neu geladen werden (z. B. frische Installation). Bewusst keine Übergangslösung, alle Installationen sind Testinstallationen.
 - Inline-Fotos ohne Verweis in einer Mail mit einem einzigen HTML-Teil (z. B. Foto ans Ende einer formatierten Apple-Mail gehängt) stehen weiterhin in der Anhangliste, nicht im Text.
-- Beim ersten Git-Befehl von Claude im Projektordner blieb eine leere Sperrdatei zurück. Sie ist umbenannt in `.git/stale-maintenance-lock-claude` und kann gelöscht werden. In Kims Ordner nutzt Claude Git seitdem nur lesend.
+- Beim ersten Git-Befehl von Claude im Projektordner blieb eine leere Sperrdatei zurück. Sie ist umbenannt in `.git/stale-maintenance-lock-claude` und kann gelöscht werden. Im Projektordner nutzt Claude Git seitdem nur lesend.
 
 ## Nächste Schritte
 
-- **v0.1.13 – Signaturen und Entwürfe beim Verfassen** (MW-2, MW-16). Inhalt zuerst mit Kim abstimmen.
+- **v0.1.13 – Signaturen und Entwürfe beim Verfassen** (MW-2, MW-16). Inhalt zuerst abstimmen.
 - Fahrplan, Merkliste und Arbeitsregeln: siehe `Mailwerk_Auftrag_neuer_Chat_v0.1.13.md`.

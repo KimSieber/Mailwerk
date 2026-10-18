@@ -4,11 +4,11 @@
 
 ## Projektziele
 
-Kim ist mit den vorhandenen Mail-Clients auf iOS/iPad/Mac unzufrieden (träge, funktional überladen, unpassend für den eigenen Anwendungsfall oder kostenpflichtig). Ziel ist ein eigener, schlanker Mail-Client für die eigenen Endgeräte.
+Die vorhandenen Mail-Clients auf iOS/iPad/Mac überzeugen nicht (träge, funktional überladen, unpassend für den eigenen Anwendungsfall oder kostenpflichtig). Ziel ist ein eigener, schlanker Mail-Client für die eigenen Endgeräte.
 
 - **Kernfunktion:** Unified Inbox über mehrere IMAP-Postfächer verschiedener Anbieter/Server hinweg
 - **Zusatzfunktion:** eigener, bequem aus dem Client pflegbarer Spam-Filter (Black-/Whitelist), der Mails automatisch geräteübergreifend in einen `[Spam]`-Ordner verschiebt
-- **Zielplattformen:** iOS, iPadOS, macOS – eine Swift/SwiftUI-Codebasis, analog zum bestehenden Muster aus privateCRM und privateKanban
+- **Zielplattformen:** iOS, iPadOS, macOS – eine Swift/SwiftUI-Codebasis, analog zum bestehenden Muster aus anderen eigenen Projekten
 - Kein kommerzielles Projekt, aber bewusst "marketingfähig" benannt und aufgebaut
 
 ## Rahmenbedingungen & Grundsatzentscheidungen
@@ -17,13 +17,13 @@ Kim ist mit den vorhandenen Mail-Clients auf iOS/iPad/Mac unzufrieden (träge, f
 
 1. manitu (eigenes Hosting, mail.manitu.de) – Startpunkt
 2. Posteo – zweiter Anbieter, sobald MVP1 steht
-3. GMX/Gmail – nur falls Kims Frau das Projekt mitnutzen möchte (aktuell eher unwahrscheinlich); bringt bei Gmail zusätzlichen OAuth2-Aufwand mit sich, da klassische Passwort-Authentifizierung dort nicht mehr möglich ist
+3. GMX/Gmail – nur bei Bedarf weiterer Nutzer (aktuell eher unwahrscheinlich); bringt bei Gmail zusätzlichen OAuth2-Aufwand mit sich, da klassische Passwort-Authentifizierung dort nicht mehr möglich ist
 
-**Push-Benachrichtigungen:** nicht für MVP nötig, aber als spätere Ausbaustufe gewünscht. Bewusste Entscheidung: eigener Server statt Drittanbieter-Infrastruktur (wie sie z. B. Spark oder Newton nutzen, die dafür Postfach-Zugangsdaten auf fremden Servern speichern) – Kim möchte seine Zugangsdaten ausschließlich auf eigener Infrastruktur halten.
+**Push-Benachrichtigungen:** nicht für MVP nötig, aber als spätere Ausbaustufe gewünscht. Bewusste Entscheidung: eigener Server statt Drittanbieter-Infrastruktur (wie sie z. B. Spark oder Newton nutzen, die dafür Postfach-Zugangsdaten auf fremden Servern speichern) – Zugangsdaten sollen ausschließlich auf eigener Infrastruktur liegen.
 
 **Sicherheitsprinzip:** Die 2FA im manitu-Kundenportal bleibt unangetastet und wird für den Mail-Client nicht benötigt – IMAP/SMTP/Sieve authentifizieren separat über das normale Postfach-Passwort.
 
-**Architektur-Muster:** folgt dem etablierten Muster aus anderen Kim-Projekten – Swift/SwiftUI-Client + PHP/MariaDB-Backend, gehostet auf manitu, Deployment über GitHub Actions (lftp).
+**Architektur-Muster:** folgt dem etablierten Muster aus anderen eigenen Projekten – Swift/SwiftUI-Client + PHP/MariaDB-Backend, gehostet auf manitu, Deployment über GitHub Actions (lftp).
 
 ## Feature-Entscheidungen
 
@@ -59,7 +59,7 @@ Task- und Bug-Verwaltung erfolgt in einem eigenen Jira-Projekt.
 
 ## Backlog (ohne feste Version)
 
-- GMX/Gmail-Unterstützung inkl. OAuth2-Implementierung – nur falls Kims Frau das Projekt mitnutzen möchte
+- GMX/Gmail-Unterstützung inkl. OAuth2-Implementierung – nur bei Bedarf weiterer Nutzer
 - Mehrbenutzer-Unterstützung
 - Konversations-Threading
 - Optimierung des Offline-Volltextindex
@@ -69,7 +69,7 @@ Task- und Bug-Verwaltung erfolgt in einem eigenen Jira-Projekt.
 
 Arbeits-/Projekttitel: **Mailwerk** (Entscheidung getroffen, 2026-09-18).
 
-Weitere Kandidaten, noch nicht final verworfen: Briefkasten (gefiel Kim gut, aber nicht seiner Frau), Zustellwerk, Inboxio, Postkutsche.
+Weitere Kandidaten, noch nicht final verworfen: Briefkasten (geteilte Meinungen), Zustellwerk, Inboxio, Postkutsche.
 
 Verworfen: Postler (Namenskollision – ehemaliger, mittlerweile eingestellter Open-Source-Mail-Client für Linux/Elementary OS).
 

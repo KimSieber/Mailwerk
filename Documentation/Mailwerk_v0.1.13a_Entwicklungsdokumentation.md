@@ -12,7 +12,7 @@ v0.1.13a ist das erste Paket von v0.1.13. Es wurde in drei Abschnitten (a1–a3)
 - **a2 – Pflege:** In „Postfach bearbeiten“ gibt es die Zeile „Signatur“ mit eigener Pflege-Seite: Art „Einfach“ (Editor) oder „HTML“ (Code/Vorschau), Logo, iCloud-Abgleich über alle Geräte.
 - **a3 – Verfassen:** Die Signatur des Absende-Postfachs wird bei neuen Mails, Antworten und Weiterleitungen eingesetzt und beim Wechsel des Postfachs ausgetauscht.
 
-**Entschieden (Kim):**
+**Entschieden:**
 - **Eine Signatur je Postfach.** Gleiche Signatur für mehrere Postfächer wird von Hand kopiert.
 - **Zwei Arten, je Signatur genau eine:**
   - *Einfach* – im Editor gestaltet: Schriftgröße, Farbe, fett, kursiv, unterstrichen, Link (Web und `mailto:`), Logo.
@@ -109,7 +109,7 @@ Mailwerk/
     ├── RichTextEditor.swift              # Links, Bilder einsetzen, Bilder normalisieren       (a1, a2)
     ├── SignatureBlockView.swift          # neu                                                 (a3)
     └── SignatureEditorView.swift         # neu                                                 (a2)
-Mailwerk.xcodeproj/project.pbxproj        # Version 0.1.13 (Kim)
+Mailwerk.xcodeproj/project.pbxproj        # Version 0.1.13 (manuell)
 MailwerkTests/
 ├── HTMLRichTextParserTests.swift         # neu, 12 Tests                                       (a1)
 ├── HTMLSignatureBlockTests.swift         # neu, 3 Tests                                        (a3)
@@ -143,5 +143,5 @@ MailwerkTests/
 
 ## Nächste Schritte
 
-- **Abruf je Postfach ein-/ausschalten** (Zwischenruf Kim, in v0.1.13 nach den Signaturen): Inhalt mit Kim abstimmen (Leitfragen: Bedeutung von „aus“, Sichtbarkeit der Mails, Senden, je Gerät oder iCloud, Ort des Schalters, Reihenfolge vor/nach den Entwürfen).
-- **Entwürfe (MW-16):** „Entwurf speichern“ beim Schließen, Entwurf weiterbearbeiten (nutzt den HTML-Rückweg aus a1), Beantwortet-Kennzeichen für gesendete Antwort-Entwürfe. Inhalt zuerst mit Kim abstimmen.
+- **Abruf je Postfach ein-/ausschalten** (nachträglicher Wunsch, in v0.1.13 nach den Signaturen): Inhalt vorab abstimmen (Leitfragen: Bedeutung von „aus“, Sichtbarkeit der Mails, Senden, je Gerät oder iCloud, Ort des Schalters, Reihenfolge vor/nach den Entwürfen).
+- **Entwürfe (MW-16):** „Entwurf speichern“ beim Schließen, Entwurf weiterbearbeiten (nutzt den HTML-Rückweg aus a1), Beantwortet-Kennzeichen für gesendete Antwort-Entwürfe. Inhalt zuerst abstimmen.

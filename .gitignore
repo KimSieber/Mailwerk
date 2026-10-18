@@ -59,3 +59,6 @@ Config/Secrets.*
 *.swp
 *.lock
 *~
+
+# Interne Arbeitsunterlagen (Aufträge, Übergaben, Reviews) – nicht öffentlich
+Documentation/Intern/
