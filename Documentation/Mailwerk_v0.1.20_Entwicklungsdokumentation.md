@@ -137,7 +137,9 @@ Stolperstein beim Test: Apps mit ohnehin dunklem Icon (z. B. Firefox, Obsidian) 
 
 **Lösung:** Release wieder `Mailwerk`, Debug bleibt `Mailwerk Dev`. Mit dem TestFlight-Build 0.1.20 heißt die App auf allen Geräten wieder richtig; eine Neuinstallation ist nicht nötig.
 
-**Vorbeugung:** Den Anzeigenamen nur unter Build Settings → „Bundle Display Name“ ändern, die Zeile aufklappen und Debug und Release einzeln setzen.
+**Rückfall beim ersten Upload von 0.1.20:** Beim Archivieren stand im lokalen Projekt erneut `"Mailwerk Dev"` für Release (in Xcode als nicht committete Änderung an `project.pbxproj` sichtbar). Xcode hatte die Projektdatei mit dem alten Wert zurückgeschrieben – wahrscheinlich, weil das Projekt beim Branchwechsel geöffnet war und Xcode den alten Stand im Speicher hielt.
+
+**Vorbeugung (umgesetzt):** Der Name steht nicht mehr direkt in den Zielen, sondern wie das Bundle-Suffix in einer eigenen Projekteinstellung: `MAILWERK_DISPLAY_NAME` (Debug „Mailwerk Dev“, Release „Mailwerk“); alle drei Ziele verwenden `INFOPLIST_KEY_CFBundleDisplayName = "$(MAILWERK_DISPLAY_NAME)"`. Im Feld General → Display Name steht damit `$(MAILWERK_DISPLAY_NAME)` – dort nichts eintippen. Vor jedem Archivieren Xcode beenden, Branch wechseln bzw. holen, dann erst öffnen; in Source Control prüfen, dass `project.pbxproj` keine unerwarteten Änderungen hat.
 
 ---
 
@@ -193,7 +195,7 @@ Stolperstein beim Test: Apps mit ohnehin dunklem Icon (z. B. Firefox, Obsidian) 
 - Swift 6.2, `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, Swift-5-Modus, MemberImportVisibility; iOS/macOS 26.5. Xcode 27.1, macOS 27.0.1.
 - **SwiftMail 1.15.0** (nicht forken, keine weiteren Pakete ohne Rückfrage).
 - Postfächer: iCloud-Key-Value-Speicher; Passwörter/Refresh-Tokens: iCloud-Schlüsselbund; Filterlisten und Signaturen: SwiftData/CloudKit (`iCloud.de.sieber-bw.Mailwerk`, Development und Production); Abruf-Schalter: UserDefaults (je Gerät).
-- Test/Produktion: Bundle-Suffix `.dev` für „Mailwerk Dev“ (eigene App-Gruppe, eigener Key-Value-Speicher, CloudKit Development); Anzeigename Debug „Mailwerk Dev“, Release „Mailwerk“.
+- Test/Produktion: Bundle-Suffix `.dev` für „Mailwerk Dev“ (eigene App-Gruppe, eigener Key-Value-Speicher, CloudKit Development); Anzeigename über `MAILWERK_DISPLAY_NAME` (Debug „Mailwerk Dev“, Release „Mailwerk“).
 - App-Icon: `Mailwerk/AppIcon.icon` (Icon Composer), kein `AppIcon.appiconset` mehr.
 
 ### Arbeitsregeln (verbindlich)

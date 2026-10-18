@@ -528,7 +528,7 @@
 				DEVELOPMENT_TEAM = 62QD57DH52;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MailwerkShare/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Mailwerk Dev";
+				INFOPLIST_KEY_CFBundleDisplayName = "$(MAILWERK_DISPLAY_NAME)";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -561,7 +561,7 @@
 				DEVELOPMENT_TEAM = 62QD57DH52;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MailwerkShare/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Mailwerk;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(MAILWERK_DISPLAY_NAME)";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -609,7 +609,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MailwerkShareMac/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Mailwerk Dev";
+				INFOPLIST_KEY_CFBundleDisplayName = "$(MAILWERK_DISPLAY_NAME)";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -655,7 +655,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MailwerkShareMac/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Mailwerk;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(MAILWERK_DISPLAY_NAME)";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -735,6 +735,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MAILWERK_BUNDLE_SUFFIX = .dev;
+				MAILWERK_DISPLAY_NAME = "Mailwerk Dev";
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -795,6 +796,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MAILWERK_BUNDLE_SUFFIX = "";
+				MAILWERK_DISPLAY_NAME = Mailwerk;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -828,7 +830,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Mailwerk/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Mailwerk Dev";
+				INFOPLIST_KEY_CFBundleDisplayName = "$(MAILWERK_DISPLAY_NAME)";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Mailwerk schlägt beim Verfassen passende Empfänger aus deinen Kontakten vor und zeigt in der Mailliste die Bilder deiner Kontakte. Deine Kontakte verlassen das Gerät nicht.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -889,7 +891,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Mailwerk/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Mailwerk;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(MAILWERK_DISPLAY_NAME)";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Mailwerk schlägt beim Verfassen passende Empfänger aus deinen Kontakten vor und zeigt in der Mailliste die Bilder deiner Kontakte. Deine Kontakte verlassen das Gerät nicht.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
