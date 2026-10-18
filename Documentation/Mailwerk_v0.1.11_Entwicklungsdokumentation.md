@@ -8,7 +8,7 @@
 
 Langes Drücken auf eine Mail in der Liste öffnet ein Kontextmenü. Es ist dasselbe Menü wie in der Mailansicht, ergänzt um „Auswählen“. „Auswählen“ startet die Mehrfachauswahl: Vor den Zeilen erscheinen Kreise, unten schwebt eine Befehlsleiste mit vier Symbolen. Mailmenü und Kontextmenü kommen aus einem gemeinsamen Baustein, haben nur noch einzeilige Einträge und ein aufgeräumtes Spam-Untermenü. `MessageDetailView` ist aufgeteilt (N13).
 
-**Entschieden (Kim):**
+**Entschieden:**
 - **Geste:** Langes Drücken öffnet das Kontextmenü, darin „Auswählen“ als erster Eintrag (keine eigene Langdruck-Geste, die direkt in die Auswahl springt).
 - **Menüs gleich:** Kontextmenü = Mailmenü plus „Auswählen“. Teilen, Drucken und Anlagen lokal löschen gibt es nur in der Mailansicht.
 - **Eine Zeile je Eintrag:** „Kennzeichnung“ (Symbol zeigt die Wirkung), „Gelesen“/„Ungelesen“ (nach dem Zielzustand), „Verschieben“, „Mail löschen“. „Anlagen lokal löschen“ darf zweizeilig bleiben. Bei großer Systemschrift bricht iOS weiterhin um.
@@ -97,5 +97,5 @@ MailwerkTests/
 
 ## Nächste Schritte
 
-- v0.1.12: Mails vollständig und lesbar anzeigen (`cid:`-Bilder, Dunkelmodus, Zoomen; zuletzt Originaltext/Header MW-5). Inhalt zuerst mit Kim abstimmen.
+- v0.1.12: Mails vollständig und lesbar anzeigen (`cid:`-Bilder, Dunkelmodus, Zoomen; zuletzt Originaltext/Header MW-5). Inhalt zuerst abstimmen.
 - Merkliste unverändert: DKIM/Authentication-Results, H6, N14 Offline-Warteschlange, Ordner abonnieren, Vorschau-Spalte klären.

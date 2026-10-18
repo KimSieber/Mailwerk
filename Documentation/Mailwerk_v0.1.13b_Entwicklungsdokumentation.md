@@ -8,17 +8,17 @@
 
 v0.1.13b ist das zweite Paket von v0.1.13. Es kam als Zwischenruf während der Signaturen hinzu und wurde als eigenes Paket mit eigenem Test- und Commit-Punkt umgesetzt, weil es den Abruf betrifft.
 
-**Problem (Kim):** Einige Postfächer werden gerade nicht genutzt, sind nur zum Testen angelegt oder funktionieren (noch) nicht – etwa das Posteo-Postfach für den geschäftlichen Krisenfall. Beim Abruf über „Alle Eingänge“ kosten sie Zeit und unterbrechen mit Fehlermeldungen die Arbeit.
+**Problem:** Einige Postfächer werden gerade nicht genutzt, sind nur zum Testen angelegt oder funktionieren (noch) nicht – etwa ein Reserve-Postfach bei Posteo. Beim Abruf über „Alle Eingänge“ kosten sie Zeit und unterbrechen mit Fehlermeldungen die Arbeit.
 
 **Lösung:** Je Postfach ein Schalter „Abruf“, standardmäßig an. Ausgeschaltet wird das Postfach nicht mehr über „Alle Eingänge“ abgerufen; Postfach und Mails bleiben erhalten. Öffnet man einen seiner Ordner, wird er trotzdem abgerufen – so lässt sich ein Postfach gezielt abrufen, aber nicht automatisch.
 
-**Entschieden (Kim):**
+**Entschieden:**
 1. Mails eines ausgeschalteten Postfachs werden in „Alle Eingänge“ (und in „Mit Kennzeichnung“) **ausgeblendet** – sonst stünden veraltete Mails zwischen aktuellen, und „Aktualisiert: …“ stimmte für sie nicht.
 2. Auch die übrigen automatischen Abrufe entfallen: Spam-Ordner beim Start, Abruf bei zurückkehrender Verbindung, Neuladen der Ordnerliste. Die Ordnerliste bleibt aus dem Cache sichtbar.
 3. Beim Öffnen des **Posteingangs** eines ausgeschalteten Postfachs läuft der Abruf wie in der Runde: Spamfilter, Posteingang, Spam-Ordner. Andere Ordner werden wie bei jedem Postfach einzeln abgerufen.
 4. **Senden** bleibt möglich.
 5. **Je Gerät:** Der Schalter wird nicht über iCloud abgeglichen – ein Postfach kann z. B. nur am Mac abgerufen werden.
-6. **Kennzeichen:** orangefarbener Kreis mit weißem Pause-Zeichen vor dem Postfachnamen (Postfachliste und Seitenleiste). Ein erstes, graues Umriss-Symbol war schlecht erkennbar und wurde nach Kims Vorlage ersetzt.
+6. **Kennzeichen:** orangefarbener Kreis mit weißem Pause-Zeichen vor dem Postfachnamen (Postfachliste und Seitenleiste). Ein erstes, graues Umriss-Symbol war schlecht erkennbar und wurde nach Vorlage ersetzt.
 7. **Schalter** in der Postfachliste je Zeile und in „Postfach bearbeiten“ (Abschnitt „Abruf“); beide wirken sofort.
 
 Tests: 519 → **523**, alle grün.
@@ -58,7 +58,7 @@ Mailwerk/
     ├── FetchPausedBadge.swift        # neu
     ├── Folders/FolderSidebarView.swift # Kennzeichen, Ordnerliste
     └── InboxView.swift               # Ordnerliste beim Öffnen, Neuaufbau beim Umschalten
-Mailwerk.xcodeproj/project.pbxproj    # Version 0.1.13 (Kim; vorher „0.1.13a“, das Apple nicht annimmt)
+Mailwerk.xcodeproj/project.pbxproj    # Version 0.1.13 (manuell; vorher „0.1.13a“, das Apple nicht annimmt)
 MailwerkTests/
 ├── AccountFetchSettingsTests.swift   # neu, 1 Test
 └── FetchSelectionTests.swift         # neu, 3 Tests
@@ -86,4 +86,4 @@ MailwerkTests/
 
 ## Nächste Schritte
 
-- **v0.1.13c – Entwürfe (MW-16):** „Entwurf speichern“ beim Schließen, Entwurf weiterbearbeiten (nutzt den HTML-Rückweg aus v0.1.13a), Beantwortet-Kennzeichen für gesendete Antwort-Entwürfe. Inhalt zuerst mit Kim abstimmen.
+- **v0.1.13c – Entwürfe (MW-16):** „Entwurf speichern“ beim Schließen, Entwurf weiterbearbeiten (nutzt den HTML-Rückweg aus v0.1.13a), Beantwortet-Kennzeichen für gesendete Antwort-Entwürfe. Inhalt zuerst abstimmen.

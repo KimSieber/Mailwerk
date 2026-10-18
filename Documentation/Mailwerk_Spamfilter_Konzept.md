@@ -10,7 +10,7 @@ manitu bietet **kein ManageSieve** und keine API zur Pflege von Filterregeln. Di
 
 **Entscheidung: Option C – Filterung ausschließlich im Client.** Mailwerk prüft beim Abruf neue Mails in der INBOX gegen eine eigene Black- und Whitelist sowie gegen die Spam-Einstufung von manitu (rspamd) und verschiebt Spam in den Ordner `Junk`. Die Listen liegen zentral in iCloud (CloudKit), damit alle Mailwerk-Installationen dieselben Listen nutzen. Der Verarbeitungszustand wird über **IMAP-Keywords auf dem Server** gespeichert, damit alle Geräte denselben Stand sehen.
 
-Ergänzend kann Mailwerk beide Listen als Text exportieren, die Kim von Zeit zu Zeit manuell in den manitu-Portaldialog „Mail-Filter (Spam, Virus)" einfügt. So filtert auch der Server, unabhängig vom Client.
+Ergänzend kann Mailwerk beide Listen als Text exportieren, die von Zeit zu Zeit manuell in den manitu-Portaldialog „Mail-Filter (Spam, Virus)" einfügt. So filtert auch der Server, unabhängig vom Client.
 
 Kein eigener Server, kein Hintergrunddienst, keine Zugangsdaten außerhalb der Geräte.
 
@@ -29,7 +29,7 @@ Kein eigener Server, kein Hintergrunddienst, keine Zugangsdaten außerhalb der G
 |---|---|
 | A – Sieve-Block aus dem Client generieren, manuell einfügen | Verworfen: Jede Änderung über Portal und 2FA; Risiko, den manitu-Block zu beschädigen. Durch den Portal-Dialog ohnehin überholt. |
 | B/B+ – Eigener Filterdienst (Cron bzw. IDLE-Daemon) mit Listen im Backend | Verworfen für jetzt: eigener Dienst und Zugangsdaten auf einem Server. Kann bei Einführung eines Push-Servers (0.4.x) neu bewertet werden. |
-| **C – Filterung im Client** | **Gewählt:** minimal, keine weiteren Abhängigkeiten. Die Nutzungslücke (Filterung nur bei geöffnetem Mailwerk) ist akzeptiert, da Kim künftig ausschließlich Mailwerk nutzt. |
+| **C – Filterung im Client** | **Gewählt:** minimal, keine weiteren Abhängigkeiten. Die Nutzungslücke (Filterung nur bei geöffnetem Mailwerk) ist akzeptiert, da die Postfächer künftig ausschließlich über Mailwerk bedient werden. |
 | D – Automatisierung des manitu-Portals (Scraping) | Abgelehnt: umgeht die 2FA, fragil, vermutlich AGB-widrig. |
 | E – Anbieterwechsel zu einem Anbieter mit ManageSieve | Verworfen: Umzugsaufwand steht in keinem Verhältnis. |
 
@@ -66,7 +66,7 @@ Untersucht an einer internen Weiterleitung und an einer externen Spam-Mail:
 
 - Unbekannte Keywords aus einem früheren Client entfernt: `Kaufen` (1 Mail) und `Whitelist` (5 Mails). Andere Markierungen blieben erhalten.
 - Doppelter, gewöhnlicher Ordner `Spam` (ohne Attribut): eine Mail nach `Junk` verschoben, Ordner gelöscht.
-- Kim wird die 6 bestehenden Einträge der Portal-Allowlist nicht migrieren, sondern in Mailwerk neu markieren, damit sie für alle Postfächer gelten.
+- Die 6 bestehenden Einträge der Portal-Allowlist werden nicht migriert, sondern in Mailwerk neu markiert, damit sie für alle Postfächer gelten.
 
 ---
 
@@ -85,7 +85,7 @@ Untersucht an einer internen Weiterleitung und an einer externen Spam-Mail:
 | `$MailwerkChecked` | Mail wurde vom Filter verarbeitet | nach jeder Prüfung, unabhängig vom Ergebnis |
 | `$MailwerkBlacklisted` | Mail wurde durch die Blacklist als Spam erkannt | zusätzlich bei einem Blacklist-Treffer |
 
-Bei `MOVE` bleiben Keywords erhalten. Holt Kim eine Mail aus `Junk` zurück, auch über einen anderen Client, trägt sie weiterhin `$MailwerkChecked` und wird **nicht erneut gefiltert**. Das verhindert die Fehlalarm-Schleife, die bei rein lokaler UID-Verwaltung entstünde (eine zurückverschobene Mail bekommt eine neue UID). Deshalb die Keywords **immer vor dem MOVE setzen**.
+Bei `MOVE` bleiben Keywords erhalten. Wird eine Mail aus `Junk` zurückgeholt, auch über einen anderen Client, trägt sie weiterhin `$MailwerkChecked` und wird **nicht erneut gefiltert**. Das verhindert die Fehlalarm-Schleife, die bei rein lokaler UID-Verwaltung entstünde (eine zurückverschobene Mail bekommt eine neue UID). Deshalb die Keywords **immer vor dem MOVE setzen**.
 
 Bestehende fremde Keywords wie `$MailFlagBit0` oder `$Forwarded` werden nie verändert.
 
@@ -129,7 +129,7 @@ In der Oberfläche heißt der Ordner „Spam", der Servername bleibt `Junk`.
 
 ### Betreff
 
-Der Betreff wird **nie verändert** (IMAP kann Mails nicht ändern, Umschreiben hieße Download + APPEND + Löschen mit Risiko von Duplikaten oder Datenverlust). Die `[SPAM]`-Kennzeichnung bleibt vorerst zur Kontrolle aktiv. Kim schaltet sie später im Portal ab. Danach entfällt auch das Präfix beim Antworten und Weiterleiten.
+Der Betreff wird **nie verändert** (IMAP kann Mails nicht ändern, Umschreiben hieße Download + APPEND + Löschen mit Risiko von Duplikaten oder Datenverlust). Die `[SPAM]`-Kennzeichnung bleibt vorerst zur Kontrolle aktiv. Sie wird später im Portal abgeschaltet. Danach entfällt auch das Präfix beim Antworten und Weiterleiten.
 
 ### Export für das manitu-Portal
 

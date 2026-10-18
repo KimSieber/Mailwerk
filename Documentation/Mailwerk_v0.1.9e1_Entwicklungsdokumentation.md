@@ -12,7 +12,7 @@ Befund M5 aus dem Code-Review in drei Schritten mit je eigenem Commit:
 - **e1b (`7ed8661`, Dateiname korrigiert in `bc0c15e`/`d014020`):** Absender auf der Whitelist laden sofort, mit derselben Score-Obergrenze wie der Spamfilter. Dafür speichert der Cache die Spam-Einstufung des Servers je Mail (Schema-Stufe 4).
 - **e1c:** Das Zitat beim Antworten und Weiterleiten übernimmt das Original unverändert. Der Regex-Filter entfällt, nur die Hüllen-Tags des Dokuments werden entfernt.
 
-**Entschieden (Kim):**
+**Entschieden:**
 - Mechanismus: Content-Security-Policy im Kopf des Grundgerüsts statt `WKContentRuleList`.
 - Freigabe per Knopf gilt nur für die aktuelle Anzeige, keine eigene Liste.
 - Whitelist-Absender laden sofort. Domain-Einträge zählen mit, und die Score-Obergrenze aus den Einstellungen gilt wie bei der Spam-Beurteilung. Das Restrisiko (gefälschter Absender unter der Obergrenze) ist bewusst eingegangen. Das gilt auch bei ausgeschaltetem Spamfilter.

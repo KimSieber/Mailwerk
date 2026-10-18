@@ -6,9 +6,9 @@
 
 ## Zusammenfassung
 
-Kims Wunsch: Das iPhone wird überwiegend mit einer Hand bedient. Die wichtigsten Knöpfe und Eingabefelder gehören deshalb an den unteren Rand. Dort sollen drei Knöpfe stehen: Sortieren, Suche, Neue Mail. Die Suche soll Text, Betreff und Anhangnamen durchsuchen und Personen vorschlagen.
+Anforderung: Das iPhone wird überwiegend mit einer Hand bedient. Die wichtigsten Knöpfe und Eingabefelder gehören deshalb an den unteren Rand. Dort sollen drei Knöpfe stehen: Sortieren, Suche, Neue Mail. Die Suche soll Text, Betreff und Anhangnamen durchsuchen und Personen vorschlagen.
 
-**Entscheidungen (mit Kim abgestimmt):**
+**Entscheidungen (abgestimmt):**
 
 | Frage | Entscheidung |
 |---|---|
@@ -62,7 +62,7 @@ Tests: 551 → **584** (33 neue, 3 entfallen), alle grün. `MARKETING_VERSION` 0
 - **Hervorhebung:**
   - Zuerst `buttonStyle(.glassProminent)` – in der Leiste kaum sichtbar, vermutlich vom gemeinsamen Glashintergrund überdeckt.
   - Jetzt: blau getönter Glaskreis (`glassEffect(.regular.tint(.blue))`) mit weißem Symbol. Der gemeinsame Hintergrund der Leiste ist für diesen Knopf ausgeblendet (`sharedBackgroundVisibility(.hidden)`).
-  - Der „flüssige“ Glaseffekt fehlt dabei – Kim nimmt das in die nächste Design-Optimierung mit.
+  - Der „flüssige“ Glaseffekt fehlt dabei – das Thema ist für die nächste Design-Optimierung vorgemerkt.
 
 ### Suchindex (Schema-Stufe 7)
 
@@ -91,7 +91,7 @@ Tests: 551 → **584** (33 neue, 3 entfallen), alle grün. `MARKETING_VERSION` 0
 
 ## Fix – Abgleich entfernt anderswo gelöschte neueste Mails
 
-**Fund (Kim):** Auf dem iPhone gelöschte Testmails erschienen auf dem Mac weiter im Eingang (und im Papierkorb).
+**Fund (Test):** Auf dem iPhone gelöschte Testmails erschienen auf dem Mac weiter im Eingang (und im Papierkorb).
 
 **Ursache (im Code belegt):**
 - Der Abgleich (`ServerReconciliation.plan`) entfernte nur gecachte Mails mit UID ≤ `keepUIDsAbove`.
@@ -240,7 +240,7 @@ MailwerkTests/
   - Die Einstufung speichert Mailwerk seit v0.1.9e1b (Schema-Stufe 4, 11.10.2026). Ältere Einträge werden beim Abruf ihres Ordners nachgefüllt – aber **nur Mails im 30-Tage-Fenster der Datumssuche**. Am 11.10. reichte es bis etwa 10.09. zurück.
   - Mails, die vorher per „Ältere laden“ geholt worden waren, blieben ohne Einstufung und damit ohne Bild.
   - Heute geladene Mails (auch per „Ältere laden“) sind nicht betroffen.
-  - **Kims Entscheidung: Weg A** – App neu installieren, der Cache baut sich neu auf. Es ist ein Übergangseffekt der Testinstallation, keine Sonderlösung.
+  - **Entscheidung: Weg A** – App neu installieren, der Cache baut sich neu auf. Es ist ein Übergangseffekt der Testinstallation, keine Sonderlösung.
   - Weg B steht unter „Offene Punkte“.
 - **Erster Start nach dem Update:** Der Suchindex wird im Hintergrund nachgetragen (Protokoll „🔎 Suchindex nachgetragen: n Mails“). Bis dahin findet die Suche ältere Mails noch nicht.
 - **Glaseffekt des blauen Sortierknopfs** ist nicht „flüssig“ wie die übrigen Knöpfe – für die nächste Design-Optimierung vorgemerkt.
@@ -254,4 +254,4 @@ MailwerkTests/
 
 ## Nächste Schritte
 
-- Inhalt der nächsten Version mit Kim festlegen (siehe Übergabe v0.1.17).
+- Inhalt der nächsten Version festlegen (siehe Übergabe v0.1.17).

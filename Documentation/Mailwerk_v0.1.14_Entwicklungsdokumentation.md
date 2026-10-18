@@ -6,7 +6,7 @@
 
 ## Zusammenfassung
 
-v0.1.14 war als Fehler-Patch-Version geplant. Kims Liste zu Beginn:
+v0.1.14 war als Fehler-Patch-Version geplant. Liste zu Beginn:
 
 1. Gmail-Fehler beim Abruf, Posteo-Fehler beim Versand
 2. Entwurf-Mails weiterbearbeiten
@@ -66,7 +66,7 @@ Tests: 528 → 531 (1b) → 534 (1c) → 536 (1d) → **540** (2), alle grün. `
 - Neu `MailLineEndings.crlf` (reine Funktion): CRLF und CR werden zu LF, dann jedes LF zu CRLF.
 - `MailSendService.makeEmail` wendet sie auf Text und HTML an. Das wirkt für Versand, Gesendet-Kopie und Entwurf.
 
-**Test:** Posteo und ordinum, ein- und mehrzeilig, mit einfacher Signatur und mit Bild in der Signatur. Gesendet-Kopie geprüft.
+**Test:** Posteo und eigene Domain (manitu), ein- und mehrzeilig, mit einfacher Signatur und mit Bild in der Signatur. Gesendet-Kopie geprüft.
 
 ---
 
@@ -76,10 +76,10 @@ Tests: 528 → 531 (1b) → 534 (1c) → 536 (1d) → **540** (2), alle grün. `
 
 **Ursache (belegt, im Terminal mit `openssl s_client`):**
 - Gmail nimmt `EHLO [127.0.0.1]` an.
-- Auf `AUTH PLAIN` mit `kim@ordinum.com` antwortet Gmail mit `535 5.7.8 Username and Password not accepted` und **schließt sofort die Verbindung**.
+- Auf `AUTH PLAIN` mit `name@example.com` (eigene Domain) antwortet Gmail mit `535 5.7.8 Username and Password not accepted` und **schließt sofort die Verbindung**.
 - SwiftMail versucht danach auf der geschlossenen Verbindung `AUTH LOGIN`. Daraus wird `ChannelError` Fall `ioOnClosedChannel` (Code 5), und Googles Antwort geht verloren.
 
-**Lösung des Kontos (Kim):** Google nimmt für IMAP den Kontonamen (`kim@ordinum.com`) an, für SMTP nur die Gmail-Adresse. Benutzername im Postfach daher `Kim.Jan.Sieber@gmail.com`, damit funktionieren beide.
+**Lösung des Kontos:** Google nimmt für IMAP den Kontonamen (`name@example.com`) an, für SMTP nur die Gmail-Adresse. Benutzername im Postfach daher `vorname.nachname@gmail.com`, damit funktionieren beide.
 
 **Lösung in Mailwerk:**
 - Neu `SMTPLoginFailure` mit `SMTPStep` (Verbinden, Anmelden, Senden).
@@ -96,7 +96,7 @@ Tests: 528 → 531 (1b) → 534 (1c) → 536 (1d) → **540** (2), alle grün. `
 
 **Problem:** Gmail legt jede über seinen SMTP-Server gesendete Mail selbst in „Gesendet“ ab. Mailwerks eigene Kopie ergab ein Duplikat. Zeitweise scheiterte die Ablage der Kopie auch mit einem Timeout (siehe Beobachtungen).
 
-**Entscheidung (Kim):**
+**Entscheidung:**
 - Keine Erkennung des Anbieters. `X-GM-EXT-1` ist eine Gmail-eigene Erweiterung, kein Standard, und wäre eine Sonderlösung.
 - Stattdessen wie in anderen Mail-Programmen ein **Schalter je Postfach** im Abschnitt SMTP: „Kopie in ‚Gesendet‘ ablegen“, standardmäßig an.
 
@@ -105,13 +105,13 @@ Tests: 528 → 531 (1b) → 534 (1c) → 536 (1d) → **540** (2), alle grün. `
 - Der Schalter steht in „Postfach bearbeiten“ und „Postfach hinzufügen“.
 - `MailSendService.send` überspringt die Kopie, wenn er aus ist. Gespeichert wird er mit dem Postfach, also über iCloud auf allen Geräten.
 
-**Test:** ordinum (an) und Gmail (aus) haben jeweils genau eine Kopie in „Gesendet“.
+**Test:** eigene Domain (an) und Gmail (aus) haben jeweils genau eine Kopie in „Gesendet“.
 
 ---
 
 ## 2 – Entwürfe weiterbearbeiten (MW-16 Teil 2)
 
-**Konzept** aus v0.1.13 (mit Kim abgestimmt). Auf Kims Wunsch in **einem** Paket mit einem Testdurchlauf und einem Commit umgesetzt.
+**Konzept** aus v0.1.13 (abgestimmt). Auf Wunsch in **einem** Paket mit einem Testdurchlauf und einem Commit umgesetzt.
 
 **Öffnen:**
 - Ein Tipp auf eine Mail im Ordner „Entwürfe“ (Rolle `.drafts` aus dem Ordnerbaum) öffnet das Verfassen-Fenster statt der Leseansicht.
@@ -150,18 +150,18 @@ Tests: 528 → 531 (1b) → 534 (1c) → 536 (1d) → **540** (2), alle grün. `
 
 ## 3 – Abruf-Schalter kleiner (verworfen)
 
-Auf dem iPhone hat der Standard-Schalter eine feste Größe. Kleiner geht er nur auf dem Mac (`.controlSize`). Die Alternativen bedeuten eine andere Bedienung: Schalter nur in „Postfach bearbeiten“ plus Wischaktion, oder ein Symbol-Knopf. Kim wollte keine andere Bedienung, das Thema ist verworfen.
+Auf dem iPhone hat der Standard-Schalter eine feste Größe. Kleiner geht er nur auf dem Mac (`.controlSize`). Die Alternativen bedeuten eine andere Bedienung: Schalter nur in „Postfach bearbeiten“ plus Wischaktion, oder ein Symbol-Knopf. Eine andere Bedienung war nicht gewünscht, das Thema ist verworfen.
 
 ---
 
 ## 4 – Formatierungsleiste
 
-**Wunsch (Kim):** Texte raus, die Symbole sprechen für sich. Eleganteres Design im Sinne von iOS 26, keine Sonderlösung.
+**Wunsch:** Texte raus, die Symbole sprechen für sich. Eleganteres Design im Sinne von iOS 26, keine Sonderlösung.
 
 **Lösung (Standard, Liquid Glass):**
 - Nur Symbole (`FormatIcon`, 40 × 36 pt Tippfläche, etwas größere Symbole).
 - Gruppen als Glas-Kapseln (`GlassEffectContainer`, `.glassEffect(.regular.interactive(), in: .capsule)`). Aktive Formate sind farbig hinterlegt.
-- Reihenfolge nach Häufigkeit (Kim): **Anhang + Link** | **Fett, Kursiv, Unterstrichen** | **Aufzählung, Nummerierung** | **Schriftgröße, Farbe**. Die letzte Gruppe ist auf dem iPhone erst nach Scrollen sichtbar.
+- Reihenfolge nach Häufigkeit der Nutzung: **Anhang + Link** | **Fett, Kursiv, Unterstrichen** | **Aufzählung, Nummerierung** | **Schriftgröße, Farbe**. Die letzte Gruppe ist auf dem iPhone erst nach Scrollen sichtbar.
 - `FormattingToolbar` hat Plätze `leading` (Anhang, in der Gruppe mit dem Link) und `trailing` (Logo der Signatur, eigene Gruppe).
 - Die Trennlinie über der Leiste im Verfassen-Fenster ist entfallen.
 - Verworfen: Leiste über der Tastatur (fehlt ohne Tastatur und auf dem Mac) und Apples Formatfenster (bietet Formate, die der HTML-Rückweg nicht abbildet).
@@ -170,13 +170,13 @@ Auf dem iPhone hat der Standard-Schalter eine feste Größe. Kleiner geht er nur
 
 ## 5 – Absende-Postfach einer neuen Mail
 
-**Regel (Kim):**
+**Regel:**
 - **Antworten und Weiterleiten:** Postfach der Originalmail (unverändert).
 - **Neue Mail** im Ordner eines Postfachs: dieses Postfach.
 - **Neue Mail** in Sammelansichten (Alle Eingänge, Mit Kennzeichnung, künftige Sammelordner): das Standard-Postfach.
 - **mailto-Link** in einer geöffneten Mail: das Postfach dieser Mail.
 
-**Hintergrund:** Wer gezielt aus einem Postfach arbeitet (z. B. im Krisenfall mit Posteo), soll nicht versehentlich aus einem anderen senden.
+**Hintergrund:** Wer gezielt aus einem Postfach arbeitet (z. B. mit einem Reserve-Postfach bei Posteo), soll nicht versehentlich aus einem anderen senden.
 
 **Lösung:**
 - `ComposeViewModel`/`ComposeView` nehmen `senderAccountID` an. Ein unbekanntes Postfach fällt auf das Standard-Postfach zurück.
@@ -203,7 +203,7 @@ Auf dem iPhone hat der Standard-Schalter eine feste Größe. Kleiner geht er nur
 
 **Lösung:**
 - Der Titel bekommt eine Mindestbreite: Bildschirmbreite (`onGeometryChange`) minus 200 pt für Knöpfe und Ränder (`toolbarButtonsWidth`). Damit ist er immer breiter als der zentrierte Platz und steht stets links. Titel und Standzeile sind links ausgerichtet.
-- Farbpunkt und Ordnersymbol bleiben, sie dienen Kim zur Orientierung.
+- Farbpunkt und Ordnersymbol bleiben, sie dienen zur Orientierung.
 - Verworfene Versuche:
   - `.frame(maxWidth: .infinity)` im `.principal`-Titel: wirkungslos, iOS gibt ihm nur die benötigte Breite.
   - Titel als `.topBarLeading`: iOS setzte zusätzlich den Fenstertitel in die Mitte, und unser Titel wurde abgeschnitten.
@@ -256,7 +256,7 @@ MailwerkTests/
 **Manuell**, Mails nur an sich selbst:
 - Gmail-Abruf (Posteingang, Spam-Ordner).
 - Größtes manitu-Postfach in frischer Simulator-Installation.
-- Posteo- und ordinum-Versand, ein- und mehrzeilig, mit Signatur und Logo.
+- Versand über Posteo und eigene Domain, ein- und mehrzeilig, mit Signatur und Logo.
 - Gmail-Versand mit falschem und richtigem Benutzernamen.
 - Gesendet-Kopie an/aus.
 - Entwürfe (siehe Paket 2).

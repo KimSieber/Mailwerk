@@ -94,7 +94,7 @@ Tests: 348 → **361**, alle grün.
 **Problem:** Beim ersten Start sind noch keine Postfächer vorhanden („Refresh gestartet für 0 Konten“). Sie kommen kurz darauf aus iCloud, aber niemand rief ab.
 
 **Lösung:**
-- `InboxView` beobachtet die Postfach-IDs. Kommt eines hinzu, zeigt sie die Liste aus dem Cache und ruft alle Posteingänge ab (Entscheidung Kim: alle, nicht nur die neuen). Name oder Farbe ändern löst nichts aus.
+- `InboxView` beobachtet die Postfach-IDs. Kommt eines hinzu, zeigt sie die Liste aus dem Cache und ruft alle Posteingänge ab (Entscheidung: alle, nicht nur die neuen). Name oder Farbe ändern löst nichts aus.
 - **Folge aus d1b:** Läuft der Start-Abruf mit 0 Postfächern noch, schließt sich der neue Abruf ihm nur an. Deshalb nimmt `performRefresh` während der Runde hinzugekommene Postfächer mit.
 
 ---
@@ -180,7 +180,7 @@ Alle gelieferten Code-Dateien folgen dem Dokumentationsstandard. `RichTextEditor
 
 - SwiftMail unverändert (≥ 1.13.0). Genutzt werden jetzt zusätzlich `fetchStructure`, `fetchPart` und `Message(header:parts:)`, öffentlich seit 1.13.0.
 - Datenbank unverändert (Schema-Stufe 3).
-- `MARKETING_VERSION` je Schritt von Kim gesetzt (0.1.9d1a … 0.1.9d1e).
+- `MARKETING_VERSION` je Schritt manuell gesetzt (0.1.9d1a … 0.1.9d1e).
 
 ---
 
@@ -192,7 +192,7 @@ Alle gelieferten Code-Dateien folgen dem Dokumentationsstandard. `RichTextEditor
 | d1b | `006fe6e` |
 | d1c | `c883dd8` |
 | d1d | `b1e5df9` |
-| d1e + Doku | *von Kim nach diesem Dokument* |
+| d1e + Doku | *manuell nach diesem Dokument* |
 
 ---
 
