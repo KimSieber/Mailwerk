@@ -378,6 +378,32 @@ final class SpamFilterService {
         }
     }
 
+    /// Prüft, ob die Mailansicht zu einer Mail ein Absenderbild
+    /// (Kontaktbild oder Logo) zeigen darf – dieselbe Regel wie in der
+    /// Mailliste (`SpamClassifier.allowsSenderImage`).
+    ///
+    /// Verarbeitung: Liest die aktuellen Listen. Lassen sie sich nicht
+    /// lesen, wird vorsichtshalber kein Bild gezeigt.
+    ///
+    /// - Parameters:
+    ///   - message: Angezeigte Mail.
+    ///   - scoreLimit: Score-Obergrenze aus den Spam-Einstellungen.
+    /// - Returns: `true`, wenn ein Absenderbild gezeigt werden darf.
+    func allowsSenderImage(of message: CachedMessage, scoreLimit: Double) async -> Bool {
+        do {
+            let lists = try await filterLists.lists()
+            return SpamClassifier.allowsSenderImage(
+                sender: FilterAddress.sender(fromHeader: message.from),
+                verdict: message.headers.spamVerdict,
+                lists: lists,
+                scoreLimit: scoreLimit
+            )
+        } catch {
+            Log.spam.error("⚠️ Filterlisten für das Absenderbild nicht lesbar: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+    }
+
     /// Text zur Spam-Einschätzung einer Mail für die Mailansicht.
     ///
     /// Verarbeitung: Liest die aktuellen Listen und bildet den ausführlichen

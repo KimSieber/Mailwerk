@@ -12,6 +12,13 @@
 //  Anlagen sind ausgelassen). HTML wird nie dargestellt, aus der Mail wird
 //  also nichts ausgeführt oder nachgeladen.
 //
+//  Suche: Über dem Text steht ein Suchfeld. Gesucht wird die Eingabe ohne
+//  Rücksicht auf Groß- und Kleinschreibung (RawSourceSearch). Eingabetaste
+//  bzw. „Weiter“ springt zum ersten Treffer, jedes weitere Mal zum
+//  nächsten; nach dem letzten geht es wieder vorne los. Der aktuelle
+//  Treffer ist gelb hinterlegt, daneben steht „2 von 5“ bzw. „Kein
+//  Treffer“. Eine geänderte Eingabe beginnt die Suche neu.
+//
 //  Die Anzeige läuft über eine native Textansicht (UITextView bzw.
 //  NSTextView) statt SwiftUI-`Text`: Quellen haben oft tausende Zeilen,
 //  die eine Textansicht ohne Ruckeln scrollt.
@@ -22,11 +29,13 @@
 //  Hinweis (ConnectionErrorClassifier).
 //
 //  Abgrenzung: Abruf und Aufbereitung → RawMessageService,
-//  RawMessageFormatter; Menüeintrag → MessageDetailView.
+//  RawMessageFormatter; Fundstellen → RawSourceSearch; Menüeintrag →
+//  MessageDetailView.
 //
 //  Abhängigkeiten: SwiftUI, UIKit/AppKit, RawMessageService,
 //  NetworkMonitor, ConnectionErrorClassifier, MailPrintFormatter
-//  (Dateiname), PlatformSheetSize, Log.
+//  (Dateiname), RawSourceSearch, PlatformInputModifiers, PlatformSheetSize,
+//  Log.
 //
 
 import SwiftUI
@@ -62,6 +71,14 @@ struct RawSourceView: View {
     @State private var fileURL: URL?
     /// `true` kurz nach dem Kopieren (Häkchen statt Kopiersymbol).
     @State private var didCopy = false
+    /// Eingabe im Suchfeld.
+    @State private var query = ""
+    /// Begriff, zu dem `matches` gehört; `nil` = noch nicht gesucht.
+    @State private var searchedQuery: String?
+    /// Fundstellen zu `searchedQuery`.
+    @State private var matches: [NSRange] = []
+    /// Index des gezeigten Treffers in `matches`; `nil` = keiner.
+    @State private var matchIndex: Int?
 
     /// Aufbau: Inhalt je Zustand, oben Schließen, Kopieren und Teilen.
     var body: some View {
@@ -87,7 +104,96 @@ struct RawSourceView: View {
         case .unavailable(let title, let detail, let systemImage):
             ContentUnavailableView(title, systemImage: systemImage, description: Text(detail))
         case .loaded(let text):
-            MonospacedTextView(text: text)
+            VStack(spacing: 0) {
+                searchBar(in: text)
+                Divider()
+                MonospacedTextView(text: text, highlight: currentMatch)
+            }
+        }
+    }
+
+    // MARK: - Suche
+
+    /// Suchfeld, Trefferanzeige und „Weiter“ über dem Text.
+    ///
+    /// - Parameter text: Durchsuchte Quelle.
+    /// - Returns: Die Suchleiste.
+    private func searchBar(in text: String) -> some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                TextField("In Quelle suchen", text: $query)
+                    .textFieldStyle(.plain)
+                    .plainTextInput()
+                    .submitLabel(.search)
+                    .onSubmit { findNext(in: text) }
+                if !query.isEmpty {
+                    Button {
+                        query = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Suche leeren")
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+            if let searchStatus {
+                Text(searchStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            Button("Weiter") {
+                findNext(in: text)
+            }
+            .disabled(query.isEmpty)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        // Eine geänderte Eingabe beginnt die Suche neu.
+        .onChange(of: query) {
+            searchedQuery = nil
+            matches = []
+            matchIndex = nil
+        }
+    }
+
+    /// Gezeigter Treffer; `nil` = keiner.
+    private var currentMatch: NSRange? {
+        guard let matchIndex, matches.indices.contains(matchIndex) else { return nil }
+        return matches[matchIndex]
+    }
+
+    /// „2 von 5“, „Kein Treffer“ oder nichts, solange nicht gesucht wurde.
+    private var searchStatus: String? {
+        guard let searchedQuery, searchedQuery == query else { return nil }
+        guard let matchIndex else { return "Kein Treffer" }
+        return "\(matchIndex + 1) von \(matches.count)"
+    }
+
+    /// Springt zum nächsten Treffer.
+    ///
+    /// Verarbeitung: Beim ersten Mal (bzw. nach geänderter Eingabe) werden
+    /// die Fundstellen ermittelt und der erste Treffer gezeigt, danach je
+    /// der nächste; nach dem letzten wieder der erste.
+    ///
+    /// - Parameter text: Durchsuchte Quelle.
+    private func findNext(in text: String) {
+        guard !query.isEmpty else { return }
+        if searchedQuery != query {
+            matches = RawSourceSearch.matches(of: query, in: text)
+            searchedQuery = query
+            matchIndex = RawSourceSearch.nextIndex(after: nil, count: matches.count)
+        } else {
+            matchIndex = RawSourceSearch.nextIndex(after: matchIndex, count: matches.count)
         }
     }
 
@@ -226,11 +332,40 @@ struct RawSourceView: View {
 
 // MARK: - Textansicht
 
+/// Hinterlegung des aktuellen Treffers: Gelb mit schwarzer Schrift, damit
+/// er auch im Dunkelmodus lesbar ist.
+private enum MatchStyle {
+    #if os(macOS)
+    static let attributes: [NSAttributedString.Key: Any] = [
+        .backgroundColor: NSColor.systemYellow,
+        .foregroundColor: NSColor.black,
+    ]
+    #else
+    static let attributes: [NSAttributedString.Key: Any] = [
+        .backgroundColor: UIColor.systemYellow,
+        .foregroundColor: UIColor.black,
+    ]
+    #endif
+}
+
 #if os(macOS)
 /// Nicht bearbeitbare, auswählbare Textansicht in Festbreitenschrift (macOS).
 private struct MonospacedTextView: NSViewRepresentable {
     /// Anzuzeigender Text.
     let text: String
+    /// Hervorzuhebender Treffer der Suche; `nil` = keiner.
+    var highlight: NSRange?
+
+    /// Merkt sich den hervorgehobenen Treffer, um ihn wieder zu lösen.
+    final class Coordinator {
+        /// Zuletzt hervorgehobener Treffer.
+        var highlighted: NSRange?
+    }
+
+    /// Legt den Merker an.
+    ///
+    /// - Returns: Merker.
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
     /// Legt eine scrollbare Textansicht an.
     ///
@@ -249,14 +384,32 @@ private struct MonospacedTextView: NSViewRepresentable {
         return scrollView
     }
 
-    /// Übernimmt einen geänderten Text.
+    /// Übernimmt einen geänderten Text und den hervorgehobenen Treffer.
+    ///
+    /// Verarbeitung: Der alte Treffer verliert die Hinterlegung, der neue
+    /// bekommt sie und wird in den sichtbaren Bereich gescrollt.
     ///
     /// - Parameters:
     ///   - scrollView: Scrollansicht.
     ///   - context: Kontext.
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        if let textView = scrollView.documentView as? NSTextView, textView.string != text {
+        guard let textView = scrollView.documentView as? NSTextView,
+              let storage = textView.textStorage else { return }
+        if textView.string != text {
             textView.string = text
+            context.coordinator.highlighted = nil
+        }
+        guard context.coordinator.highlighted != highlight else { return }
+        let length = storage.length
+        if let old = context.coordinator.highlighted, NSMaxRange(old) <= length {
+            storage.removeAttribute(.backgroundColor, range: old)
+            storage.addAttribute(.foregroundColor, value: NSColor.textColor, range: old)
+        }
+        context.coordinator.highlighted = nil
+        if let highlight, NSMaxRange(highlight) <= length {
+            storage.addAttributes(MatchStyle.attributes, range: highlight)
+            textView.scrollRangeToVisible(highlight)
+            context.coordinator.highlighted = highlight
         }
     }
 }
@@ -265,6 +418,19 @@ private struct MonospacedTextView: NSViewRepresentable {
 private struct MonospacedTextView: UIViewRepresentable {
     /// Anzuzeigender Text.
     let text: String
+    /// Hervorzuhebender Treffer der Suche; `nil` = keiner.
+    var highlight: NSRange?
+
+    /// Merkt sich den hervorgehobenen Treffer, um ihn wieder zu lösen.
+    final class Coordinator {
+        /// Zuletzt hervorgehobener Treffer.
+        var highlighted: NSRange?
+    }
+
+    /// Legt den Merker an.
+    ///
+    /// - Returns: Merker.
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
     /// Legt die Textansicht an; die Schrift folgt der Textgröße des Systems.
     ///
@@ -283,7 +449,10 @@ private struct MonospacedTextView: UIViewRepresentable {
         return textView
     }
 
-    /// Übernimmt einen geänderten Text.
+    /// Übernimmt einen geänderten Text und den hervorgehobenen Treffer.
+    ///
+    /// Verarbeitung: Der alte Treffer verliert die Hinterlegung, der neue
+    /// bekommt sie und wird in den sichtbaren Bereich gescrollt.
     ///
     /// - Parameters:
     ///   - textView: Textansicht.
@@ -291,6 +460,20 @@ private struct MonospacedTextView: UIViewRepresentable {
     func updateUIView(_ textView: UITextView, context: Context) {
         if textView.text != text {
             textView.text = text
+            context.coordinator.highlighted = nil
+        }
+        guard context.coordinator.highlighted != highlight else { return }
+        let storage = textView.textStorage
+        let length = storage.length
+        if let old = context.coordinator.highlighted, NSMaxRange(old) <= length {
+            storage.removeAttribute(.backgroundColor, range: old)
+            storage.addAttribute(.foregroundColor, value: UIColor.label, range: old)
+        }
+        context.coordinator.highlighted = nil
+        if let highlight, NSMaxRange(highlight) <= length {
+            storage.addAttributes(MatchStyle.attributes, range: highlight)
+            textView.scrollRangeToVisible(highlight)
+            context.coordinator.highlighted = highlight
         }
     }
 }

@@ -89,4 +89,18 @@ struct MessageRowPartyTests {
         #expect(a.colorIndex == b.colorIndex)
         #expect(AccountColor.allCases.indices.contains(a.colorIndex))
     }
+
+    /// Mailansicht: dieselbe Person wie in der Liste, aus Absender und Empfängern.
+    @Test func makeFromHeaderFieldsMatchesListItem() {
+        let from = "Anna Muster <anna@example.org>"
+        let recipients = ["Ben Beispiel <ben@example.org>", "c@example.org"]
+        let listItem = item(from: from, to: recipients)
+        for showsRecipients in [false, true] {
+            #expect(
+                MessageRowParty.make(from: from, recipients: recipients, showsRecipients: showsRecipients)
+                    == MessageRowParty.make(for: listItem, showsRecipients: showsRecipients)
+            )
+        }
+        #expect(MessageRowParty.make(from: from, recipients: recipients, showsRecipients: true).title == "Ben Beispiel")
+    }
 }
