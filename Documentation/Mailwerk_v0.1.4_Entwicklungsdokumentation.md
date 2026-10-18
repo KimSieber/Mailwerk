@@ -102,7 +102,7 @@ MailwerkTests/
 
 ### Versand-Logik (Schritt 4d)
 
-- `MailAddress`: Adresse mit optionalem Namen, Parsing formatierter Adressen (auch `"Sieber, Kim" <…>`), Validierung, Vergleich ohne Groß-/Kleinschreibung.
+- `MailAddress`: Adresse mit optionalem Namen, Parsing formatierter Adressen (auch `"Müller, Max" <…>`), Validierung, Vergleich ohne Groß-/Kleinschreibung.
 - `ReplyBuilder`: Betreff-Präfixe (`Re:`/`Fwd:`, erkennt AW:, WG:, RE[2]: usw.), Empfängerermittlung, Threading-Header, Zitat bzw. weitergeleiteter Inhalt.
 - `MailSendService`: Versand, Gesendet-Kopie mit Bcc-Header, Markierung der Originalmail, verständliche Fehlermeldungen. Bei unklarem Versandstatus (`unsafeToRetry`) wird ausdrücklich vor einem zweiten Versand gewarnt.
 - Größenlimit des Servers (`SIZE`) wird vor dem Versand geprüft.
@@ -144,7 +144,7 @@ MailwerkTests/
 | **Bcc nur in der Gesendet-Kopie** | Im Versand darf Bcc nicht im Kopf stehen; in der eigenen Kopie ist die Information dagegen nützlich (wie bei Apple Mail). |
 | **Fehler nach erfolgreichem Versand als Warnung, nicht als Fehler** | Die Nachricht ist raus. Eine Fehlermeldung würde zu einem zweiten Versand verleiten. |
 | **Originalmail wird beim Antworten nicht in den Editor übernommen** | Eine Umwandlung von HTML in den Editor wäre verlustbehaftet. Das Original bleibt unverändert und wird beim Senden als Zitat angehängt. |
-| **Adresslisten als JSON-Array im Cache** | Ein komma-getrennter String wäre nicht eindeutig zerlegbar, weil Namen selbst Kommas enthalten („Sieber, Kim"). |
+| **Adresslisten als JSON-Array im Cache** | Ein komma-getrennter String wäre nicht eindeutig zerlegbar, weil Namen selbst Kommas enthalten („Müller, Max"). |
 | **Eigener HTML-Serializer statt Apples HTML-Export** | Apples Export erzeugt aufgeblähtes Markup mit Stylesheet im Kopf. Inline-Styles werden von Mail-Programmen zuverlässiger dargestellt. |
 | **Immer HTML *und* Nur-Text senden (multipart/alternative)** | Kein Umschalter in der Oberfläche nötig; reine HTML-Mails werden von Spam-Filtern wie rspamd schlechter bewertet. |
 | **Formatvorlage `{decimal}.` für nummerierte Listen** | Das eingebaute Format erzeugt nur die nackte Ziffer ohne Punkt. |

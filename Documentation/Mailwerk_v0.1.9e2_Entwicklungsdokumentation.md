@@ -11,7 +11,7 @@ Die ursprünglich getrennten Stufen **d3** (Logging, toter Code) und **e2** (N-B
 - **Schritt A (`v0.1.9e2a`):** Grundbausteine, Dienste und Ansichten aufgeräumt (N1, N2, N4–N11, N15–N18, N20, N23, N25, N26). Dazu ein Fehler beim Teilen auf dem Mac behoben. Geliefert in zwei Lieferungen mit Build und Test dazwischen.
 - **Schritt B (`v0.1.9e2b`):** alle `print`-Ausgaben über `os.Logger` mit Kategorien und Datenschutz-Einstufung (N24).
 
-**Entschieden (Kim):**
+**Entschieden:**
 - Logging-Regel: Zahlen, Ordnernamen und Fehlertexte öffentlich; Mailadressen, Betreffs und Postfachnamen privat.
 - Kategorien nach Bereich: Abruf, Aktionen, Spam, Versand, Cache, Ansicht.
 - Kein Commit eines nicht lauffähigen Stands: Der Fehler beim Teilen auf dem Mac wurde vor dem Commit von Schritt A behoben, nicht als Fund verschoben.

@@ -8,7 +8,7 @@
 
 Ein Postfach kennt jetzt neben dem Benutzernamen eine eigene **E-Mail-Adresse**. Der Benutzername dient nur noch der Anmeldung; Versand („From“) und „Allen antworten“ nutzen die Adresse. In den Formularen ist die Adresse Pflicht und der Benutzername optional.
 
-**Entschieden (Kim):**
+**Entschieden:**
 - M6 wird noch in v0.1.9 umgesetzt (Variante A), damit Mailwerk mit jedem Anbieter und mit Alias-Adressen funktioniert.
 - Nach dem ersten Test umgedreht: Die E-Mail-Adresse wird immer eingetragen, der Benutzername nur, wenn er davon abweicht (leer = Anmeldung mit der Adresse).
 - Reihenfolge im Abschnitt „Konto“: Bezeichnung, Absendername, E-Mail-Adresse, Benutzername, Passwort.

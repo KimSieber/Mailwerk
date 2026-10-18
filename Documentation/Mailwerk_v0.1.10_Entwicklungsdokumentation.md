@@ -8,7 +8,7 @@
 
 Jede Zeile der Mailliste zeigt links einen runden Kreis mit dem Bild der Person: Kontaktbild aus dem Adressbuch, sonst das Logo (Favicon) der Absenderdomain, sonst Initialen. Die Zeile ist auf drei Zeilen verschlankt, ungelesene Mails sind am breiten Farbstreifen sofort erkennbar.
 
-**Entschieden (Kim):**
+**Entschieden:**
 - Neuer Fahrplan bis zum Live-Gang: v0.1.10 Absenderbild, v0.1.11 Mehrfachauswahl und Kontextmenü (MW-9), v0.1.12 Mailanzeige vervollständigen (`cid:`-Bilder, Dunkelmodus, Zoom, zuletzt Originaltext MW-5), v0.1.13 Signaturen und Entwürfe (MW-2, MW-16), v0.1.14 Teilen an Mailwerk (MW-15), v0.1.15 Suche (MW-6). Seitenleiste iPad/Mac komplett nach v0.2.x.
 - **Zeile:** (1) Kennzeichen links, Datum rechts, klein und grau; (2) Name fett bei ungelesen, Adresse klein und grau dahinter (wird zuerst gekürzt); (3) Betreff. Die Vorschauzeile entfällt.
 - **Datum:** heute nur Uhrzeit (`17:06`), sonst Wochentag, Datum mit vierstelliger Jahreszahl und Uhrzeit (`Mo, 28.09.2026 17:06`). Gezeigt wird weiterhin das Kopfdatum der Mail (keine Änderung am Speicher).
@@ -126,5 +126,5 @@ MailwerkTests/
 
 ## Nächste Schritte
 
-- v0.1.11: Mehrere Mails markieren und per langem Drücken bearbeiten (MW-9), vorher `MessageDetailView` aufteilen (N13). Inhalt zuerst mit Kim abstimmen.
+- v0.1.11: Mehrere Mails markieren und per langem Drücken bearbeiten (MW-9), vorher `MessageDetailView` aufteilen (N13). Inhalt zuerst abstimmen.
 - Merkliste: DKIM-/Authentication-Results-Prüfung (Logos und Spam-Prüfung).

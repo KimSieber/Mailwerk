@@ -19,11 +19,11 @@ v0.1.18 war als „Anmeldung (OAuth 2) für Outlook“ geplant. Im Verlauf kamen
 | e | Entwicklungs-App „Mailwerk Dev“ (Bundle-ID `.dev`) neben der TestFlight-App, eigene App-Gruppe | `0730dd0` |
 | e2 | Eigener Key-Value-Speicher für „Mailwerk Dev“ → getrennte Postfächer für Test und Produktion | `ebc4245` |
 | f+g | Spamfilter nach Erstinstallation eingeschaltet; Import von White-/Blacklist aus Textdatei | `e6fb6d1` |
-| h | Sicht „Spam“ auch bei ausgeschaltetem Spamfilter | Commit durch Kim |
+| h | Sicht „Spam“ auch bei ausgeschaltetem Spamfilter | manueller Commit |
 
 Tests: 606 → **651** (45 neue), alle grün. `MARKETING_VERSION` 0.1.18 in allen drei Zielen.
 
-**Meilenstein:** Mailwerk läuft erstmals über **TestFlight** produktiv (Kim: iPhone, iPad; Kims Frau eingeladen). Entwicklung und Tests laufen parallel in „Mailwerk Dev“ aus Xcode – mit eigenen Testpostfächern und eigenen CloudKit-Daten.
+**Meilenstein:** Mailwerk läuft erstmals über **TestFlight** produktiv (iPhone, iPad; eine weitere Testperson eingeladen). Entwicklung und Tests laufen parallel in „Mailwerk Dev“ aus Xcode – mit eigenen Testpostfächern und eigenen CloudKit-Daten.
 
 ---
 
@@ -37,15 +37,15 @@ Tests: 606 → **651** (45 neue), alle grün. `MARKETING_VERSION` 0.1.18 in alle
 - Berechtigungen: `https://outlook.office.com/IMAP.AccessAsUser.All`, `https://outlook.office.com/SMTP.Send`, `offline_access`.
 - Anmeldung am Server mit SASL XOAUTH2: `base64("user=" + user + "\x01auth=Bearer " + token + "\x01\x01")`.
 - Öffentlicher Client: PKCE (S256), **kein** Client-Geheimnis. Refresh-Tokens haben keine feste Laufzeit; bei jeder Erneuerung kommt ein neues, das alte soll ersetzt werden.
-- Microsoft 365 (geschäftlich): Passwort-SMTP standardmäßig ab Ende Dezember 2026 aus. Für Mailwerk **kein Einsatzszenario** (Kim: Geschäftsmails laufen auf verwalteten Geräten).
+- Microsoft 365 (geschäftlich): Passwort-SMTP standardmäßig ab Ende Dezember 2026 aus. Für Mailwerk **kein Einsatzszenario** (Geschäftsmails laufen auf verwalteten Geräten).
 
-**Entscheidungen mit Kim:**
+**Entscheidungen:**
 
 | Frage | Entscheidung |
 |---|---|
 | Welche Konten? | Nur **Outlook.com privat**. Bestehende sechs Postfächer bleiben unverändert (Passwort). |
 | Gmail umstellen? | **Nein** – Gmail läuft mit App-Passwort. OAuth ist allgemein gebaut, damit Gmail später denselben Weg nehmen *könnte*. Nur vorgemerkt. |
-| Wer registriert die App? | **Einmalig der Anbieter (Kim)**, nicht jeder Nutzer. Nutzer melden sich nur im Anmeldefenster an und stimmen zu – wie bei Apple Mail, Thunderbird, Spark. |
+| Wer registriert die App? | **Einmalig der Anbieter der App**, nicht jeder Nutzer. Nutzer melden sich nur im Anmeldefenster an und stimmen zu – wie bei Apple Mail, Thunderbird, Spark. |
 | Anmeldefenster | Apple `ASWebAuthenticationSession` (SwiftUI `webAuthenticationSession`), private Browser-Sitzung (`.ephemeral`). Kein MSAL, kein neues Paket. |
 | Token-Ablage | Refresh-Token im iCloud-Schlüsselbund (geteilte Gruppe), Access-Token nur im Speicher. Eine Erneuerung zur Zeit. |
 | Teilen-Erweiterungen | Dürfen selbst erneuern (Komfort). Kein Anmeldefenster; ist die Anmeldung ganz abgelaufen: „Bitte in Mailwerk neu anmelden“, Fenster bleibt offen (ein Entwurf ist dann auch nicht möglich). |
@@ -59,8 +59,8 @@ Tests: 606 → **651** (45 neue), alle grün. `MARKETING_VERSION` 0.1.18 in alle
 
 **Fund:** Mit einem privaten Microsoft-Konto lassen sich Apps **nicht mehr außerhalb eines Verzeichnisses** registrieren („The ability to create applications outside of a directory has been deprecated“). Es braucht einen eigenen Entra-Mandanten.
 
-**Durchgeführt (Kim, nach Anleitung):**
-1. Azure-Portal mit Kims Microsoft-Konto (`Kim.Sieber@ordinum.com`) → „Starten Sie mit einer kostenlosen Azure-Testversion“ → Azure-Free-Account, „For personal use“, Land Deutschland (nicht mehr änderbar), Kreditkarte zur Identitätsprüfung. Danach: „DEFAULT DIRECTORY“.
+**Durchgeführt (manuell, nach Anleitung):**
+1. Azure-Portal mit dem eigenen Microsoft-Konto (`vorname.nachname@example.com`) → „Starten Sie mit einer kostenlosen Azure-Testversion“ → Azure-Free-Account, „For personal use“, Land Deutschland (nicht mehr änderbar), Kreditkarte zur Identitätsprüfung. Danach: „DEFAULT DIRECTORY“.
 2. App-Registrierung „Mailwerk“:
    - Kontotyp **„Nur persönliche Microsoft-Konten“** → Endpunkt `consumers`.
    - Umleitungs-URI (öffentlicher Client) `msauth.de.sieber-bw.Mailwerk://auth` – von Azure als Plattform „iOS/macOS“ eingeordnet.
@@ -110,11 +110,11 @@ Tests: 606 → **651** (45 neue), alle grün. `MARKETING_VERSION` 0.1.18 in alle
 
 ### Fund und Fix: Anmeldename ≠ Absenderadresse
 - **Symptom:** IMAP mit dem Token in Ordnung, SMTP `535 5.7.3 Authentication unsuccessful`.
-- **Ursache (belegt per Gegenprobe):** Microsoft nimmt bei **SMTP** per XOAUTH2 nur die **Haupt-Anmeldeadresse** des Microsoft-Kontos an (bei Kim `Kim.Sieber@ordinum.com`), nicht den Alias `Kim.Sieber@outlook.de`. IMAP akzeptiert den Alias.
-- **Lösung (Kims Wunsch, analog zu den anderen Postfächern):** Feld **„Benutzername“** (leer = E-Mail-Adresse) auch bei Microsoft. Anmeldung mit dem Benutzernamen, Absender bleibt die E-Mail-Adresse. Getestet: Versand kommt beim Empfänger mit `@outlook.de` an.
+- **Ursache (belegt per Gegenprobe):** Microsoft nimmt bei **SMTP** per XOAUTH2 nur die **Haupt-Anmeldeadresse** des Microsoft-Kontos an (im Test `vorname.nachname@example.com`), nicht den Alias `vorname.nachname@outlook.de`. IMAP akzeptiert den Alias.
+- **Lösung (gewünscht, analog zu den anderen Postfächern):** Feld **„Benutzername“** (leer = E-Mail-Adresse) auch bei Microsoft. Anmeldung mit dem Benutzernamen, Absender bleibt die E-Mail-Adresse. Getestet: Versand kommt beim Empfänger mit `@outlook.de` an.
 
 ### Kopie in „Gesendet“
-Outlook.com legt per SMTP gesendete Mails selbst ab – mit Mailwerks Kopie lagen sie doppelt. Kim hat „Kopie in ‚Gesendet‘ ablegen“ beim Outlook-Postfach ausgeschaltet. (Standard beim Anlegen bleibt „an“; Schalter unter „Postfach bearbeiten → Versand“.)
+Outlook.com legt per SMTP gesendete Mails selbst ab – mit Mailwerks Kopie lagen sie doppelt. „Kopie in ‚Gesendet‘ ablegen“ ist beim Outlook-Postfach deshalb ausgeschaltet. (Standard beim Anlegen bleibt „an“; Schalter unter „Postfach bearbeiten → Versand“.)
 
 ### Simulator
 Die Microsoft-Anmeldung ist im Simulator nicht möglich (Passkey verlangt QR-Code bzw. Bluetooth zum Gerät). Outlook-Tests nur auf dem iPhone.
@@ -133,7 +133,7 @@ Die Microsoft-Anmeldung ist im Simulator nicht möglich (Passkey verlangt QR-Cod
 - Server **ohne**: „schon geprüft“ = Mail liegt bereits im lokalen Cache des Posteingangs (der Filter läuft vor jedem Abruf). Schlüsselwörter werden nicht gesetzt; Blockieren, Vertrauen, Verschieben laufen gleich.
 - Einschränkung: Mails, die bei ausgeschaltetem Filter abgerufen wurden, prüft dieses Gerät später nicht nach.
 
-**„Weitergeleitet“ (`$Forwarded`) bei Outlook:** Kims Beobachtung – die Markierung bleibt erhalten, auch nach Neuinstallation. Outlook speichert `$Forwarded` also dauerhaft; keine Änderung nötig. (Kim hat auf Wunsch „Weitergeleitet“ aus Paket d herausgenommen.)
+**„Weitergeleitet“ (`$Forwarded`) bei Outlook:** Beobachtung im Test – die Markierung bleibt erhalten, auch nach Neuinstallation. Outlook speichert `$Forwarded` also dauerhaft; keine Änderung nötig. („Weitergeleitet“ wurde deshalb aus Paket d herausgenommen.)
 
 ---
 
@@ -151,9 +151,9 @@ Die Microsoft-Anmeldung ist im Simulator nicht möglich (Passkey verlangt QR-Cod
 
 ## 6. Pakete e und e2: „Mailwerk Dev“ neben der TestFlight-App
 
-**Kims Ziel:** iPhone weiter als Testgerät nutzen, aber nicht dauerhaft zwei Datenstände pflegen. Erster Plan (gemeinsame Postfächer, Sichern/Einlesen aller Einstellungen) wurde von Kim **verworfen** zugunsten einer klaren Trennung: Testpostfächer (neues Ordinum-Testpostfach, Outlook, web.de, GMX, Gmail …) nur in „Mailwerk Dev“, produktive Postfächer (ordinum, sieber-bw) nur in der TestFlight-App. Begründung: Ein Komplett-Export wird sonst nie mehr gebraucht (iCloud gleicht ab), ein Spamlisten-Import dagegen dauerhaft und für viele Nutzer.
+**Ziel:** iPhone weiter als Testgerät nutzen, aber nicht dauerhaft zwei Datenstände pflegen. Erster Plan (gemeinsame Postfächer, Sichern/Einlesen aller Einstellungen) wurde **verworfen** zugunsten einer klaren Trennung: Testpostfächer (neues eigenes Testpostfach, Outlook, web.de, GMX, Gmail …) nur in „Mailwerk Dev“, produktive Postfächer nur in der TestFlight-App. Begründung: Ein Komplett-Export wird sonst nie mehr gebraucht (iCloud gleicht ab), ein Spamlisten-Import dagegen dauerhaft und für viele Nutzer.
 
-**Einstellungen (Kim in Xcode, nach Anleitung):**
+**Einstellungen (manuell in Xcode, nach Anleitung):**
 
 | Einstellung | Debug („Mailwerk Dev“) | Release (TestFlight/App Store) |
 |---|---|---|
@@ -174,14 +174,14 @@ Die Microsoft-Anmeldung ist im Simulator nicht möglich (Passkey verlangt QR-Cod
 
 **Regel:** Kein Postfach in beiden Apps zugleich – der Spamfilter merkt sich geprüfte Mails per Schlüsselwort auf dem Server; die Apps haben verschiedene Listen.
 
-**Nebenbefund beim Aufräumen:** Nach dem Entfernen der Testpostfächer standen noch GMX-Mails in „Alle Eingänge“. Ursache: Sie lagen rechtmäßig im produktiven Postfach Kim.Sieber@ordinum.com (Kopfzeilen: manitu). Kein Fehler in Mailwerk; Kim prüft die Weiterleitung bei GMX.
+**Nebenbefund beim Aufräumen:** Nach dem Entfernen der Testpostfächer standen noch GMX-Mails in „Alle Eingänge“. Ursache: Sie lagen rechtmäßig in einem produktiven Postfach (Kopfzeilen: manitu), weil GMX dorthin weiterleitet. Kein Fehler in Mailwerk.
 
 ---
 
 ## 7. Paket f: Spamfilter nach Erstinstallation eingeschaltet
 
 **Fund:** In „Mailwerk Dev“ (neuer Key-Value-Speicher) war der Spamfilter aus – Standard war `false`. Folge siehe Paket h.
-**Kims Entscheidung:** Nach der Erstinstallation ist der Filter **immer eingeschaltet**. `SpamSettings.defaultEnabled = true`; ein gespeicherter Wert (auch „aus“) hat Vorrang.
+**Entscheidung:** Nach der Erstinstallation ist der Filter **immer eingeschaltet**. `SpamSettings.defaultEnabled = true`; ein gespeicherter Wert (auch „aus“) hat Vorrang.
 
 ---
 
@@ -195,14 +195,14 @@ Die Microsoft-Anmeldung ist im Simulator nicht möglich (Passkey verlangt QR-Cod
 
 **Umsetzung:** `FilterListImport` (neu, reine Logik: Text lesen UTF-8 mit BOM bzw. Windows-1252, Plan, Zusammenfassung); `FilterListView` mit `fileImporter`, Rückfrage, gemeinsamer Eintrage-Schleife. `FilterListInputEntry` jetzt `nonisolated … Hashable, Sendable` – beseitigt die alten Warnungen zur isolierten `Hashable`-Konformität.
 
-**Getestet:** Simulator, iPhone (Dev, Doppelte erkannt), TestFlight-App: Kims gesicherte Listen erfolgreich eingelesen.
+**Getestet:** Simulator, iPhone (Dev, Doppelte erkannt), TestFlight-App: gesicherte Listen erfolgreich eingelesen.
 
 ---
 
 ## 9. Paket h: Sicht „Spam“ auch bei ausgeschaltetem Filter
 
 **Fund:** Die Sammelansicht „Spam“ und der Abruf der Spam-Ordner nutzen den am Postfach gemerkten Spam-Ordner. Diesen ermittelte bisher nur der Spamfilter. Mit ausgeschaltetem Filter blieb „Spam“ leer, obwohl die Ordner Mails hatten.
-**Kims Vorgabe:** „Spam“ zeigt den Inhalt aller Spam-Ordner, egal ob der Filter aktiv ist.
+**Vorgabe:** „Spam“ zeigt den Inhalt aller Spam-Ordner, egal ob der Filter aktiv ist.
 **Umsetzung:** `SpamFilterService.locateSpamFolder(for:)` sucht den Ordner wie der Filter (gemerkt, `\Junk`, Namen) und merkt ihn; `InboxViewModel.locateSpamFolderIfNeeded` ruft das beim Abruf auf, wenn der Filter aus und noch kein Ordner bekannt ist. Fehlt ein Spam-Ordner, wird ohne Filter nichts angelegt und nicht nachgefragt.
 
 ---
@@ -222,7 +222,7 @@ Die Microsoft-Anmeldung ist im Simulator nicht möglich (Passkey verlangt QR-Cod
 - `AccountListView`, `AddAccountView`, `EditAccountView`, `FolderSidebarView`, `InboxView`, `FilterListView`
 - `Mailwerk/Info.plist`, `MailwerkShare/Info.plist`, `MailwerkShareMac/Info.plist` (`MailwerkAppGroupID`)
 - Tests: `MailSessionTests`, `ShareContextTests`
-- Projekt/Entitlements (Kim in Xcode): `MAILWERK_BUNDLE_SUFFIX`, Bundle-IDs, Anzeigenamen, App-Gruppe, Key-Value-Kennung
+- Projekt/Entitlements (manuell in Xcode): `MAILWERK_BUNDLE_SUFFIX`, Bundle-IDs, Anzeigenamen, App-Gruppe, Key-Value-Kennung
 
 ---
 
@@ -242,16 +242,16 @@ Die Microsoft-Anmeldung ist im Simulator nicht möglich (Passkey verlangt QR-Cod
 - **Microsoft SMTP verlangt die Haupt-Anmeldeadresse** bei XOAUTH2; IMAP nimmt auch Aliasse.
 - **Exchange Online:** keine eigenen IMAP-Schlüsselwörter für Suche (`UNKEYWORD` → BAD), `$Forwarded` wird aber gespeichert.
 - **`ASWebAuthenticationSession` in Erweiterungen:** Verfügbarkeit nicht belegt – deshalb nur in `MailwerkApp.swift` eingebunden.
-- Kims Arbeitsweise (neu bekräftigt): Arbeitszeit ist das Wertvollste – kleine Änderungen nicht einzeln testen und committen, sondern mit dem nächsten größeren Paket zusammen. Immer nur ein Schritt; bei Haltepunkten („merken!“) den Stand festhalten und nicht vorgreifen.
+- Arbeitsweise (neu bekräftigt): Arbeitszeit ist das Wertvollste – kleine Änderungen nicht einzeln testen und committen, sondern mit dem nächsten größeren Paket zusammen. Immer nur ein Schritt; bei Haltepunkten („merken!“) den Stand festhalten und nicht vorgreifen.
 
 ---
 
 ## Gesamtstand des Projekts (Stand 18.10.2026)
 
 ### Produkt
-- **Mailwerk**, Mail-Client in Swift/SwiftUI für iOS/iPadOS und macOS. Repo `github.com/KimSieber/Mailwerk` (public), Branch `main`. Projektordner auf Kims Mac: `/Users/kim/Dropbox/Dev/GitHub/Mailwerk`.
+- **Mailwerk**, Mail-Client in Swift/SwiftUI für iOS/iPadOS und macOS. Repo `github.com/KimSieber/Mailwerk` (public), Branch `main`. Lokaler Projektordner auf dem Entwicklungs-Mac.
 - Version **0.1.18**, **651 Tests**. Ziele: Mailwerk, MailwerkShare (iOS), MailwerkShareMac, MailwerkTests, MailwerkUITests.
-- **Verteilung:** TestFlight (Kim, Kims Frau). „Mailwerk Dev“ per Xcode auf iPhone und Mac. Auf dem Mac ist die produktive App noch nicht installiert.
+- **Verteilung:** TestFlight (zwei Testpersonen). „Mailwerk Dev“ per Xcode auf iPhone und Mac. Auf dem Mac ist die produktive App noch nicht installiert.
 
 ### Funktionsumfang (bis v0.1.18)
 - Unified Inbox mehrerer IMAP/SMTP-Postfächer, Abruf je Postfach ein-/ausschaltbar (je Gerät), Farben je Postfach, Absenderbilder (Kontakte, Favicons).
@@ -271,11 +271,11 @@ Die Microsoft-Anmeldung ist im Simulator nicht möglich (Passkey verlangt QR-Cod
 - Test/Produktion: siehe Abschnitt 6 (Bundle-Suffix `.dev`).
 
 ### Arbeitsregeln (verbindlich, unverändert)
-- Nichts bauen ohne Kims ausdrückliches OK; Inhalt jeder Version vorher mit Leitfragen (einzeln, mit Empfehlung) abstimmen.
+- Nichts bauen ohne ausdrückliche Freigabe; Inhalt jeder Version vorher mit Leitfragen (einzeln, mit Empfehlung) abstimmen.
 - Immer nur einen Schritt bzw. eine Frage; kurz fassen; klare Anweisungen mit genauem Menüpfad.
 - Ursache belegen, nicht raten (Rohdaten, Server-Dialog, Quelltext, Console).
-- Lieferung als ganze Dateien direkt in den Projektordner (frischer Zwischenpfad, Prüfsummen vor und nach dem Ablegen, Tabelle *Datei · Ort · Art*); Git im Projektordner nur lesend; Projekteinstellungen ändert Kim in Xcode nach Anleitung.
-- **Claude committet nie** – Commit-Text mitliefern; Kim committet in Xcode.
+- Lieferung als ganze Dateien direkt in den Projektordner (frischer Zwischenpfad, Prüfsummen vor und nach dem Ablegen, Tabelle *Datei · Ort · Art*); Git im Projektordner nur lesend; Projekteinstellungen werden manuell in Xcode nach Anleitung geändert.
+- **Claude committet nie** – Commit-Text mitliefern; der Commit erfolgt manuell in Xcode.
 - Inline-Doku: Datei-Header (Zweck, Abgrenzung, Abhängigkeiten), DocC je Funktion, Deutsch, keine Versionsverweise.
 - Keine Sonderlösungen für einzelne Anbieter; Gestaltung mit Apple-Bausteinen, eigene Anordnungen als USP erlaubt.
 - Tests dürfen keine Produktivmails verändern – Tests jetzt mit den **Testpostfächern in „Mailwerk Dev“**.
@@ -296,6 +296,6 @@ Die Microsoft-Anmeldung ist im Simulator nicht möglich (Passkey verlangt QR-Cod
 - Sonstiges: Empfangsdatum statt Kopfdatum nur bei Bedarf; Inline-Foto ohne Verweis bei einzelnem HTML-Teil beobachten; Originalquelle > 5 MB nicht möglich; Logo-Breite einfacher Signatur fest 150 pt; Titel-Mindestbreite iPad/Querformat beobachten.
 
 ### Fahrplan
-- **Nächste Version:** mit Kim festlegen. Kandidaten: Fehler-Patch mit Weg B, weitere Funde aus dem produktiven Einsatz über TestFlight.
-- **v0.2.x:** Seitenleiste und Layout für iPad und Mac (Kim hat viele eigene Ideen), Gestaltung der Teilen-Erweiterung auf dem Mac.
+- **Nächste Version:** noch festzulegen. Kandidaten: Fehler-Patch mit Weg B, weitere Funde aus dem produktiven Einsatz über TestFlight.
+- **v0.2.x:** Seitenleiste und Layout für iPad und Mac (viele Ideen vorhanden), Gestaltung der Teilen-Erweiterung auf dem Mac.
 - **Später:** H6, Push/IDLE, N14, Ordner abonnieren, Threading; App-Store-Veröffentlichung (Herausgeber-Verifizierung Microsoft, Datenschutzangaben).

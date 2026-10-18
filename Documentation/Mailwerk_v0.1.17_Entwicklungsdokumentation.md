@@ -6,7 +6,7 @@
 
 ## Zusammenfassung
 
-v0.1.17 ist eine Optimierungsversion. Kim hat jedes Thema einzeln beschrieben. Claude hat es auf Verständnis und offene Punkte geprüft und erst nach Freigabe umgesetzt.
+v0.1.17 ist eine Optimierungsversion. Jedes Thema wurde einzeln beschrieben. Claude hat es auf Verständnis und offene Punkte geprüft und erst nach Freigabe umgesetzt.
 
 **Themen und Ergebnis:**
 
@@ -16,12 +16,12 @@ v0.1.17 ist eine Optimierungsversion. Kim hat jedes Thema einzeln beschrieben. C
 | B | Hintergrundfarbe der App | Umgesetzt (`3baffd5`) |
 | C+D | Sammelansichten „Ungelesen“ (mit Zähler) und „Spam“ (ohne Zähler) | Umgesetzt (`9f1de56`, enthält C1 und C2) |
 | E | Betreff markierbar, Adressen im Mailkopf mit Menü wie Apple Mail | Umgesetzt (`dc1104e`) |
-| – | Mails als Markdown exportieren | **Von Kim verworfen** |
+| – | Mails als Markdown exportieren | **Verworfen** |
 | F | Untere Leiste größer, Liquid Glass, großer blauer Suchkreis in der Mitte | Umgesetzt (`0e07ca8`) |
 | G | Rückgängig-Balken mit 5 Sekunden ablaufender Füllung | Umgesetzt (`0e07ca8`) |
 | H | White-/Blacklist-Einträge bearbeiten | Umgesetzt (`ff345f0`) |
 
-**Grundsatzentscheidung (Kim):** Für F und G weicht Mailwerk bewusst vom Apple-Standard ab. Die eigene untere Leiste ist als **USP** gewollt. Gebaut wird weiter mit Systembausteinen (Liquid Glass, `glassEffect`, `glassProminent`), aber in eigener Anordnung. Die Regel „keine Eigenbauten“ gilt damit für die Gestaltung nicht mehr absolut.
+**Grundsatzentscheidung:** Für F und G weicht Mailwerk bewusst vom Apple-Standard ab. Die eigene untere Leiste ist als **USP** gewollt. Gebaut wird weiter mit Systembausteinen (Liquid Glass, `glassEffect`, `glassProminent`), aber in eigener Anordnung. Die Regel „keine Eigenbauten“ gilt damit für die Gestaltung nicht mehr absolut.
 
 Tests: 584 → **606** (22 neue), alle grün. `MARKETING_VERSION` 0.1.17 in allen drei Zielen.
 
@@ -121,7 +121,7 @@ Zwischenfund: Auf dem Mac ließen sich Mails nicht mehr öffnen. Die Ursache war
 
 ## Mac-Fund: Mails ließen sich nicht öffnen
 
-**Fund (Kim, erster Mac-Test der Version):** Ein Klick auf eine Mail baute die Ansicht auf und schloss sie sofort wieder. Das Protokoll zeigte „⏱ Mail geöffnet“, auf dem Bildschirm erschien nichts. Simulator unauffällig.
+**Fund (erster Mac-Test der Version):** Ein Klick auf eine Mail baute die Ansicht auf und schloss sie sofort wieder. Das Protokoll zeigte „⏱ Mail geöffnet“, auf dem Bildschirm erschien nichts. Simulator unauffällig.
 
 **Analyse:**
 - Vermutung „Kartenhintergrund (`listRowBackground`) stört die Auswahl auf dem Mac“: mit Mac-Variante ohne diesen Hintergrund geprüft – **widerlegt**, zurückgenommen.
@@ -129,7 +129,7 @@ Zwischenfund: Auf dem Mac ließen sich Mails nicht mehr öffnen. Die Ursache war
 - Vermutung „das Gelesen-Markieren lädt die Liste neu“: ungelesene und gelesene Mail verhielten sich gleich – **widerlegt**.
 - Konsole: `XPCConnectionTerminationWatchdog` – der Web-Prozess der Mailansicht wurde vom System beendet.
 
-**Ursache und Lösung:** Kim hat macOS 26.4 → **27.0.1** und Xcode → **27.1** aktualisiert. Danach öffneten sich die Mails wieder. Ursache war die Umgebung (veraltetes Xcode zum System bzw. WebKit), kein Code. Nichts zurückgebaut.
+**Ursache und Lösung:** Nach Aktualisierung von macOS 26.4 → **27.0.1** und Xcode → **27.1** öffneten sich die Mails wieder. Ursache war die Umgebung (veraltetes Xcode zum System bzw. WebKit), kein Code. Nichts zurückgebaut.
 
 **Lehren:**
 - Ein ausgecheckter Stand **vor Schema-Stufe 7** (z. B. v0.1.15) liest den Cache nicht mehr – keine Mails. Für Rückblicke nur Stände ab v0.1.16 nehmen.
@@ -185,7 +185,7 @@ Zwischenfund: Auf dem Mac ließen sich Mails nicht mehr öffnen. Die Ursache war
 
 | Frage | Entscheidung |
 |---|---|
-| Auslöser | **Langes Drücken** → Kontextmenü „Bearbeiten“ / „Löschen“. **Kurzes Antippen bearbeitet nicht** (Kim: zu leicht versehentlich). |
+| Auslöser | **Langes Drücken** → Kontextmenü „Bearbeiten“ / „Löschen“. **Kurzes Antippen bearbeitet nicht** (zu leicht versehentlich). |
 | Bearbeiten | Rückfrage mit Eingabefeld, vorbelegt; Prüfung wie beim Anlegen, auch gegen die **andere** Liste |
 | Neuer Eintrag | Knopf **„Neuer Eintrag …“** als erste Zeile mit derselben Rückfrage; das feste Eingabefeld entfällt |
 | Löschen | Wischen bleibt, jetzt **mit Bestätigung**; ebenso über das Kontextmenü |
@@ -272,7 +272,7 @@ MailwerkTests/
 
 ## Beobachtungen
 
-- **Suchfeld oben:** Kim hätte es lieber unten. Unten setzt iOS 26 neben der eigenen Leiste einen zweiten Suchknopf ein. Die Bedienung bleibt einhändig (Suchkreis und Tastatur unten). Vorerst so belassen.
+- **Suchfeld oben:** Gewünscht wäre es unten. Unten setzt iOS 26 neben der eigenen Leiste einen zweiten Suchknopf ein. Die Bedienung bleibt einhändig (Suchkreis und Tastatur unten). Vorerst so belassen.
 - **Ältere Ungelesene werden vollständig geladen** (nicht nur Kopfdaten), höchstens 200 je Abruf. Ein Postfach mit sehr vielen alten Ungelesenen füllt sich über mehrere Abrufe.
 - **Xcode schreibt Info.plist neu** (Anführungszeichen als `&quot;`) – unbedenklich.
 - **Warnungen** zur isolierten `Hashable`-Konformität von `FilterListInputEntry` (unter Linux gesehen) bestanden schon vorher.

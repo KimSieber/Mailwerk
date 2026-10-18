@@ -6,9 +6,9 @@
 
 ## Zusammenfassung
 
-Kims Wunsch: Bilder, Dokumente und andere Inhalte (bei Apple üblich, z. B. Kontakte) über „Teilen mit …“ an Mailwerk übergeben. Sie sollen als Anlage in einer neuen Mail landen, wie in anderen Mailprogrammen.
+Anforderung: Bilder, Dokumente und andere Inhalte (bei Apple üblich, z. B. Kontakte) über „Teilen mit …“ an Mailwerk übergeben. Sie sollen als Anlage in einer neuen Mail landen, wie in anderen Mailprogrammen.
 
-**Entscheidungen (mit Kim abgestimmt):**
+**Entscheidungen (abgestimmt):**
 
 | Frage | Entscheidung |
 |---|---|
@@ -22,7 +22,7 @@ Kims Wunsch: Bilder, Dokumente und andere Inhalte (bei Apple üblich, z. B. Kont
 
 | Paket | Inhalt | Commit |
 |---|---|---|
-| **a+b** | Grundlage (App Group, Abschrift) und Erweiterung für iPhone/iPad. Auf Kims Wunsch zusammen mit einem Testdurchlauf. | `47bd2f8` |
+| **a+b** | Grundlage (App Group, Abschrift) und Erweiterung für iPhone/iPad. Auf Wunsch zusammen mit einem Testdurchlauf. | `47bd2f8` |
 | **c** | Erweiterung für den Mac, dazu zwei Korrekturen aus dem Mac-Test, die auch iOS betreffen (Dateiverweise, Datei vor Text) | (folgt) |
 
 Tests: 540 → **551** (11 neue), alle grün. `MARKETING_VERSION` 0.1.15 für App und beide Erweiterungen.
