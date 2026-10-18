@@ -25,7 +25,7 @@ Tests: 651 → **698** Testfunktionen (`@Test`, 47 neu), alle grün. `MARKETING_
 
 ## 1. MW-39: App-Icon in App Store Connect
 
-**Symptom:** In der App-Übersicht von App Store Connect stand Mailwerk ohne Icon (Platzhalter-Raster), MySmartGarden und GymGuard mit Icon.
+**Symptom:** In der App-Übersicht von App Store Connect stand Mailwerk ohne Icon (Platzhalter-Raster), andere eigene Projekte mit Icon.
 
 **Prüfung Repo:** Icon korrekt eingerichtet – `AppIcon.appiconset` mit 1024×1024 für iOS (deckend) und allen Mac-Größen, `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon`. Im Dialog „Build hinzufügen“ zeigten die Builds das Icon bereits.
 
