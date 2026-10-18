@@ -45,7 +45,7 @@ Die Auswahl unter *Einstellungen → Apps → Standard-Apps → E-Mail* verlangt
 - Bedingungen: `mailto:` in der Info.plist; Senden an jeden gültigen Empfänger; beim Aufruf eines `mailto:`-Links ein Verfassen-Fenster mit vorbelegtem Empfänger; Empfang von jedem Absender (vom Nutzer gesteuerte Filter erlaubt – der Spamfilter ist zulässig).
 - Gilt für iOS/iPadOS je App-ID (`de.sieber-bw.Mailwerk`, nicht `.dev`). Auf dem Mac keine Berechtigung nötig – Auswahl in Apple Mail → Einstellungen → Allgemein → Standard-E-Mail-Programm (im Finder-Dialog erscheint die Dev-Version als „Mailwerk.app“).
 
-**Antrag:** von Kim nach erfolgreichem Test gestellt. Dafür ein eigenes Test-Postfach (50 MB, ohne Portalrechte) angelegt; es wird nach Apples finaler Antwort gelöscht. Nach der Freigabe muss die Capability „Default Mail App“ an der App-ID eingerichtet und ein neuer Build hochgeladen werden.
+**Antrag:** nach erfolgreichem Test gestellt. Dafür ein eigenes Test-Postfach (50 MB, ohne Portalrechte) angelegt; es wird nach Apples finaler Antwort gelöscht. Nach der Freigabe muss die Capability „Default Mail App“ an der App-ID eingerichtet und ein neuer Build hochgeladen werden.
 
 ### Entscheidungen
 
@@ -111,7 +111,7 @@ Die Auswahl unter *Einstellungen → Apps → Standard-Apps → E-Mail* verlangt
 
 ## 4. MW-30: Spam-Einschätzung anzeigen – mit Regeländerungen
 
-### Befund: Spam-Kopfzeilen der Anbieter (Kims Stichprobe über „Originalquelle“)
+### Befund: Spam-Kopfzeilen der Anbieter (Stichprobe über „Originalquelle“)
 
 | Anbieter | Kopfzeile | Score |
 |---|---|---|
@@ -128,7 +128,7 @@ Die Auswahl unter *Einstellungen → Apps → Standard-Apps → E-Mail* verlangt
 | Frage | Entscheidung |
 |---|---|
 | `X-Spam-Flag` | wird ausgewertet, gleichwertig zu `X-Spam` / `X-Spam-Status`: Spam, wenn irgendeine dieser Zeilen mit „Yes“ beginnt; ohne Groß-/Kleinschreibung, Leerzeichen um Wert und `score=` egal |
-| **Whitelist gegen Server** | **Whitelist schlägt die Server-Einstufung immer**, auch „Yes“ ohne Score (Anlass: GMX/web.de markieren Kims Ordinum-Mails als Spam). Nur ein **gelieferter** Score **bei oder über** der Obergrenze übersteuert die Whitelist (Schutz gegen gefälschte Absender) |
+| **Whitelist gegen Server** | **Whitelist schlägt die Server-Einstufung immer**, auch „Yes“ ohne Score (Anlass: GMX/web.de markieren Mails von einer eigenen Domain als Spam). Nur ein **gelieferter** Score **bei oder über** der Obergrenze übersteuert die Whitelist (Schutz gegen gefälschte Absender) |
 | Neubewertung | nur neu eintreffende Mails; keine Neubewertung bei Regeländerungen |
 | Anzeige Liste | nur `[SPAM]`, klein und grau **nach den Symbolen** (Kennzeichnung/Anhang bleiben an fester Stelle), Datum rechts unverändert, nie gekürzt |
 | Anzeige Mailansicht | rechtsbündig in der Datumszeile (Datum links) |
@@ -146,7 +146,7 @@ Anzeigeregel:
 
 `[NoSpam]` erscheint bei **jedem** Whitelist-Treffer, der die Mail behält – auch bei Gmail und bei Mails ohne gespeicherten Befund (Serversuche). „NoSpam“ in gemischter Schreibweise wirkt bewusst nicht wie eine Warnung. Ein Score über der Obergrenze ergibt `[SPAM score=…]`, nicht `[NoSpam]`.
 
-Verlauf: Zunächst stand der Score auch in der Liste (`[score=2.1]`) – von Kim nach dem Test zurückgenommen („nur für den Spezialisten“); Mailansicht um „NoSpam“ ergänzt, damit der Score erkennbar zur Spam-Prüfung gehört.
+Verlauf: Zunächst stand der Score auch in der Liste (`[score=2.1]`) – nach dem Test zurückgenommen („nur für den Spezialisten“); Mailansicht um „NoSpam“ ergänzt, damit der Score erkennbar zur Spam-Prüfung gehört.
 
 ### Umsetzung
 
@@ -163,7 +163,7 @@ Verlauf: Zunächst stand der Score auch in der Liste (`[score=2.1]`) – von Kim
 
 ## 5. MW-27 verworfen: eigene Score-Schwelle
 
-**Kims Idee:** eigene Schwelle in der App, unabhängig von der Server-Einstufung – Steuerung server- und anbieterübergreifend in die App holen.
+**Idee:** eigene Schwelle in der App, unabhängig von der Server-Einstufung – Steuerung server- und anbieterübergreifend in die App holen.
 
 **Bewertung (gemeinsam):**
 - Ein Score kommt praktisch nur von manitu (fremde Absender). GMX/web.de liefern nur YES/NO, Gmail nichts, Outlook nichts Eindeutiges.
@@ -196,7 +196,7 @@ Nur Posteingang, nur noch nicht geprüfte Mails, Filter eingeschaltet:
 - `MessageStore`, `MailFetchService` (Doku), `CachedMessage` (Doku)
 - `InboxViewModel`, `InboxView`, `MessageRow`, `MessageDetailView`, `MessageDetailHeader`, `MessageMenu`, `MessageActionDialogs`, `FilterListView`, `AccountListView`
 - Tests: `FilterAddressTests`, `FilterListExporterTests`, `FilterListInputTests`, `MessageMenuTests`, `SpamClassifierTests`, `SpamHeaderParserTests`
-- Projekt (Kim in Xcode): `MARKETING_VERSION` 0.1.19 in Mailwerk und MailwerkShareMac
+- Projekt (manuell in Xcode): `MARKETING_VERSION` 0.1.19 in Mailwerk und MailwerkShareMac
 
 ---
 
@@ -213,9 +213,9 @@ Nur Posteingang, nur noch nicht geprüfte Mails, Filter eingeschaltet:
 ## Gesamtstand des Projekts (Stand 18.10.2026)
 
 ### Produkt
-- **Mailwerk**, Mail-Client in Swift/SwiftUI für iOS/iPadOS und macOS. Repo `github.com/KimSieber/Mailwerk` (public), Branch `main`. Projektordner auf Kims Mac: `/Users/kim/Dropbox/Dev/GitHub/Mailwerk`.
+- **Mailwerk**, Mail-Client in Swift/SwiftUI für iOS/iPadOS und macOS. Repo `github.com/KimSieber/Mailwerk` (public), Branch `main`. Lokaler Projektordner auf dem Entwicklungs-Mac.
 - Version **0.1.19**, **698 Testfunktionen**. Ziele: Mailwerk, MailwerkShare (iOS), MailwerkShareMac, MailwerkTests, MailwerkUITests.
-- **Verteilung:** TestFlight (Kim, Kims Frau), ab 0.1.19 mit „App Store Connect“ hochgeladen. „Mailwerk Dev“ per Xcode auf iPhone und Mac. Auf dem Mac ist die produktive App noch nicht installiert.
+- **Verteilung:** TestFlight (zwei Testpersonen), ab 0.1.19 mit „App Store Connect“ hochgeladen. „Mailwerk Dev“ per Xcode auf iPhone und Mac. Auf dem Mac ist die produktive App noch nicht installiert.
 
 ### Funktionsumfang (bis v0.1.19)
 - Unified Inbox mehrerer IMAP/SMTP-Postfächer, Abruf je Postfach ein-/ausschaltbar (je Gerät), Farben je Postfach, Absenderbilder (Kontakte, Favicons).
@@ -235,11 +235,11 @@ Nur Posteingang, nur noch nicht geprüfte Mails, Filter eingeschaltet:
 - Test/Produktion: Bundle-Suffix `.dev` für „Mailwerk Dev“ (eigene App-Gruppe, eigener Key-Value-Speicher, CloudKit Development).
 
 ### Arbeitsregeln (verbindlich, unverändert)
-- Nichts bauen ohne Kims ausdrückliches OK; Inhalt jeder Version vorher mit Leitfragen (einzeln, mit Empfehlung) abstimmen.
+- Nichts bauen ohne ausdrückliche Freigabe; Inhalt jeder Version vorher mit Leitfragen (einzeln, mit Empfehlung) abstimmen.
 - Immer nur einen Schritt bzw. eine Frage; kurz fassen; klare Anweisungen mit genauem Menüpfad.
 - Ursache belegen, nicht raten (Rohdaten, Server-Dialog, Quelltext, Console).
-- Lieferung als ganze Dateien direkt in den Projektordner (frischer Zwischenpfad, Prüfsummen vor und nach dem Ablegen, Tabelle *Datei · Ort · Art*); Git im Projektordner nur lesend; Projekteinstellungen ändert Kim in Xcode nach Anleitung.
-- **Claude committet nie** – Commit-Text mitliefern; Kim committet in Xcode.
+- Lieferung als ganze Dateien direkt in den Projektordner (frischer Zwischenpfad, Prüfsummen vor und nach dem Ablegen, Tabelle *Datei · Ort · Art*); Git im Projektordner nur lesend; Projekteinstellungen werden manuell in Xcode nach Anleitung geändert.
+- **Claude committet nie** – Commit-Text mitliefern; der Commit erfolgt manuell in Xcode.
 - Inline-Doku: Datei-Header (Zweck, Abgrenzung, Abhängigkeiten), DocC je Funktion, Deutsch, keine Versionsverweise.
 - Keine Sonderlösungen für einzelne Anbieter; Gestaltung mit Apple-Bausteinen, eigene Anordnungen als USP erlaubt.
 - Tests dürfen keine Produktivmails verändern – Tests mit den Testpostfächern in „Mailwerk Dev“.
@@ -263,6 +263,6 @@ Nur Posteingang, nur noch nicht geprüfte Mails, Filter eingeschaltet:
 - Sonstiges: Empfangsdatum statt Kopfdatum nur bei Bedarf; Inline-Foto ohne Verweis bei einzelnem HTML-Teil beobachten; Originalquelle > 5 MB nicht möglich; Logo-Breite einfacher Signatur fest 150 pt; Titel-Mindestbreite iPad/Querformat beobachten.
 
 ### Fahrplan
-- **Nächste Version (v0.1.20):** Rest aus „Spam und Optik“ – **MW-31** (Icon aus der Liste auch in der Mailansicht), **MW-33** (App-Icon: Hintergrund Nebelblau, Test Briefumschlag in Button-Blau), **MW-34** (App-Icon Dunkelmodus); weitere Punkte mit Kim festlegen.
-- **v0.2.x:** Seitenleiste und Layout für iPad und Mac (Kim hat viele eigene Ideen), Gestaltung der Teilen-Erweiterung auf dem Mac.
+- **Nächste Version (v0.1.20):** Rest aus „Spam und Optik“ – **MW-31** (Icon aus der Liste auch in der Mailansicht), **MW-33** (App-Icon: Hintergrund Nebelblau, Test Briefumschlag in Button-Blau), **MW-34** (App-Icon Dunkelmodus); weitere Punkte noch festzulegen.
+- **v0.2.x:** Seitenleiste und Layout für iPad und Mac (viele Ideen vorhanden), Gestaltung der Teilen-Erweiterung auf dem Mac.
 - **Später:** H6, Push/IDLE, N14, Ordner abonnieren, Threading; App-Store-Veröffentlichung (Default Mail App, Herausgeber-Verifizierung Microsoft, Datenschutzangaben).
