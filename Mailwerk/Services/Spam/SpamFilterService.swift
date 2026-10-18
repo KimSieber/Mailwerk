@@ -40,7 +40,7 @@
 //
 //  Abhängigkeiten: SwiftMail (IMAP), MailSession (Verbindung und
 //  Zugangsdaten), AccountStore, FilterListRepository, SpamFilterPlanner,
-//  SpamFolderResolver, SpamHeaderParser, SpamClassifier, FilterAddress,
+//  SpamFolderResolver, SpamHeaderParser, SpamClassifier, SpamMark, FilterAddress,
 //  MailActionService (Ordnerliste, Ordner anlegen), MessageStore (Cache
 //  nachziehen, schon gecachte Mails), SyncWindow (Zeitraum), MailFolder
 //  (Posteingang), KeywordSupport, Log.
@@ -375,6 +375,32 @@ final class SpamFilterService {
         } catch {
             Log.spam.error("⚠️ Filterlisten für externe Inhalte nicht lesbar: \(error.localizedDescription, privacy: .public)")
             return false
+        }
+    }
+
+    /// Text zur Spam-Einschätzung einer Mail für die Mailansicht.
+    ///
+    /// Verarbeitung: Liest die aktuellen Listen und bildet den ausführlichen
+    /// Text mit Score bzw. `[NoSpam]` (SpamMark, Darstellung `.detail`).
+    /// Lassen sich die Listen nicht lesen, erscheint nichts.
+    ///
+    /// - Parameters:
+    ///   - message: Angezeigte Mail.
+    ///   - scoreLimit: Score-Obergrenze aus den Spam-Einstellungen.
+    /// - Returns: Anzeigetext oder `nil`.
+    func spamMark(of message: CachedMessage, scoreLimit: Double) async -> String? {
+        do {
+            let lists = try await filterLists.lists()
+            return SpamMark.text(
+                sender: FilterAddress.sender(fromHeader: message.from),
+                verdict: message.headers.spamVerdict,
+                lists: lists,
+                scoreLimit: scoreLimit,
+                style: .detail
+            )
+        } catch {
+            Log.spam.error("⚠️ Filterlisten für die Spam-Einschätzung nicht lesbar: \(error.localizedDescription, privacy: .public)")
+            return nil
         }
     }
 

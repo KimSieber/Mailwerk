@@ -4,7 +4,8 @@
 //
 //  Zweck: Eine Zeile der Mailliste in drei Zeilen:
 //  1. Kennzeichen (beantwortet, weitergeleitet, gekennzeichnet, Anhang)
-//     links, Datum rechts – klein und grau;
+//     links, dahinter bei Spam `[SPAM]` (ohne Score, SpamMark), Datum
+//     rechts – klein und grau; das Datum wird nie gekürzt;
 //  2. Name fett (bei ungelesenen Mails), dahinter die Adresse klein und
 //     grau; gekürzt wird zuerst die Adresse;
 //  3. Betreff.
@@ -39,6 +40,8 @@ struct MessageRow: View {
     let logoImage: Image?
     /// Farbe des Postfachs; `nil` = keine Farbe gewählt.
     let colorHex: String?
+    /// Text zur Spam-Einschätzung (`[SPAM]`); `nil` = keiner.
+    var spamMark: String? = nil
 
     /// Breite des Streifens bei gelesenen Mails.
     static let readStripeWidth: CGFloat = 4
@@ -87,7 +90,7 @@ struct MessageRow: View {
         return .initials(party.initials, colorIndex: party.colorIndex)
     }
 
-    /// Zeile 1: Kennzeichen links, Datum rechts.
+    /// Zeile 1: Kennzeichen und Spam-Einschätzung links, Datum rechts.
     private var statusLine: some View {
         HStack(spacing: 6) {
             if message.isAnswered {
@@ -110,6 +113,14 @@ struct MessageRow: View {
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Mit Anhang")
             }
+            // Spam-Einschätzung nach den Symbolen, damit diese an fester
+            // Stelle bleiben; das Datum hat Vorrang und wird nie gekürzt.
+            if let spamMark {
+                Text(spamMark)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .accessibilityLabel("Spam-Einschätzung \(spamMark)")
+            }
             Spacer(minLength: 8)
             // Ohne Datum bleibt die Stelle leer – die aktuelle Zeit
             // würde ein falsches Datum vortäuschen.
@@ -117,6 +128,7 @@ struct MessageRow: View {
                 Text(ListDateFormatter.string(for: date))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .layoutPriority(1)
             }
         }
         .font(.caption)

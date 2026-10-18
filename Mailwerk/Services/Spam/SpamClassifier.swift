@@ -14,10 +14,11 @@
 //  genaueste Eintrag gewinnt – exakte Adresse vor Domain, eine Subdomain
 //  vor ihrer übergeordneten Domain (`news.firma.de` vor `firma.de`), auf
 //  jeder Stufe Whitelist vor Blacklist. Ein Domain-Eintrag gilt samt
-//  Subdomains (FilterDomain). Ein
-//  Whitelist-Treffer schützt nur unterhalb der Score-Obergrenze – Schutz
-//  gegen gefälschte `From`-Adressen. So gilt für Spamfilter und Anzeige
-//  dieselbe Regel, und sie steht nur an einer Stelle.
+//  Subdomains (FilterDomain). Ein Whitelist-Treffer behält die Mail
+//  unabhängig von der Einstufung des Servers – Server liegen oft falsch.
+//  Einzige Ausnahme: ein gelieferter Score bei oder über der Obergrenze –
+//  Schutz gegen gefälschte `From`-Adressen. So gilt für Spamfilter und
+//  Anzeige dieselbe Regel, und sie steht nur an einer Stelle.
 //
 //  Reine Logik ohne IMAP und ohne Speicherort der Listen, vollständig per
 //  Unit-Test abgedeckt. `nonisolated`, weil der Filterlauf außerhalb des
@@ -85,9 +86,10 @@ nonisolated enum SpamClassifier {
     /// 3. Server-Einstufung Spam → Spam
     /// 4. sonst behalten
     ///
-    /// \* Eine vom Server als Spam markierte Mail wird trotz Whitelist-Treffer
-    /// nur behalten, wenn ihr Score **unter** `scoreLimit` liegt. Ohne lesbaren
-    /// Score gilt er als unendlich. Schutz gegen gefälschte `From`-Adressen.
+    /// \* Ein Whitelist-Treffer behält die Mail unabhängig von der
+    /// Einstufung des Servers, auch bei „Yes“ ohne Score. Nur ein
+    /// gelieferter Score **bei oder über** `scoreLimit` übersteuert ihn –
+    /// Schutz gegen gefälschte `From`-Adressen.
     ///
     /// - Parameters:
     ///   - sender: Absender; `nil`, wenn er sich nicht auswerten lässt.
@@ -115,9 +117,10 @@ nonisolated enum SpamClassifier {
     ///
     /// Verarbeitung: Vertrauenswürdig ist ein Absender nur, wenn sein
     /// spezifischster Listentreffer die Whitelist ist (Adresse vor Domain,
-    /// eine Blacklist-Adresse schlägt also eine Whitelist-Domain) und die
-    /// Score-Obergrenze denselben Schutz gewährt wie im Spamfilter. Ist die
-    /// Einstufung des Servers unbekannt, wird nicht vertraut.
+    /// eine Blacklist-Adresse schlägt also eine Whitelist-Domain) und kein
+    /// gelieferter Score die Obergrenze erreicht – dieselbe Regel wie im
+    /// Spamfilter. Ist der Befund des Servers unbekannt (nicht gespeichert),
+    /// wird nicht vertraut.
     ///
     /// - Parameters:
     ///   - sender: Absender; `nil`, wenn er sich nicht auswerten lässt.
@@ -162,6 +165,21 @@ nonisolated enum SpamClassifier {
         return classify(sender: sender, verdict: verdict, lists: lists, scoreLimit: scoreLimit) == .keep
     }
 
+    /// Prüft, ob der spezifischste Listentreffer eines Absenders die
+    /// Whitelist ist.
+    ///
+    /// Verarbeitung: Derselbe Abgleich wie bei allen Entscheidungen
+    /// (`listMatch`) – eine Blacklist-Adresse schlägt also eine
+    /// Whitelist-Domain. Die Score-Obergrenze spielt hier keine Rolle.
+    ///
+    /// - Parameters:
+    ///   - sender: Absender.
+    ///   - lists: Black- und Whitelist.
+    /// - Returns: `true` bei einem Whitelist-Treffer.
+    static func isWhitelisted(_ sender: FilterAddress, in lists: FilterLists) -> Bool {
+        listMatch(for: sender, in: lists) == .white
+    }
+
     /// Sucht den spezifischsten Listentreffer eines Absenders.
     ///
     /// Verarbeitung: Zuerst die exakte Adresse (Whitelist, dann Blacklist),
@@ -183,16 +201,16 @@ nonisolated enum SpamClassifier {
         return nil
     }
 
-    /// Ein Whitelist-Treffer schützt nur unterhalb der Score-Obergrenze.
-    /// Ohne lesbaren Score gilt die Mail als hoch bewertet (konservativ).
+    /// Ein Whitelist-Treffer schützt, solange kein gelieferter Score die
+    /// Obergrenze erreicht. Die Einstufung „Yes“/„No“ des Servers spielt
+    /// keine Rolle; ohne Score schützt der Treffer immer.
     ///
     /// - Parameters:
     ///   - verdict: Einstufung des Servers.
     ///   - scoreLimit: Score-Obergrenze.
     /// - Returns: `.keep`, wenn der Treffer schützt, sonst `.junkServer`.
     private static func whitelisted(_ verdict: SpamHeaderVerdict, _ scoreLimit: Double) -> SpamDecision {
-        guard verdict.isSpam else { return .keep }
-        let score = verdict.score ?? .infinity
+        guard let score = verdict.score else { return .keep }
         return score < scoreLimit ? .keep : .junkServer
     }
 }

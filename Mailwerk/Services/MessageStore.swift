@@ -134,7 +134,8 @@ final class MessageStore: @unchecked Sendable {
     /// Version der gespeicherten Kopfdaten (Adressen, Threading,
     /// Spam-Angabe). Nachrichten mit kleinerer Version werden beim nächsten
     /// Abruf ihres Ordners nachgefüllt, ohne sie neu zu laden.
-    static let currentHeadersVersion = 2
+    /// Version 3: Spam-Angabe berücksichtigt auch `X-Spam-Flag`.
+    static let currentHeadersVersion = 3
 
     /// Schema-Version, die diese App-Version erwartet. Wird nach den
     /// Migrationen in `PRAGMA user_version` geschrieben.

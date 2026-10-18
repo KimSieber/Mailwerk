@@ -142,7 +142,42 @@ struct SpamHeaderParserTests {
     /// Andere X-Spam-Header werden ignoriert.
     @Test("Andere X-Spam-Header werden ignoriert")
     func otherSpamHeadersIgnored() {
-        #expect(parse([("X-Spam-Flag", "YES"), ("X-Spam-Level", "*****"),
+        #expect(parse([("X-Spam-Level", "*****"),
                        ("X-Spam-Status-Extra", "Yes, score=99")]) == .clean)
+    }
+
+    // MARK: - X-Spam-Flag
+
+    /// X-Spam-Flag zählt wie X-Spam, in jeder Schreibweise und mit Leerzeichen.
+    @Test("X-Spam-Flag: YES ist Spam", arguments: ["YES", "Yes", "yes", " YES", "  yes  "])
+    func spamFlagYes(value: String) {
+        let verdict = parse([("X-Spam-Flag", value)])
+        #expect(verdict.isSpam)
+        #expect(verdict.score == nil)
+    }
+
+    /// X-Spam-Flag: NO ist kein Spam.
+    @Test("X-Spam-Flag: NO ist kein Spam", arguments: ["NO", "No", "no", "  NO "])
+    func spamFlagNo(value: String) {
+        #expect(!parse([("X-Spam-Flag", value)]).isSpam)
+    }
+
+    /// Der Name X-Spam-Flag wird ohne Groß-/Kleinschreibung erkannt.
+    @Test("Der Name X-Spam-Flag wird ohne Groß-/Kleinschreibung erkannt")
+    func spamFlagNameCaseInsensitive() {
+        #expect(parse([("x-spam-flag", "YES")]).isSpam)
+        #expect(parse([("X-SPAM-FLAG", "yes")]).isSpam)
+    }
+
+    /// Leerzeichen um score= werden ignoriert.
+    @Test("Leerzeichen um score= werden ignoriert")
+    func scoreWithSpaces() {
+        #expect(parse([("X-Spam-Status", "Yes,  score = 7.25")]).score == 7.25)
+    }
+
+    /// X-Spam-Flag wird beim Abruf mitgeladen.
+    @Test("X-Spam-Flag wird beim Abruf mitgeladen")
+    func fieldNamesContainSpamFlag() {
+        #expect(SpamHeaderParser.fieldNames.contains("X-Spam-Flag"))
     }
 }

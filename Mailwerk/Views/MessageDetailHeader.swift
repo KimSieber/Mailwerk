@@ -3,8 +3,9 @@
 //  Mailwerk
 //
 //  Zweck: Kopfbereich der Mailansicht – Betreff mit Kennzeichen, Absender,
-//  Empfänger, Kopie, „Antwort an“ und Datum – sowie der schmale Hinweis
-//  „Externe Inhalte blockiert“ mit dem Knopf „Laden“.
+//  Empfänger, Kopie, „Antwort an“ und Datum (rechts daneben die
+//  Spam-Einschätzung, z. B. `[SPAM score=7.2]` oder `[NoSpam]`) – sowie der
+//  schmale Hinweis „Externe Inhalte blockiert“ mit dem Knopf „Laden“.
 //
 //  Betreff: lässt sich markieren (Mac) bzw. per langem Drücken kopieren
 //  (iPhone/iPad).
@@ -25,7 +26,8 @@
 //  Adressen → HeaderPerson.
 //
 //  Abhängigkeiten: SwiftUI, UIKit (iOS) bzw. AppKit (macOS) für die
-//  Zwischenablage, CachedMessage, HeaderPerson, FlowLayout.
+//  Zwischenablage, CachedMessage, HeaderPerson, FlowLayout (Text der
+//  Spam-Einschätzung kommt fertig von MessageDetailView/SpamMark).
 //
 
 import SwiftUI
@@ -49,6 +51,8 @@ struct MessageDetailHeader: View {
     var onContactCard: (HeaderPerson) -> Void = { _ in }
     /// „Suchen nach …“ aus dem Menü einer Person; `nil` = Eintrag entfällt.
     var onSearch: ((HeaderPerson) -> Void)?
+    /// Text zur Spam-Einschätzung; `nil` = keiner.
+    var spamMark: String? = nil
 
     /// Betreff, Kennzeichnung, Personen und Datum.
     var body: some View {
@@ -69,10 +73,21 @@ struct MessageDetailHeader: View {
                 peopleRow("Kopie", HeaderPerson.list(message.headers.ccList))
                 peopleRow("Antwort an", HeaderPerson.replyTo(message.headers.replyToList, sender: message.from))
             }
-            if let date = message.date {
-                Text(date, format: .dateTime.weekday(.abbreviated).day(.twoDigits).month(.twoDigits).year().hour(.defaultDigits(amPM: .omitted)).minute(.twoDigits))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            if message.date != nil || spamMark != nil {
+                // Datum links, Spam-Einschätzung rechtsbündig.
+                HStack {
+                    if let date = message.date {
+                        Text(date, format: .dateTime.weekday(.abbreviated).day(.twoDigits).month(.twoDigits).year().hour(.defaultDigits(amPM: .omitted)).minute(.twoDigits))
+                    }
+                    Spacer(minLength: 8)
+                    if let spamMark {
+                        Text(spamMark)
+                            .lineLimit(1)
+                            .accessibilityLabel("Spam-Einschätzung \(spamMark)")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
         }
     }

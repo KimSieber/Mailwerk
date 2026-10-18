@@ -2,9 +2,11 @@
 //  SpamHeaderParser.swift
 //  Mailwerk
 //
-//  Zweck: Liest die Spam-Einstufung des Servers (rspamd bei manitu) aus
-//  den Headern `X-Spam` und `X-Spam-Status`. Reine Logik ohne IMAP,
-//  vollständig per Unit-Test abgedeckt.
+//  Zweck: Liest die Spam-Einstufung des Servers aus den Headern `X-Spam`,
+//  `X-Spam-Flag` (z. B. GMX, web.de) und `X-Spam-Status` (z. B. rspamd bei
+//  manitu, mit Score). Groß-/Kleinschreibung und Leerzeichen um den Wert
+//  spielen keine Rolle. Reine Logik ohne IMAP, vollständig per Unit-Test
+//  abgedeckt.
 //
 //  Genutzt an zwei Stellen: im Spamfilter-Lauf (Entscheidung behalten
 //  oder nach Spam) und beim Abruf, der die Einstufung je Mail im Cache
@@ -45,10 +47,10 @@ nonisolated enum SpamHeaderParser {
 
     /// Header, die beim Filterlauf und beim Abruf per
     /// `BODY.PEEK[HEADER.FIELDS (…)]` geladen werden.
-    static let fieldNames = ["X-Spam", "X-Spam-Status"]
+    static let fieldNames = ["X-Spam", "X-Spam-Flag", "X-Spam-Status"]
 
-    /// Name der Kopfzeile `X-Spam` in Kleinschreibung.
-    private static let spamHeader = "x-spam"
+    /// Kopfzeilen, die nur „Yes“/„No“ tragen, in Kleinschreibung.
+    private static let flagHeaders: Set<String> = ["x-spam", "x-spam-flag"]
     /// Name der Kopfzeile `X-Spam-Status` in Kleinschreibung.
     private static let statusHeader = "x-spam-status"
 
@@ -61,11 +63,12 @@ nonisolated enum SpamHeaderParser {
         options: [.caseInsensitive]
     )
 
-    /// Wertet ausschließlich `X-Spam` und `X-Spam-Status` aus, nie den Betreff.
+    /// Wertet ausschließlich `X-Spam`, `X-Spam-Flag` und `X-Spam-Status`
+    /// aus, nie den Betreff.
     ///
     /// Verarbeitung:
-    /// - Spam, wenn irgendeine `X-Spam`-Zeile `Yes` lautet oder irgendeine
-    ///   `X-Spam-Status`-Zeile mit `Yes` beginnt.
+    /// - Spam, wenn irgendeine dieser Zeilen mit `Yes` beginnt (ohne
+    ///   Groß-/Kleinschreibung, Leerzeichen davor zählen nicht).
     /// - Score ist der höchste Wert aller `X-Spam-Status`-Zeilen. Ein Absender
     ///   kann eigene Header mitschicken; ein gefälschter niedriger Score darf
     ///   die Einstufung nicht senken.
@@ -79,7 +82,7 @@ nonisolated enum SpamHeaderParser {
 
         for line in lines {
             let name = line.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard name == spamHeader || name == statusHeader else { continue }
+            guard flagHeaders.contains(name) || name == statusHeader else { continue }
 
             if startsWithYes(line.value) { isSpam = true }
 

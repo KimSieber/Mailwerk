@@ -126,11 +126,19 @@ struct SpamClassifierTests {
         #expect(try classify("x@firma.de", serverSpam(score), lists) == .junkServer)
     }
 
-    /// Server-Spam ohne lesbaren Score gilt als unendlich.
-    @Test("Server-Spam ohne lesbaren Score gilt als unendlich")
+    /// Whitelist schlägt Server-Spam ohne Score (z. B. X-Spam-Flag: YES).
+    @Test("Whitelist schlägt Server-Spam ohne Score")
     func whitelistWithoutScore() throws {
         let lists = FilterLists(whiteAddresses: ["x@firma.de"])
-        #expect(try classify("x@firma.de", serverSpam(nil), lists) == .junkServer)
+        #expect(try classify("x@firma.de", serverSpam(nil), lists) == .keep)
+    }
+
+    /// Ein gelieferter Score ab der Obergrenze übersteuert die Whitelist, auch ohne Server-Spam.
+    @Test("Score ab der Obergrenze übersteuert die Whitelist auch ohne Server-Spam")
+    func whitelistHighScoreWithoutServerSpam() throws {
+        let lists = FilterLists(whiteAddresses: ["x@firma.de"])
+        let verdict = SpamHeaderVerdict(isSpam: false, score: 16)
+        #expect(try classify("x@firma.de", verdict, lists) == .junkServer)
     }
 
     /// Eine eigene Obergrenze wird beachtet.
@@ -190,7 +198,7 @@ struct SpamClassifierTests {
         let lists = FilterLists(whiteAddresses: ["news@shop.de"])
         #expect(try trusts("news@shop.de", serverSpam(6), lists, limit: 15))
         #expect(try !trusts("news@shop.de", serverSpam(15), lists, limit: 15))
-        #expect(try !trusts("news@shop.de", serverSpam(nil), lists, limit: 15))
+        #expect(try trusts("news@shop.de", serverSpam(nil), lists, limit: 15))
     }
 
     /// Eine Blacklist-Adresse schlägt eine Whitelist-Domain.

@@ -1091,7 +1091,8 @@ struct InboxView: View {
             logoImage: showsImage && contactImage == nil
                 ? SenderIconCache.shared.image(forAddress: party.address)
                 : nil,
-            colorHex: colorHex
+            colorHex: colorHex,
+            spamMark: viewModel.spamMark(for: message)
         )
     }
 

@@ -26,10 +26,15 @@
 //  HTML für Druck und Teilen → MailPrintFormatter; Regeln für externe
 //  Inhalte → RemoteContentPolicy; Originalquelle → RawSourceView.
 //
+//  Spam-Einschätzung: Beim Öffnen wird der Text (z. B. `[SPAM score=7.2]`,
+//  `[NoSpam score=2.1]`, `[NoSpam]`)
+//  aus Listen und gespeichertem Befund gebildet (SpamFilterService.spamMark)
+//  und rechts in der Datumszeile des Kopfs gezeigt.
+//
 //  Externe Inhalte (Bilder, Stylesheets von fremden Servern) sind
-//  gesperrt. Ausnahme: Ist der Absender vertrauenswürdig (Whitelist und
-//  Score unter der Obergrenze, siehe SpamClassifier.trustsSender), werden
-//  sie sofort geladen. Sonst erscheint über dem Text ein schmaler Hinweis
+//  gesperrt. Ausnahme: Ist der Absender vertrauenswürdig (Whitelist, kein
+//  gelieferter Score ab der Obergrenze, siehe SpamClassifier.trustsSender),
+//  werden sie sofort geladen. Sonst erscheint über dem Text ein schmaler Hinweis
 //  mit dem Knopf „Laden“. Die Freigabe per Knopf gilt nur für diese
 //  Anzeige der Mail; beim nächsten Öffnen ist wieder alles gesperrt.
 //  Entschieden wird, bevor der HTML-Inhalt zum ersten Mal erscheint – so
@@ -94,6 +99,8 @@ struct MessageDetailView: View {
 
     /// Gemessene Höhe des HTML-Inhalts.
     @State private var webViewHeight: CGFloat = 100
+    /// Text zur Spam-Einschätzung im Kopf; `nil` = keiner.
+    @State private var spamMark: String?
     /// `true`, wenn die Mail externe Inhalte enthält (Hinweis anzeigen).
     @State private var hasRemoteContent = false
     /// `true`, wenn externe Inhalte für diese Anzeige freigegeben sind.
@@ -273,7 +280,8 @@ struct MessageDetailView: View {
                         // Erst die Mail schließen, dann sucht die Liste.
                         dismiss()
                         onSearchPerson?(person.searchPerson)
-                    }
+                    },
+                    spamMark: spamMark
                 )
                 .padding()
                 messageBody
@@ -469,6 +477,7 @@ struct MessageDetailView: View {
         if !isRemoteContentDecided {
             await decideRemoteContent()
         }
+        spamMark = await spamFilter.spamMark(of: message, scoreLimit: scoreLimit)
         writeMailFile()
 
         if isUnread {

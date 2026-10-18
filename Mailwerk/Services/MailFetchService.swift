@@ -41,7 +41,7 @@
 //  (EXAMINE).
 //
 //  Spam-Angabe: Die Kopfdaten-Abfrage holt die Spam-Kopfzeilen des
-//  Servers (X-Spam, X-Spam-Status) gleich mit; ihre Einstufung wird mit
+//  Servers (X-Spam, X-Spam-Flag, X-Spam-Status) gleich mit; ihre Einstufung wird mit
 //  der Mail gespeichert. Mails im Cache mit älterer Header-Version
 //  bekommen sie beim nächsten Abruf ihres Ordners nachgefüllt – ohne
 //  zusätzliche Server-Abfrage, weil die Kopfdaten ohnehin geholt werden.

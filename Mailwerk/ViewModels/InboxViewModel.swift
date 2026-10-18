@@ -73,7 +73,7 @@
 //  MailFetchService, MailSession (Zugangsdaten), MessageActions, UndoOffer,
 //  MessageActionDialogs, SpamMenuRequest, MessageSelection,
 //  MessageStore, MessageSort, NetworkMonitor, SyncWindow, FetchCoordinator,
-//  FolderKey, MailFolder, SpamClassifier, FilterAddress, OAuthError,
+//  FolderKey, MailFolder, SpamClassifier, SpamMark, FilterAddress, OAuthError,
 //  OAuthSignInState, Log.
 //
 
@@ -376,6 +376,25 @@ final class InboxViewModel {
             verdict: message.spamVerdict,
             lists: lists,
             scoreLimit: spamSettings.scoreLimit
+        )
+    }
+
+    /// Text zur Spam-Einschätzung einer Zeile: nur `[SPAM]`, ohne Score.
+    ///
+    /// Verarbeitung: Gesamtergebnis wie beim Spamfilter aus den Listen und
+    /// dem gespeicherten Befund (SpamMark, Darstellung `.list`). Solange
+    /// die Listen noch nicht gelesen sind, erscheint nichts.
+    ///
+    /// - Parameter message: Listeneintrag.
+    /// - Returns: Anzeigetext oder `nil`.
+    func spamMark(for message: MessageListItem) -> String? {
+        guard let lists = imageFilterLists else { return nil }
+        return SpamMark.text(
+            sender: FilterAddress.sender(fromHeader: message.from),
+            verdict: message.spamVerdict,
+            lists: lists,
+            scoreLimit: spamSettings.scoreLimit,
+            style: .list
         )
     }
 

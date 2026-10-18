@@ -37,7 +37,7 @@ struct CachedMessageHeaders: Equatable {
     var rfcInReplyTo: String?
     /// References-Kette, durch Leerzeichen getrennt
     var rfcReferences: String?
-    /// Spam-Einstufung des Servers (X-Spam, X-Spam-Status); `nil` = unbekannt.
+    /// Spam-Einstufung des Servers (X-Spam, X-Spam-Flag, X-Spam-Status); `nil` = unbekannt.
     var spamVerdict: SpamHeaderVerdict?
 }
 
