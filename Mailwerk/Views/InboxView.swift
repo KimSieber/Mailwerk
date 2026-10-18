@@ -59,6 +59,9 @@
 //  Meldungen und Rückfragen laufen über je einen Kanal (`alertItem`,
 //  `confirmationRequest`, siehe Dialogs.swift).
 //
+//  „Auf iPhone fortfahren“ von der Apple Watch (Handoff, WatchHandoff)
+//  öffnet die dort offene Mail als Blatt über der Liste.
+//
 //  Jedes Blatt meldet sich als offenes Fenster (`countsAsOpenWindow`),
 //  damit ein mailto:-Link von außen erst danach eine neue Mail öffnet
 //  (ExternalMailtoRouter).
@@ -75,7 +78,7 @@
 //  SearchViewModel, SearchPerson, ServerMessageLoader,
 //  ComposeView, DraftComposeLoader, Dialogs, AppTheme, ListBottomBar,
 //  UndoOffer, OAuthSignInState, SignInRequiredBar, ExternalMailtoPresenter,
-//  Log.
+//  WatchHandoff, Log.
 //
 
 import SwiftUI
@@ -114,6 +117,8 @@ struct InboxView: View {
     @State private var viewWidth: CGFloat = 0
     /// Entwurf, der zum Weiterbearbeiten geöffnet wird.
     @State private var draftToEdit: DraftEditRequest?
+    /// Mail, die auf der Apple Watch offen war („Auf iPhone fortfahren“).
+    @State private var handoffMessage: HandoffMessageRequest?
     /// Mail, für die aus dem Kontextmenü ein Zielordner gewählt wird.
     @State private var moveItem: MessageListItem?
     /// Rückfrage aus dem Kontextmenü (Löschen, Spam); einziger
@@ -449,6 +454,29 @@ struct InboxView: View {
                     original: request.original,
                     onSent: { viewModel.loadFromCache() }
                 )
+                .countsAsOpenWindow()
+            }
+            // Apple Watch: „Auf iPhone fortfahren“ öffnet die dort offene
+            // Mail als Blatt über der Liste.
+            .onContinueUserActivity(WatchHandoff.activityType) { activity in
+                guard let id = activity.userInfo?[WatchHandoff.messageIDKey] as? String else { return }
+                handoffMessage = HandoffMessageRequest(id: id)
+            }
+            .sheet(item: $handoffMessage) { request in
+                NavigationStack {
+                    MessageDetailLoader(
+                        messageID: request.id,
+                        accountStore: accountStore,
+                        spamFilter: viewModel.spamFilter,
+                        scoreLimit: spamSettings.scoreLimit,
+                        onChange: { viewModel.loadFromCache() }
+                    )
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Fertig") { handoffMessage = nil }
+                        }
+                    }
+                }
                 .countsAsOpenWindow()
             }
             .sheet(item: $draftToEdit) { request in
@@ -1527,6 +1555,12 @@ private struct OlderMessagesRow: View {
 /// Entwurf zum Weiterbearbeiten: Cache-ID für das Sheet.
 private struct DraftEditRequest: Identifiable {
     /// Cache-ID des Entwurfs.
+    let id: String
+}
+
+/// Auf der Apple Watch geöffnete Mail: Cache-ID für das Sheet.
+private struct HandoffMessageRequest: Identifiable {
+    /// Cache-ID der Mail.
     let id: String
 }
 

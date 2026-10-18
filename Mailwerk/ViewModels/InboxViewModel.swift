@@ -76,6 +76,9 @@
 //  FolderKey, MailFolder, SpamClassifier, SpamMark, FilterAddress, OAuthError,
 //  OAuthSignInState, Log.
 //
+//  Apple Watch: `onInboxesRefreshed` meldet jeden Abruf der Posteingänge an
+//  die WatchBridge, die der Watch daraufhin den neuen Stand liefert.
+//
 
 import Foundation
 import Observation
@@ -173,6 +176,11 @@ final class InboxViewModel {
 
     /// Netzzustand (online/offline).
     private let network = NetworkMonitor.shared
+
+    /// Wird nach jedem Abruf aller Posteingänge aufgerufen (auch ohne Netz
+    /// oder nach Fehlern) – die Anbindung der Apple Watch liefert dann den
+    /// neuen Stand (WatchBridge).
+    @ObservationIgnored var onInboxesRefreshed: (() -> Void)?
 
     /// Stimmt die Abrufe ab: nacheinander, ohne Doppelungen; bei mehreren
     /// wartenden Ordnern zählt nur der zuletzt gewählte.
@@ -717,14 +725,16 @@ final class InboxViewModel {
         loadFromCache()
     }
 
-    /// Ruft alle Posteingänge ab (Start, Pull-to-Refresh).
+    /// Ruft alle Posteingänge ab (Start, Pull-to-Refresh, Apple Watch).
     ///
     /// Verarbeitung: Ausgeführt über den `FetchCoordinator`. Läuft der
     /// Abruf schon, wird auf ihn gewartet statt ein zweites Mal abzurufen.
+    /// Danach erfährt `onInboxesRefreshed` davon.
     @MainActor
     func refresh() async {
         await coordinated(.inboxes, label: "Posteingänge") {
             await self.performRefresh()
+            self.onInboxesRefreshed?()
         }
     }
 

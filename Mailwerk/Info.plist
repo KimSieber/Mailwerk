@@ -17,6 +17,10 @@
 			</array>
 		</dict>
 	</array>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>de.sieber-bw.Mailwerk.mail</string>
+	</array>
 	<key>MailwerkAppGroupID</key>
 	<string>group.de.sieber-bw.Mailwerk$(MAILWERK_BUNDLE_SUFFIX)</string>
 	<key>UIBackgroundModes</key>

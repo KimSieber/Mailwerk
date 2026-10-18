@@ -4,7 +4,8 @@
 //
 //  Zweck: Datum einer Mail in der Mailliste – heute nur die Uhrzeit
 //  („17:06“), sonst Wochentag, volles Datum mit vierstelliger Jahreszahl
-//  und Uhrzeit („Mo, 28.09.2026 17:06“).
+//  und Uhrzeit („Mo, 28.09.2026 17:06“). Für die Apple Watch eine Kurzform
+//  ohne Jahr und Uhrzeit („Mo, 28.09.“).
 //
 //  Die Wochentage stehen als feste Kürzel ohne Punkt in einer Liste; die
 //  Kürzel der Systemformate („Mo.“) weichen davon ab. Zahlenteil und
@@ -14,7 +15,7 @@
 //  „Jetzt“ und Kalender sind Parameter, damit die Tests ohne echte
 //  Uhrzeit auskommen.
 //
-//  Abgrenzung: Anzeige → MessageRow.
+//  Abgrenzung: Anzeige → MessageRow, WatchMailRow.
 //
 //  Abhängigkeiten: Foundation.
 //
@@ -49,6 +50,28 @@ enum ListDateFormatter {
         let weekday = weekdays[calendar.component(.weekday, from: date) - 1]
         let day = formatted(date, pattern: "dd.MM.yyyy", calendar: calendar)
         return "\(weekday), \(day) \(time)"
+    }
+
+    /// Kurzform für schmale Anzeigen (Apple Watch).
+    ///
+    /// Verarbeitung: Am selben Kalendertag wie `now` nur die Uhrzeit, sonst
+    /// Wochentag und Tag.Monat – ohne Jahr und Uhrzeit.
+    ///
+    /// - Parameters:
+    ///   - date: Datum der Mail.
+    ///   - now: Bezugszeitpunkt; Standard ist die aktuelle Zeit.
+    ///   - calendar: Kalender samt Zeitzone; Standard ist der des Geräts.
+    /// - Returns: Anzeigetext, z. B. „14:32“ oder „Mo, 12.10.“.
+    static func compactString(
+        for date: Date,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> String {
+        guard !calendar.isDate(date, inSameDayAs: now) else {
+            return formatted(date, pattern: "HH:mm", calendar: calendar)
+        }
+        let weekday = weekdays[calendar.component(.weekday, from: date) - 1]
+        return "\(weekday), \(formatted(date, pattern: "dd.MM.", calendar: calendar))"
     }
 
     /// Bereits angelegte Formatierer je Muster und Zeitzone. Das Anlegen

@@ -10,14 +10,21 @@
 //
 //  `nonisolated`, weil der Filterlauf außerhalb des Main-Actors arbeitet.
 //
+//  Apple Watch: Dort gibt es SwiftMail nicht. Die Watch erhält die schon
+//  ermittelte Adresse vom iPhone und braucht nur `init(normalizing:)`;
+//  `sender(fromHeader:)` entfällt dort (`canImport(SwiftMail)`).
+//
 //  Abgrenzung: Empfängeradressen beim Verfassen → MailAddress; Prüfung der
 //  Listeneingabe → FilterListInput.
 //
-//  Abhängigkeiten: Foundation, SwiftMail (EmailAddress), RecipientInput.
+//  Abhängigkeiten: Foundation, SwiftMail (EmailAddress), RecipientInput –
+//  die beiden letzten nur für `sender(fromHeader:)`.
 //
 
 import Foundation
+#if canImport(SwiftMail)
 import SwiftMail
+#endif
 
 /// Normalisierte Adresse mit Domain für die Filterlisten.
 nonisolated struct FilterAddress: Hashable {
@@ -56,6 +63,7 @@ nonisolated struct FilterAddress: Hashable {
         self.domain = domain
     }
 
+    #if canImport(SwiftMail)
     /// Ermittelt den Absender aus einem `From`-Header.
     ///
     /// Verarbeitung: Bei mehreren Adressen zählt die erste; Anzeigename und
@@ -75,6 +83,7 @@ nonisolated struct FilterAddress: Hashable {
         let candidate = SwiftMail.EmailAddress(first)?.address ?? first
         return FilterAddress(normalizing: candidate)
     }
+    #endif
 
     /// Normalisiert eine Domain-Eingabe. Akzeptiert auch die Portal-Schreibweise
     /// `*@firma.de` und einen abschließenden Punkt.

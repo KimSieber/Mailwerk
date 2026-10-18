@@ -32,7 +32,7 @@ nonisolated enum FilterList: String, CaseIterable, Sendable {
 }
 
 /// Art des Eintrags. Die ganze Adresse ist spezifischer als die Domain.
-nonisolated enum FilterEntryKind: String, CaseIterable, Sendable {
+nonisolated enum FilterEntryKind: String, CaseIterable, Codable, Sendable {
     /// Ganze Adresse.
     case address
     /// Ganze Domain.

@@ -1,0 +1,136 @@
+//
+//  WatchRootView.swift
+//  MailwerkWatch
+//
+//  Zweck: Startansicht der Watch – die vier Sammelansichten der App (Alle
+//  Eingänge, Ungelesen mit Zähler, Mit Kennzeichnung mit Zähler, Spam),
+//  darunter der Stand und „Aktualisieren“.
+//
+//  Aktualisiert wird beim Öffnen, bei jeder Rückkehr in den Vordergrund,
+//  per Herunterziehen und per Knopf. Ist das iPhone nicht erreichbar,
+//  zeigt die Watch ihren gespeicherten Stand mit Uhrzeit des letzten
+//  Abrufs.
+//
+//  Abgrenzung: Liste einer Sicht → WatchMailListView; Austausch →
+//  WatchConnector.
+//
+//  Abhängigkeiten: SwiftUI, WatchStore, WatchConnector, WatchMailbox
+//  (WatchView), WatchMailListView.
+//
+
+import SwiftUI
+
+/// Startansicht mit den Sammelansichten.
+struct WatchRootView: View {
+    /// Speicher der App.
+    private let store = WatchStore.shared
+    /// Vordergrund oder Hintergrund.
+    @Environment(\.scenePhase) private var scenePhase
+
+    /// Sammelansichten, Stand und Hinweise.
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(WatchView.allCases) { view in
+                        NavigationLink(value: view) {
+                            row(for: view)
+                        }
+                    }
+                }
+                Section {
+                    statusRow
+                    Button {
+                        Task { await WatchConnector.shared.refresh() }
+                    } label: {
+                        Label("Aktualisieren", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(store.status == .syncing)
+                }
+            }
+            .navigationTitle("Mailwerk")
+            .navigationDestination(for: WatchView.self) { view in
+                WatchMailListView(view: view)
+            }
+            .refreshable {
+                await WatchConnector.shared.refresh()
+            }
+        }
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            guard phase == .active else { return }
+            Task { await WatchConnector.shared.refresh() }
+        }
+        .alert(
+            "Aktion nicht ausgeführt",
+            isPresented: Binding(get: { store.notice != nil }, set: { if !$0 { store.notice = nil } })
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(store.notice ?? "")
+        }
+    }
+
+    /// Zeile einer Sammelansicht mit Zähler (Ungelesen, Kennzeichnung).
+    ///
+    /// - Parameter view: Sicht.
+    /// - Returns: Symbol, Titel und ggf. Zahl.
+    private func row(for view: WatchView) -> some View {
+        HStack {
+            Label(view.title, systemImage: view.systemImage)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            if let count = count(for: view), count > 0 {
+                Text("\(count)")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Zähler einer Sicht; `nil` = die Sicht zeigt keinen (wie in der App).
+    ///
+    /// - Parameter view: Sicht.
+    /// - Returns: Anzahl oder `nil`.
+    private func count(for view: WatchView) -> Int? {
+        switch view {
+        case .unread: return store.unreadCount
+        case .flagged: return store.flaggedCount
+        case .allInboxes, .spam: return nil
+        }
+    }
+
+    /// Stand: Aktualisierung läuft, iPhone nicht erreichbar, letzter Abruf.
+    private var statusRow: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            switch store.status {
+            case .syncing:
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .frame(width: 16, height: 16)
+                    Text("Aktualisiere …")
+                }
+            case .unreachable:
+                Text("iPhone nicht erreichbar")
+            case .companionMissing:
+                Text("Mailwerk fehlt auf dem iPhone")
+            case .idle:
+                EmptyView()
+            }
+            if !store.hasAccounts {
+                Text("Auf dem iPhone ist kein Postfach mit eingeschaltetem Abruf eingerichtet.")
+            } else if let problem = store.problem {
+                Text(problem)
+            }
+            Text(syncText)
+                .foregroundStyle(.secondary)
+        }
+        .font(.footnote)
+    }
+
+    /// Uhrzeit des letzten Abrufs auf dem iPhone.
+    private var syncText: String {
+        guard let date = store.lastServerSync else {
+            return store.hasSnapshot ? "Noch nicht abgerufen" : "Noch nichts vom iPhone erhalten"
+        }
+        return "Stand: \(ListDateFormatter.string(for: date))"
+    }
+}

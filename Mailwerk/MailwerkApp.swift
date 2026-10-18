@@ -16,7 +16,10 @@
 //  Anmeldefenster.
 //
 //  Alle langlebigen Objekte (Postfächer, Einstellungen, ViewModel der
-//  Liste, Ordnerkatalog) entstehen hier genau einmal (`AppObjects`). Der
+//  Liste, Ordnerkatalog) entstehen hier genau einmal (`AppObjects`). Auf
+//  dem iPhone startet hier auch die Anbindung der Apple Watch
+//  (`WatchBridge`), damit Anfragen der Watch nach einem Start im
+//  Hintergrund ankommen. Der
 //  `body` der App wird von SwiftUI mehrfach ausgewertet; was dort erzeugt
 //  würde, entstünde jedes Mal neu.
 //
@@ -31,7 +34,7 @@
 //  Abhängigkeiten: SwiftUI, SwiftData, AttachmentManager (Aufräumen),
 //  MessageStore (Starthinweis), AppObjects, FilterEntry, AccountSignature,
 //  SignatureStore, Dialogs, OAuthSignInState, OAuthError,
-//  ExternalMailtoRouter, Log.
+//  ExternalMailtoRouter, WatchBridge (nur iPhone), Log.
 //
 
 import SwiftUI
@@ -56,14 +59,22 @@ struct MailwerkApp: App {
     /// Richtet Speicher und Objekte einmalig beim Start ein.
     ///
     /// Verarbeitung: Erzeugt den gemeinsamen Speicher, darauf aufbauend
-    /// alle langlebigen Objekte, und räumt temporäre Anhang-Dateien auf.
+    /// alle langlebigen Objekte, startet auf dem iPhone die Anbindung der
+    /// Apple Watch und räumt temporäre Anhang-Dateien auf.
     init() {
         let container = Self.makeContainer()
         modelContainer = container
-        objects = AppObjects(
+        let objects = AppObjects(
             filterLists: SwiftDataFilterListRepository(context: container.mainContext),
             signatures: SignatureStore(storage: SwiftDataSignatureStorage(context: container.mainContext))
         )
+        self.objects = objects
+
+        #if os(iOS) && canImport(WatchConnectivity)
+        // Apple Watch: Anfragen kommen auch, wenn die Watch die App im
+        // Hintergrund startet – deshalb gleich hier.
+        WatchBridge.shared.start(objects: objects)
+        #endif
 
         // Temporäre Anhang-Dateien aus der letzten Sitzung entfernen.
         // Das System leert das tmp-Verzeichnis zwar selbst, aber nicht

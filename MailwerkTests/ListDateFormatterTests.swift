@@ -3,7 +3,8 @@
 //  MailwerkTests
 //
 //  Zweck: Tests für das Datumsformat der Mailliste (ListDateFormatter) –
-//  heute nur Uhrzeit, sonst Wochentag, volles Datum und Uhrzeit.
+//  heute nur Uhrzeit, sonst Wochentag, volles Datum und Uhrzeit; dazu die
+//  Kurzform der Apple Watch.
 //
 
 import Foundation
@@ -46,5 +47,15 @@ struct ListDateFormatterTests {
     /// Daten in der Zukunft (z. B. falsches Datum im Spam) werden voll angezeigt.
     @Test func futureDateShowsFullDate() {
         #expect(ListDateFormatter.string(for: date(2026, 10, 13, 9, 0), now: now, calendar: calendar) == "Di, 13.10.2026 09:00")
+    }
+
+    /// Kurzform heute: nur die Uhrzeit.
+    @Test func compactTodayShowsTimeOnly() {
+        #expect(ListDateFormatter.compactString(for: date(2026, 10, 12, 7, 5), now: now, calendar: calendar) == "07:05")
+    }
+
+    /// Kurzform an anderen Tagen: Wochentag und Tag.Monat, ohne Jahr und Uhrzeit.
+    @Test func compactOtherDayShowsWeekdayAndDay() {
+        #expect(ListDateFormatter.compactString(for: date(2026, 9, 28, 8, 50), now: now, calendar: calendar) == "Mo, 28.09.")
     }
 }

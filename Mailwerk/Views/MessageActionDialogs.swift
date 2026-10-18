@@ -7,11 +7,13 @@
 //  Aktionen (Blockieren, Vertrauen) samt Ergebnis- und Fehlermeldung.
 //  Dazu die Ausführung einer Spam-Aktion an einer Mail.
 //
-//  Abgrenzung: Darstellung der Dialoge → Dialogs.swift; Eintragen und
-//  Verschieben selbst → SpamFilterService; Menü → MessageMenu.
+//  Abgrenzung: Darstellung der Dialoge → Dialogs.swift; Texte der
+//  Spam-Aktionen → SpamMenuTexts; Eintragen und Verschieben selbst →
+//  SpamFilterService; Menü → MessageMenu.
 //
 //  Abhängigkeiten: Dialogs (AlertItem, ConfirmationRequest),
-//  SpamFilterService, FilterListError, MessageMenu (SpamMenuRequest).
+//  SpamFilterService, FilterListError, SpamMenuChoice (SpamMenuRequest,
+//  SpamMenuTexts).
 //
 
 import Foundation
@@ -44,18 +46,11 @@ enum MessageActionDialogs {
     ///   - onConfirm: Wird nach dem Bestätigen ausgeführt.
     /// - Returns: Rückfrage; Blockieren mit rotem Knopf.
     static func spamConfirmation(_ request: SpamMenuRequest, onConfirm: @escaping () -> Void) -> ConfirmationRequest {
-        let scope = request.entryKind == .domain
-            ? "Alle künftigen Mails dieser Domain und ihrer Subdomains"
-            : "Alle künftigen Mails dieses Absenders"
-        let isBlock = request.kind == .block
-        let shown = request.displayValue
-        return ConfirmationRequest(
-            title: isBlock ? "\(shown) blockieren?" : "\(shown) vertrauen?",
-            message: isBlock
-                ? "\(scope) wandern in den Spam-Ordner. Diese Mail wird mitverschoben."
-                : "\(scope) bleiben im Posteingang. Liegt diese Mail im Spam-Ordner, wird sie zurückgeholt.",
-            confirmLabel: isBlock ? "Blockieren" : "Vertrauen",
-            isDestructive: isBlock,
+        ConfirmationRequest(
+            title: SpamMenuTexts.confirmationTitle(request),
+            message: SpamMenuTexts.confirmationMessage(request),
+            confirmLabel: SpamMenuTexts.confirmLabel(request),
+            isDestructive: request.kind == .block,
             onConfirm: onConfirm
         )
     }
@@ -65,10 +60,7 @@ enum MessageActionDialogs {
     /// - Parameter request: Ausgeführte Spam-Aktion.
     /// - Returns: Meldung.
     static func spamResultAlert(_ request: SpamMenuRequest) -> AlertItem {
-        AlertItem(
-            title: "Listeneintrag",
-            message: "\(request.displayValue) steht jetzt auf der \(request.kind == .block ? "Blacklist" : "Whitelist")."
-        )
+        AlertItem(title: "Listeneintrag", message: SpamMenuTexts.resultMessage(request))
     }
 
     /// Meldung zu einer gescheiterten Spam-Aktion.
@@ -82,10 +74,9 @@ enum MessageActionDialogs {
     /// - Returns: Meldung.
     static func spamFailureAlert(_ request: SpamMenuRequest, _ error: Error) -> AlertItem {
         if case FilterListError.alreadyOnOtherList(let list) = error {
-            let other = list == .white ? "Whitelist" : "Blacklist"
             return AlertItem(
                 title: "Listeneintrag",
-                message: "\(request.displayValue) steht bereits auf der \(other). Entferne den Eintrag dort zuerst."
+                message: SpamMenuTexts.otherListMessage(request, list: list)
             )
         }
         return .failure("Listeneintrag fehlgeschlagen", error)

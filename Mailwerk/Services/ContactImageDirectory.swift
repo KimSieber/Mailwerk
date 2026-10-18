@@ -11,8 +11,10 @@
 //  kleine Vorschaubilder je Adresse. Ändert sich das Adressbuch, wird die
 //  Zuordnung neu aufgebaut; die Liste zeigt neue Bilder ohne Neustart.
 //
-//  Datenschutz: Die Zuordnung liegt nur im Speicher, wird nie in den Cache
-//  geschrieben und verlässt das Gerät nicht. Ohne Berechtigung bleibt sie
+//  Datenschutz: Die Zuordnung liegt nur im Speicher und wird nie in den
+//  Cache geschrieben. Das Gerät verlässt ein Bild nur verkleinert zur
+//  eigenen Apple Watch – für Absender der dorthin gelieferten Mails
+//  (WatchBridge, `thumbnailData(for:)`). Ohne Berechtigung bleibt sie
 //  leer – die Liste zeigt dann Initialen. Bei eingeschränktem Zugriff
 //  gelten nur die freigegebenen Kontakte.
 //
@@ -123,6 +125,16 @@ final class ContactImageDirectory {
         guard let data = thumbnails[key], let image = DecodedImage.image(from: data) else { return nil }
         images[key] = image
         return image
+    }
+
+    /// Vorschaubild zu einer Adresse als Daten – für die Apple Watch, die
+    /// keinen Zugriff auf die Kontakte des iPhones hat.
+    ///
+    /// - Parameter address: E-Mail-Adresse; `nil` ergibt keine Daten.
+    /// - Returns: Bilddaten oder `nil`, wenn der Kontakt fehlt oder kein Bild hat.
+    func thumbnailData(for address: String?) -> Data? {
+        guard let address else { return nil }
+        return thumbnails[Self.normalized(address)]
     }
 
     // MARK: - Hilfen
