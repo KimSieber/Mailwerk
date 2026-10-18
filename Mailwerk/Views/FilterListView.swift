@@ -12,12 +12,15 @@
 //    (nicht auf der anderen Liste), ohne den alten Eintrag zu verlieren
 //    (FilterListEditing). Löschen – auch per Wischen – fragt vorher nach.
 //  - „Importieren“ (Symbolleiste) liest eine Textdatei im Format des
-//    Exports – eine Angabe je Zeile, Domains als `*@firma.de` – in diese
+//    Exports – eine Angabe je Zeile, Domains als `*firma.de` – in diese
 //    Liste ein. Vorher nennt eine Rückfrage, wie viele Einträge neu sind;
 //    jeder Eintrag wird wie bei „Neuer Eintrag …“ gegen die andere Liste
 //    geprüft. Das Ergebnis erscheint als Meldung.
 //  - Antippen allein bewirkt bewusst nichts: Bearbeiten ist die Ausnahme
 //    und soll beim Scrollen nicht versehentlich ausgelöst werden.
+//
+//  Domains erscheinen als `*firma.de`: Ein Domain-Eintrag gilt auch für alle
+//  Subdomains (FilterDomain).
 //
 //  Die Ansicht lädt beim Öffnen und erneut, sobald der iCloud-Abgleich
 //  Änderungen von einem anderen Gerät übernommen hat. So bleibt eine
@@ -29,7 +32,8 @@
 //
 //  Abhängigkeiten: SwiftUI, FilterListRepository, FilterListInput,
 //  FilterListEditing, PlatformInputModifiers,
-//  FilterListExporter, FilterListImport, FilterListCloudEvents, Dialogs,
+//  FilterListExporter, FilterListImport, FilterListCloudEvents, FilterDomain,
+//  Dialogs,
 //  AppTheme (getönte Fläche, Abschnitte als Karten), Log.
 //
 
@@ -96,7 +100,7 @@ struct FilterListView: View {
                 }
                 .disabled(isWorking)
             } footer: {
-                Text("Mehrere Angaben auf einmal sind möglich. Eine Domain wie „firma.de“ gilt für alle Absender dieser Domain, eine Adresse nur für genau diesen Absender. Bearbeiten und Löschen per langem Drücken auf einen Eintrag.")
+                Text("Mehrere Angaben auf einmal sind möglich. Eine Domain wie „*firma.de“ gilt für alle Absender dieser Domain und ihrer Subdomains (z. B. „news.firma.de“), eine Adresse nur für genau diesen Absender. Bearbeiten und Löschen per langem Drücken auf einen Eintrag.")
             }
             .cardRowBackground()
 
@@ -181,7 +185,7 @@ struct FilterListView: View {
         HStack {
             Image(systemName: entry.kind == .domain ? "globe" : "person")
                 .foregroundStyle(.secondary)
-            Text(entry.value)
+            Text(FilterDomain.display(entry.value, kind: entry.kind))
             Spacer()
             Text(entry.kind == .domain ? "Domain" : "Adresse")
                 .font(.caption)
@@ -242,9 +246,9 @@ struct FilterListView: View {
     private func editorMessage(for request: EditorRequest) -> String {
         switch request {
         case .new:
-            return "Adresse oder Domain, z. B. „anna@firma.de“ oder „firma.de“. Mehrere getrennt durch Komma oder Leerzeichen."
+            return "Adresse oder Domain, z. B. „anna@firma.de“ oder „firma.de“ (gilt samt Subdomains). Mehrere getrennt durch Komma oder Leerzeichen."
         case .edit:
-            return "Z. B. „news.firma.de“ auf „firma.de“ kürzen – dann gilt der Eintrag für die ganze Domain."
+            return "Z. B. „*news.firma.de“ auf „*firma.de“ kürzen – dann gilt der Eintrag für die ganze Domain samt Subdomains."
         }
     }
 
@@ -333,7 +337,7 @@ struct FilterListView: View {
                 try await repository.add(entry.value, kind: entry.kind, to: list)
                 added += 1
             } catch FilterListError.alreadyOnOtherList {
-                conflicts.append(entry.value)
+                conflicts.append(FilterDomain.display(entry.value, kind: entry.kind))
             } catch {
                 report(error)
                 await reload()
@@ -451,7 +455,7 @@ struct FilterListView: View {
             } catch FilterListError.alreadyOnOtherList {
                 activeAlert = AlertItem(
                     title: "Nicht gespeichert",
-                    message: "„\(entry.value)“ steht bereits auf der \(otherListName). Der Eintrag bleibt unverändert."
+                    message: "„\(FilterDomain.display(entry.value, kind: entry.kind))“ steht bereits auf der \(otherListName). Der Eintrag bleibt unverändert."
                 )
             } catch {
                 report(error)
@@ -465,7 +469,7 @@ struct FilterListView: View {
     /// - Parameter entry: Zu löschender Eintrag.
     private func confirmDelete(_ entry: FilterEntryItem) {
         activeConfirmation = ConfirmationRequest(
-            title: "„\(entry.value)“ löschen?",
+            title: "„\(FilterDomain.display(entry.value, kind: entry.kind))“ löschen?",
             message: "Der Eintrag wird von der \(list == .white ? "Whitelist" : "Blacklist") entfernt – auf allen Geräten.",
             confirmLabel: "Löschen"
         ) {

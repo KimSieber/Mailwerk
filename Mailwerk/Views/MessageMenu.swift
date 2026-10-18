@@ -11,9 +11,10 @@
 //  - Antworten, Allen antworten, Weiterleiten
 //  - Kennzeichnung (Symbol zeigt, was der Tipp bewirkt), Gelesen bzw.
 //    Ungelesen, Verschieben
-//  - Untermenü „Spam / Vertrauen“: je ein Abschnitt für Adresse und
-//    Domain mit der Überschrift des Werts, darunter „Blockieren“ und
-//    „Vertrauen“
+//  - Untermenü „Spam / Vertrauen“: je ein Abschnitt für Adresse, Domain
+//    und – nur bei einer Subdomain – Hauptdomain, mit der Überschrift des
+//    Werts in der Schreibweise der Listen (`a@mail.firma.de`,
+//    `*mail.firma.de`, `*firma.de`), darunter „Blockieren“ und „Vertrauen“
 //  - zusätzliche Einträge des Aufrufers (in der Mailansicht Teilen,
 //    Drucken, Anlagen lokal löschen), zuletzt „Mail löschen“
 //
@@ -28,7 +29,8 @@
 //  Abgrenzung: Rückfragen und Meldungen → MessageActionDialogs; Ausführung
 //  → MessageDetailView bzw. InboxView/InboxViewModel.
 //
-//  Abhängigkeiten: SwiftUI, FilterAddress, FilterEntryKind, ComposeKind.
+//  Abhängigkeiten: SwiftUI, FilterAddress, FilterDomain, FilterEntryKind,
+//  ComposeKind.
 //
 
 import SwiftUI
@@ -71,6 +73,42 @@ struct SpamMenuRequest: Equatable {
     let entryKind: FilterEntryKind
     /// Einzutragende Adresse bzw. Domain.
     let value: String
+
+    /// Wert in der Schreibweise der Listen (Domains als `*domain`).
+    var displayValue: String {
+        FilterDomain.display(value, kind: entryKind)
+    }
+}
+
+/// Ein Abschnitt im Spam-Untermenü: Überschrift und einzutragender Wert.
+struct SpamMenuSection: Equatable, Identifiable {
+    /// Adresse oder Domain.
+    let entryKind: FilterEntryKind
+    /// Einzutragender Wert.
+    let value: String
+
+    /// Kennung für SwiftUI.
+    var id: String { "\(entryKind.rawValue):\(value)" }
+    /// Überschrift in der Schreibweise der Listen.
+    var title: String { FilterDomain.display(value, kind: entryKind) }
+
+    /// Abschnitte für einen Absender.
+    ///
+    /// Verarbeitung: Adresse und Domain immer; die Hauptdomain nur, wenn
+    /// der Absender auf einer Subdomain sitzt.
+    ///
+    /// - Parameter sender: Absender der Mail.
+    /// - Returns: Abschnitte in Menüreihenfolge.
+    static func sections(for sender: FilterAddress) -> [SpamMenuSection] {
+        var sections = [
+            SpamMenuSection(entryKind: .address, value: sender.address),
+            SpamMenuSection(entryKind: .domain, value: sender.domain)
+        ]
+        if let main = FilterDomain.mainDomainIfDifferent(from: sender.domain) {
+            sections.append(SpamMenuSection(entryKind: .domain, value: main))
+        }
+        return sections
+    }
 }
 
 /// Im Menü gewählte Aktion.
@@ -147,16 +185,16 @@ enum MessageMenuLabels {
         switch (request.kind, request.entryKind) {
         case (.block, .address):
             return Entry(title: "Blockieren", systemImage: "person.crop.circle.badge.xmark",
-                         accessibility: "\(request.value) blockieren")
+                         accessibility: "\(request.displayValue) blockieren")
         case (.block, .domain):
             return Entry(title: "Blockieren", systemImage: "globe.badge.chevron.backward",
-                         accessibility: "\(request.value) blockieren")
+                         accessibility: "\(request.displayValue) blockieren")
         case (.trust, .address):
             return Entry(title: "Vertrauen", systemImage: "person.crop.circle.badge.checkmark",
-                         accessibility: "\(request.value) vertrauen")
+                         accessibility: "\(request.displayValue) vertrauen")
         case (.trust, .domain):
             return Entry(title: "Vertrauen", systemImage: "globe",
-                         accessibility: "\(request.value) vertrauen")
+                         accessibility: "\(request.displayValue) vertrauen")
         }
     }
 }
@@ -228,20 +266,18 @@ struct MessageMenuItems<Extra: View>: View {
         }
     }
 
-    /// Untermenü „Spam / Vertrauen“ mit je einem Abschnitt für Adresse und
-    /// Domain.
+    /// Untermenü „Spam / Vertrauen“ mit je einem Abschnitt für Adresse,
+    /// Domain und gegebenenfalls Hauptdomain (SpamMenuSection).
     ///
     /// - Parameter sender: Absender der Mail.
     /// - Returns: Untermenü.
     private func spamMenu(for sender: FilterAddress) -> some View {
         Menu {
-            Section(sender.address) {
-                spamButton(SpamMenuRequest(kind: .block, entryKind: .address, value: sender.address))
-                spamButton(SpamMenuRequest(kind: .trust, entryKind: .address, value: sender.address))
-            }
-            Section(sender.domain) {
-                spamButton(SpamMenuRequest(kind: .block, entryKind: .domain, value: sender.domain))
-                spamButton(SpamMenuRequest(kind: .trust, entryKind: .domain, value: sender.domain))
+            ForEach(SpamMenuSection.sections(for: sender)) { section in
+                Section(section.title) {
+                    spamButton(SpamMenuRequest(kind: .block, entryKind: section.entryKind, value: section.value))
+                    spamButton(SpamMenuRequest(kind: .trust, entryKind: section.entryKind, value: section.value))
+                }
             }
         } label: {
             Label("Spam / Vertrauen", systemImage: "shield")

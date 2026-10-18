@@ -48,6 +48,13 @@ struct FilterAddressTests {
         #expect(sender.address == "anna@example.org")
     }
 
+    /// Ein Platzhalter in der Absender-Domain wird nicht entfernt (kein Umgehen der Listen).
+    @Test("Ein Platzhalter in der Absender-Domain macht den Absender unbrauchbar")
+    func wildcardInSenderDomainIsRejected() {
+        #expect(FilterAddress(normalizing: "x@*apple.com") == nil)
+        #expect(FilterAddress(normalizing: "x@*.apple.com") == nil)
+    }
+
     /// Die Domain ist exakt der Teil nach dem @.
     @Test("Die Domain ist exakt der Teil nach dem @")
     func subdomainStaysExact() throws {
@@ -108,7 +115,7 @@ struct FilterAddressTests {
     /// Unbrauchbare Domain-Eingaben liefern nil.
     @Test("Unbrauchbare Domain-Eingaben liefern nil",
           arguments: ["", "  ", "firma", "anna@firma.de", "fir ma.de",
-                      "*.firma.de", "firma..de", ".firma.de", "*@"])
+                      "*.firma.de", "*firma.de", "firma..de", ".firma.de", "*@"])
     func rejectsDomain(raw: String) {
         #expect(FilterAddress.normalizedDomain(raw) == nil)
     }

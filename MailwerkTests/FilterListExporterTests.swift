@@ -33,10 +33,10 @@ struct FilterListExporterTests {
         #expect(FilterListExporter.text(for: [entry("anna@firma.de", .address)]) == "anna@firma.de")
     }
 
-    /// Eine Domain wird in der Portal-Schreibweise ausgegeben.
-    @Test("Eine Domain wird in der Portal-Schreibweise ausgegeben")
+    /// Eine Domain wird als `*domain` (samt Subdomains) ausgegeben.
+    @Test("Eine Domain wird als *domain ausgegeben")
     func domainLine() {
-        #expect(FilterListExporter.text(for: [entry("firma.de", .domain)]) == "*@firma.de")
+        #expect(FilterListExporter.text(for: [entry("firma.de", .domain)]) == "*firma.de")
     }
 
     /// Adressen stehen vor Domains, beide alphabetisch.
@@ -51,8 +51,8 @@ struct FilterListExporterTests {
         #expect(text == """
             anna@firma.de
             bob@firma.de
-            *@alpha.de
-            *@zulu.de
+            *alpha.de
+            *zulu.de
             """)
     }
 
@@ -67,7 +67,7 @@ struct FilterListExporterTests {
 
         #expect(url.lastPathComponent == "Mailwerk-Blacklist.txt")
         let content = try String(contentsOf: url, encoding: .utf8)
-        #expect(content == "anna@firma.de\n*@firma.de")
+        #expect(content == "anna@firma.de\n*firma.de")
     }
 
     /// Ein erneuter Export überschreibt die alte Datei.

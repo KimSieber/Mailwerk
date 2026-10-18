@@ -25,8 +25,8 @@ nonisolated struct FilterAddress: Hashable {
     /// Vollständige Adresse, kleingeschrieben.
     let address: String
 
-    /// Alles nach dem `@`, kleingeschrieben. Vergleich immer exakt:
-    /// `firma.de` trifft weder `mail.firma.de` noch `evil-firma.de`.
+    /// Alles nach dem `@`, kleingeschrieben. Welche Domain-Einträge sie
+    /// trifft (auch übergeordnete Domains), regelt FilterDomain.
     let domain: String
 
     /// Zeichen, die im lokalen Teil nicht vorkommen dürfen. Alles andere
@@ -78,6 +78,11 @@ nonisolated struct FilterAddress: Hashable {
 
     /// Normalisiert eine Domain-Eingabe. Akzeptiert auch die Portal-Schreibweise
     /// `*@firma.de` und einen abschließenden Punkt.
+    ///
+    /// Bewusst ohne `*firma.de` und `*.firma.de`: Diese Funktion prüft auch
+    /// die Domain eines Absenders, und ein gefälschtes `x@*firma.de` darf
+    /// nicht zu `firma.de` werden. Die Platzhalter der Listeneingabe
+    /// behandelt FilterDomain.
     ///
     /// - Parameter raw: Eingabe.
     /// - Returns: Domain oder `nil` bei unbrauchbarer Eingabe.

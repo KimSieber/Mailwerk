@@ -42,9 +42,23 @@ struct MessageMenuTests {
         let block = MessageMenuLabels.spam(SpamMenuRequest(kind: .block, entryKind: .domain, value: "firma.de"))
         let trust = MessageMenuLabels.spam(SpamMenuRequest(kind: .trust, entryKind: .address, value: "a@firma.de"))
         #expect(block.title == "Blockieren")
-        #expect(block.accessibility == "firma.de blockieren")
+        #expect(block.accessibility == "*firma.de blockieren")
         #expect(trust.title == "Vertrauen")
         #expect(trust.accessibility == "a@firma.de vertrauen")
+    }
+
+    /// Spam-Abschnitte: Adresse und Domain, Hauptdomain nur bei Subdomain.
+    @Test func spamSectionsAddMainDomainOnlyForSubdomains() throws {
+        let sub = try #require(FilterAddress(normalizing: "x@mail.apple.com"))
+        #expect(SpamMenuSection.sections(for: sub).map(\.title) == ["x@mail.apple.com", "*mail.apple.com", "*apple.com"])
+        let plain = try #require(FilterAddress(normalizing: "x@apple.com"))
+        #expect(SpamMenuSection.sections(for: plain).map(\.title) == ["x@apple.com", "*apple.com"])
+    }
+
+    /// Rückfrage Spam für eine Domain nennt die Schreibweise der Liste.
+    @Test func spamConfirmationShowsDomainNotation() {
+        let request = SpamMenuRequest(kind: .block, entryKind: .domain, value: "apple.com")
+        #expect(MessageActionDialogs.spamConfirmation(request) {}.title == "*apple.com blockieren?")
     }
 
     /// Rückfrage Löschen: einzeln ohne, mehrfach mit Anzahl; immer rot.

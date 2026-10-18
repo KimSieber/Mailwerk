@@ -11,7 +11,8 @@
 //  Abgrenzung: Speicherzugriff → FilterListRepository,
 //  SwiftDataFilterListRepository.
 //
-//  Abhängigkeiten: Foundation, FilterAddress, FilterEntryItem, FilterLists.
+//  Abhängigkeiten: Foundation, FilterAddress, FilterDomain, FilterEntryItem,
+//  FilterLists.
 //
 
 import Foundation
@@ -21,6 +22,9 @@ nonisolated enum FilterListRules {
 
     /// Normalisiert eine Eingabe passend zur Art des Eintrags.
     ///
+    /// Verarbeitung: Reine Länderendungen (`de`, `co.uk`) werden als
+    /// Domain abgelehnt (FilterDomain).
+    ///
     /// - Parameters:
     ///   - raw: Eingabe.
     ///   - kind: Adresse oder Domain.
@@ -28,7 +32,7 @@ nonisolated enum FilterListRules {
     static func normalize(_ raw: String, kind: FilterEntryKind) -> String? {
         switch kind {
         case .address: FilterAddress(normalizing: raw)?.address
-        case .domain: FilterAddress.normalizedDomain(raw)
+        case .domain: FilterDomain.listable(raw)
         }
     }
 

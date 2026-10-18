@@ -250,12 +250,14 @@ final class SpamFilterService {
     /// - Parameters:
     ///   - message: Betroffene Mail.
     ///   - kind: Adresse oder Domain eintragen.
+    ///   - value: Einzutragender Wert (z. B. die Hauptdomain); `nil` =
+    ///     Adresse bzw. Domain des Absenders. Muss zum Absender passen.
     /// - Returns: `true`, wenn die Mail verschoben wurde.
     /// - Throws: `MailCredentialError`, `FilterError`, Fehler der Filterlisten
     ///   oder IMAP-Fehler.
     @discardableResult
-    func block(_ message: CachedMessage, kind: FilterEntryKind) async throws -> Bool {
-        let (credentials, value) = try context(for: message, kind: kind)
+    func block(_ message: CachedMessage, kind: FilterEntryKind, value: String? = nil) async throws -> Bool {
+        let (credentials, value) = try context(for: message, kind: kind, requested: value)
         let account = credentials.account
         try await filterLists.add(value, kind: kind, to: .black)
 
@@ -291,12 +293,14 @@ final class SpamFilterService {
     /// - Parameters:
     ///   - message: Betroffene Mail.
     ///   - kind: Adresse oder Domain eintragen.
+    ///   - value: Einzutragender Wert (z. B. die Hauptdomain); `nil` =
+    ///     Adresse bzw. Domain des Absenders. Muss zum Absender passen.
     /// - Returns: `true`, wenn die Mail verschoben wurde.
     /// - Throws: `MailCredentialError`, `FilterError`, Fehler der Filterlisten
     ///   oder IMAP-Fehler.
     @discardableResult
-    func trust(_ message: CachedMessage, kind: FilterEntryKind) async throws -> Bool {
-        let (credentials, value) = try context(for: message, kind: kind)
+    func trust(_ message: CachedMessage, kind: FilterEntryKind, value: String? = nil) async throws -> Bool {
+        let (credentials, value) = try context(for: message, kind: kind, requested: value)
         let account = credentials.account
         try await filterLists.add(value, kind: kind, to: .white)
 
@@ -522,20 +526,27 @@ final class SpamFilterService {
 
     /// Zugangsdaten und normalisierter Listenwert zu einer Mail.
     ///
+    /// Verarbeitung: Der Wert kommt aus `FilterDomain.entryValue` – ein
+    /// gewünschter Wert, der nicht zum Absender passt, wird abgelehnt.
+    ///
     /// - Parameters:
     ///   - message: Betroffene Mail.
     ///   - kind: Adresse oder Domain.
+    ///   - requested: Gewünschter Wert; `nil` = Adresse bzw. Domain des Absenders.
     /// - Returns: Zugangsdaten des Postfachs und der einzutragende Wert.
     /// - Throws: `MailCredentialError` oder `FilterError.unusableSender`.
     private func context(
         for message: CachedMessage,
-        kind: FilterEntryKind
+        kind: FilterEntryKind,
+        requested: String?
     ) throws -> (credentials: MailCredentials, value: String) {
         let credentials = try accountStore.credentials(for: message.accountID)
-        guard let sender = FilterAddress.sender(fromHeader: message.from) else {
+        guard let sender = FilterAddress.sender(fromHeader: message.from),
+              let value = FilterDomain.entryValue(for: sender, kind: kind, requested: requested)
+        else {
             throw FilterError.unusableSender
         }
-        return (credentials, kind == .address ? sender.address : sender.domain)
+        return (credentials, value)
     }
 
     /// Verschiebt eine einzelne Mail und zieht den Cache nach.

@@ -12,7 +12,11 @@
 //  Abgrenzung: Eingabefeld → FilterListView; Normalisieren einzelner Werte
 //  → FilterAddress.
 //
-//  Abhängigkeiten: Foundation, FilterAddress, FilterEntryKind, RecipientInput.
+//  Domains gelten samt Subdomains; reine Länderendungen (`de`, `co.uk`)
+//  sind keine Domain (FilterDomain).
+//
+//  Abhängigkeiten: Foundation, FilterAddress, FilterDomain, FilterEntryKind,
+//  RecipientInput.
 //
 
 import Foundation
@@ -42,8 +46,9 @@ nonisolated enum FilterListInput {
     /// Zerlegt eine Eingabe in Einträge.
     ///
     /// Verarbeitung: Erkennt je Abschnitt selbst, ob es eine Adresse oder
-    /// eine Domain ist: `*@firma.de` und `firma.de` werden zur Domain, alles
-    /// mit `@` zur Adresse – auch in der Form `Anna Muster <anna@firma.de>`.
+    /// eine Domain ist: `firma.de`, `*firma.de`, `*.firma.de` und
+    /// `*@firma.de` werden zur Domain, alles andere mit `@` zur Adresse –
+    /// auch in der Form `Anna Muster <anna@firma.de>`.
     ///
     /// - Parameter text: Eingabe.
     /// - Returns: Erkannte Einträge ohne Doppelte und unbrauchbare Abschnitte.
@@ -89,15 +94,18 @@ nonisolated enum FilterListInput {
     /// - Parameter token: Abschnitt.
     /// - Returns: Eintrag oder `nil`, wenn nichts Brauchbares darin steht.
     private static func entry(from token: String) -> FilterListInputEntry? {
-        if token.hasPrefix("*@") || token.hasPrefix("@") {
-            return FilterAddress.normalizedDomain(token)
+        // Platzhalter vorn ohne weiteres @ (`*firma.de`, `*.firma.de`) oder
+        // die Portal-Schreibweise (`*@firma.de`, `@firma.de`) → Domain.
+        let isWildcardDomain = token.hasPrefix("*") && !token.dropFirst().contains("@")
+        if isWildcardDomain || token.hasPrefix("*@") || token.hasPrefix("@") {
+            return FilterDomain.listable(token)
                 .map { FilterListInputEntry(value: $0, kind: .domain) }
         }
         if token.contains("@") {
             return FilterAddress.sender(fromHeader: token)
                 .map { FilterListInputEntry(value: $0.address, kind: .address) }
         }
-        return FilterAddress.normalizedDomain(token)
+        return FilterDomain.listable(token)
             .map { FilterListInputEntry(value: $0, kind: .domain) }
     }
 }

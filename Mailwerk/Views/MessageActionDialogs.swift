@@ -45,11 +45,12 @@ enum MessageActionDialogs {
     /// - Returns: Rückfrage; Blockieren mit rotem Knopf.
     static func spamConfirmation(_ request: SpamMenuRequest, onConfirm: @escaping () -> Void) -> ConfirmationRequest {
         let scope = request.entryKind == .domain
-            ? "Alle künftigen Mails dieser Domain"
+            ? "Alle künftigen Mails dieser Domain und ihrer Subdomains"
             : "Alle künftigen Mails dieses Absenders"
         let isBlock = request.kind == .block
+        let shown = request.displayValue
         return ConfirmationRequest(
-            title: isBlock ? "\(request.value) blockieren?" : "\(request.value) vertrauen?",
+            title: isBlock ? "\(shown) blockieren?" : "\(shown) vertrauen?",
             message: isBlock
                 ? "\(scope) wandern in den Spam-Ordner. Diese Mail wird mitverschoben."
                 : "\(scope) bleiben im Posteingang. Liegt diese Mail im Spam-Ordner, wird sie zurückgeholt.",
@@ -66,7 +67,7 @@ enum MessageActionDialogs {
     static func spamResultAlert(_ request: SpamMenuRequest) -> AlertItem {
         AlertItem(
             title: "Listeneintrag",
-            message: "\(request.value) steht jetzt auf der \(request.kind == .block ? "Blacklist" : "Whitelist")."
+            message: "\(request.displayValue) steht jetzt auf der \(request.kind == .block ? "Blacklist" : "Whitelist")."
         )
     }
 
@@ -84,7 +85,7 @@ enum MessageActionDialogs {
             let other = list == .white ? "Whitelist" : "Blacklist"
             return AlertItem(
                 title: "Listeneintrag",
-                message: "\(request.value) steht bereits auf der \(other). Entferne den Eintrag dort zuerst."
+                message: "\(request.displayValue) steht bereits auf der \(other). Entferne den Eintrag dort zuerst."
             )
         }
         return .failure("Listeneintrag fehlgeschlagen", error)
@@ -104,8 +105,8 @@ extension SpamMenuRequest {
     ///   Verbindungs- und Serverfehler.
     func perform(on message: CachedMessage, using spamFilter: SpamFilterService) async throws -> Bool {
         switch kind {
-        case .block: return try await spamFilter.block(message, kind: entryKind)
-        case .trust: return try await spamFilter.trust(message, kind: entryKind)
+        case .block: return try await spamFilter.block(message, kind: entryKind, value: value)
+        case .trust: return try await spamFilter.trust(message, kind: entryKind, value: value)
         }
     }
 }

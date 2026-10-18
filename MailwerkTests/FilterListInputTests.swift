@@ -42,9 +42,18 @@ struct FilterListInputTests {
     }
 
     /// Eine Domain wird als Domain erkannt.
-    @Test("Eine Domain wird als Domain erkannt", arguments: ["firma.de", "*@firma.de", "@firma.de"])
+    @Test("Eine Domain wird als Domain erkannt",
+          arguments: ["firma.de", "*firma.de", "*.firma.de", "*@firma.de", "@firma.de"])
     func singleDomain(input: String) {
         #expect(FilterListInput.parse(input).entries == [domain("firma.de")])
+    }
+
+    /// Reine Länderendungen sind keine Domain.
+    @Test("Reine Länderendungen sind keine Domain", arguments: ["co.uk", "*co.uk", "*.com.au", "*@co.uk", "*de"])
+    func suffixOnlyIsInvalid(input: String) {
+        let result = FilterListInput.parse(input)
+        #expect(result.entries.isEmpty)
+        #expect(result.invalid == [input])
     }
 
     /// Ein Anzeigename wird entfernt.

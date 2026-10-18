@@ -7,11 +7,11 @@
 //  fasst das Ergebnis für die Meldung zusammen.
 //
 //  Format: dasselbe wie beim Export (FilterListExporter) und im
-//  manitu-Portal – eine Angabe je Zeile, Domains als `*@firma.de`. Erkannt
+//  manitu-Portal – eine Angabe je Zeile, Domains als `*firma.de`. Erkannt
 //  wird mit derselben Zerlegung wie bei „Neuer Eintrag …“
 //  (FilterListInput); damit gelten auch dieselben Regeln: Komma,
-//  Semikolon und Leerzeichen trennen ebenfalls, `firma.de` und
-//  `*@firma.de` werden zur Domain.
+//  Semikolon und Leerzeichen trennen ebenfalls, `firma.de`, `*firma.de`,
+//  `*.firma.de` und `*@firma.de` (ältere Exporte) werden zur Domain.
 //
 //  Ob ein Eintrag schon auf der anderen Liste steht, prüft erst das
 //  Eintragen selbst (FilterListRepository) – genau wie bei der manuellen

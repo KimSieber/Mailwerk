@@ -10,8 +10,11 @@
 //  - in der Mailliste: darf die Zeile ein Absenderbild zeigen
 //    (`allowsSenderImage`) – nur, wenn der Filter die Mail behalten würde.
 //
-//  Alle Entscheidungen nutzen denselben Listenabgleich (`listMatch`):
-//  exakte Adresse vor Domain, auf jeder Stufe Whitelist vor Blacklist. Ein
+//  Alle Entscheidungen nutzen denselben Listenabgleich (`listMatch`): der
+//  genaueste Eintrag gewinnt – exakte Adresse vor Domain, eine Subdomain
+//  vor ihrer übergeordneten Domain (`news.firma.de` vor `firma.de`), auf
+//  jeder Stufe Whitelist vor Blacklist. Ein Domain-Eintrag gilt samt
+//  Subdomains (FilterDomain). Ein
 //  Whitelist-Treffer schützt nur unterhalb der Score-Obergrenze – Schutz
 //  gegen gefälschte `From`-Adressen. So gilt für Spamfilter und Anzeige
 //  dieselbe Regel, und sie steht nur an einer Stelle.
@@ -23,7 +26,7 @@
 //  Abgrenzung: Auswertung der Server-Header → SpamHeaderParser; Plan für
 //  viele Mails → SpamFilterPlanner; Ausführen → SpamFilterService.
 //
-//  Abhängigkeiten: Foundation, FilterAddress, SpamHeaderVerdict.
+//  Abhängigkeiten: Foundation, FilterAddress, FilterDomain, SpamHeaderVerdict.
 //
 
 import Foundation
@@ -42,7 +45,8 @@ nonisolated enum SpamDecision: Equatable {
 ///
 /// Zwei Listen, je nach Art des Eintrags in zwei Mengen zerlegt. Die Trennung
 /// dient allein dem Nachschlagen: Ein Absender wird zuerst als ganze Adresse
-/// gesucht, erst danach über seine Domain. In der Oberfläche und im Speicher
+/// gesucht, erst danach über seine Domain und deren übergeordnete Domains.
+/// In der Oberfläche und im Speicher
 /// bleiben es zwei Listen.
 nonisolated struct FilterLists: Equatable {
     /// Exakte Adressen auf der Whitelist.
@@ -76,7 +80,8 @@ nonisolated enum SpamClassifier {
     ///
     /// Verarbeitung (der spezifischste Treffer entscheidet):
     /// 1. exakte Adresse: Whitelist → behalten*, Blacklist → Spam
-    /// 2. Domain: Whitelist → behalten*, Blacklist → Spam
+    /// 2. Domain, von der genauesten zur allgemeinsten (`news.firma.de`, dann
+    ///    `firma.de`): Whitelist → behalten*, Blacklist → Spam
     /// 3. Server-Einstufung Spam → Spam
     /// 4. sonst behalten
     ///
@@ -160,7 +165,9 @@ nonisolated enum SpamClassifier {
     /// Sucht den spezifischsten Listentreffer eines Absenders.
     ///
     /// Verarbeitung: Zuerst die exakte Adresse (Whitelist, dann Blacklist),
-    /// danach die Domain in derselben Reihenfolge.
+    /// danach die Domain und ihre übergeordneten Domains bis zur
+    /// Hauptdomain, vom genauesten zum allgemeinsten Eintrag, je Stufe in
+    /// derselben Reihenfolge. Der erste Treffer gewinnt.
     ///
     /// - Parameters:
     ///   - sender: Absender.
@@ -169,8 +176,10 @@ nonisolated enum SpamClassifier {
     private static func listMatch(for sender: FilterAddress, in lists: FilterLists) -> ListMatch? {
         if lists.whiteAddresses.contains(sender.address) { return .white }
         if lists.blackAddresses.contains(sender.address) { return .black }
-        if lists.whiteDomains.contains(sender.domain) { return .white }
-        if lists.blackDomains.contains(sender.domain) { return .black }
+        for domain in FilterDomain.matchCandidates(for: sender.domain) {
+            if lists.whiteDomains.contains(domain) { return .white }
+            if lists.blackDomains.contains(domain) { return .black }
+        }
         return nil
     }
 

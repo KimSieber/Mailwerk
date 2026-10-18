@@ -3,14 +3,15 @@
 //  Mailwerk
 //
 //  Zweck: Gibt eine Liste als Text aus – eine Angabe je Zeile, Domains in
-//  der Schreibweise `*@firma.de`. Genau dieses Format erwartet das
-//  manitu-Portal, sodass sich eine Liste dort übernehmen lässt.
+//  der Schreibweise `*firma.de` (Domain samt Subdomains). So verstehen es
+//  das manitu-Portal und andere Blacklists, sodass sich eine Liste dort
+//  übernehmen lässt.
 //
 //  Reine Logik, deshalb `nonisolated`.
 //
 //  Abgrenzung: Teilen der Datei → FilterListView.
 //
-//  Abhängigkeiten: Foundation, FilterEntryItem.
+//  Abhängigkeiten: Foundation, FilterEntryItem, FilterDomain.
 //
 
 import Foundation
@@ -69,14 +70,11 @@ nonisolated enum FilterListExporter {
         return fileURL
     }
 
-    /// Zeile eines Eintrags; Domains als `*@domain`.
+    /// Zeile eines Eintrags; Domains als `*domain`.
     ///
     /// - Parameter entry: Eintrag.
     /// - Returns: Zeile.
     private static func line(for entry: FilterEntryItem) -> String {
-        switch entry.kind {
-        case .address: entry.value
-        case .domain: "*@\(entry.value)"
-        }
+        FilterDomain.display(entry.value, kind: entry.kind)
     }
 }

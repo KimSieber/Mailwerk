@@ -141,10 +141,11 @@ struct SpamClassifierTests {
         #expect(try classify("x@firma.de", serverSpam(6), lists, limit: 5) == .junkServer)
     }
 
-    // MARK: - Exakter Domain-Vergleich
+    // MARK: - Domain-Vergleich an der Punkt-Grenze
 
-    @Test("Ähnliche Domains und Subdomains treffen nicht",
-          arguments: ["x@evil-firma.de", "x@mail.firma.de", "x@firma.de.evil.com"])
+    /// Ähnliche Domains treffen nicht (Subdomains siehe „Domains samt Subdomains“).
+    @Test("Ähnliche Domains treffen nicht",
+          arguments: ["x@evil-firma.de", "x@firma.de.evil.com"])
     func exactDomainMatch(sender: String) throws {
         let lists = FilterLists(whiteDomains: ["firma.de"], blackDomains: ["firma.de"])
         #expect(try classify(sender, clean, lists) == .keep)
@@ -248,5 +249,44 @@ struct SpamClassifierTests {
     /// Ohne bekannte Spam-Angabe vorsichtshalber kein Bild.
     @Test func unknownVerdictGivesNoImage() throws {
         #expect(try !allowsImage("info@firma.de", nil))
+    }
+
+    // MARK: - Domains samt Subdomains
+
+    /// Ein Domain-Eintrag gilt auch für Subdomains, aber nicht an der Punkt-Grenze vorbei.
+    @Test func domainEntryCoversSubdomains() throws {
+        let lists = FilterLists(blackDomains: ["apple.com"])
+        #expect(try classify("x@apple.com", clean, lists) == .junkBlacklist)
+        #expect(try classify("x@mail.apple.com", clean, lists) == .junkBlacklist)
+        #expect(try classify("x@a.mail.apple.com", clean, lists) == .junkBlacklist)
+        #expect(try classify("x@badapple.com", clean, lists) == .keep)
+    }
+
+    /// Ein Subdomain-Eintrag gilt nicht für die übergeordnete Domain.
+    @Test func subdomainEntryDoesNotCoverParent() throws {
+        let lists = FilterLists(blackDomains: ["mail.apple.com"])
+        #expect(try classify("x@mail.apple.com", clean, lists) == .junkBlacklist)
+        #expect(try classify("x@apple.com", clean, lists) == .keep)
+    }
+
+    /// Der genaueste Eintrag gewinnt: Blacklist-Subdomain vor Whitelist-Hauptdomain.
+    @Test func mostSpecificDomainWins() throws {
+        let lists = FilterLists(whiteDomains: ["apple.com"], blackDomains: ["news.apple.com"])
+        #expect(try classify("x@news.apple.com", clean, lists) == .junkBlacklist)
+        #expect(try classify("x@mail.apple.com", clean, lists) == .keep)
+    }
+
+    /// Umgekehrt: Whitelist-Subdomain vor Blacklist-Hauptdomain.
+    @Test func whitelistedSubdomainBeatsBlacklistedParent() throws {
+        let lists = FilterLists(whiteDomains: ["support.firma.de"], blackDomains: ["firma.de"])
+        #expect(try classify("x@support.firma.de", clean, lists) == .keep)
+        #expect(try classify("x@werbung.firma.de", clean, lists) == .junkBlacklist)
+    }
+
+    /// Externe Inhalte: eine Whitelist-Hauptdomain trifft auch Subdomains.
+    @Test func trustCoversSubdomains() throws {
+        let lists = FilterLists(whiteDomains: ["apple.com"])
+        let sender = try #require(FilterAddress(normalizing: "x@mail.apple.com"))
+        #expect(SpamClassifier.trustsSender(sender: sender, verdict: clean, lists: lists))
     }
 }
