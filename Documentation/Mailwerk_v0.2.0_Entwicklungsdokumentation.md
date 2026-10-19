@@ -180,7 +180,7 @@ Vorher Xcode beenden, Branch holen (`git fetch`, `git switch claude/tender-feynm
 ### 6.1 Ziel Watch-App
 
 1. **File → New → Target… → watchOS → App → Next.**
-2. Product Name `MailwerkWatch`, Team wie bisher, **Watch App for Existing iOS App**, Companion: `Mailwerk`; ohne Notification Scene, ohne Tests → **Finish**. Das Ziel heißt danach „MailwerkWatch Watch App“.
+2. Product Name `MailwerkWatch`, Team wie bisher, **Watch App for Existing iOS App**, Companion: `Mailwerk`, Testing System **None** → **Finish**, Schema aktivieren. Das Ziel heißt danach „MailwerkWatch Watch App“.
 3. Den neu angelegten Ordner **„MailwerkWatch Watch App“** im Navigator löschen (**Move to Trash**) – er enthält nur die Vorlage.
 4. Rechtsklick auf das Projekt → **Add Files to "Mailwerk"…** → Ordner `MailwerkWatch` → **Create folders**, Ziel nur **MailwerkWatch Watch App**.
 5. Ziel „MailwerkWatch Watch App“ → **Build Settings** (All, beide Konfigurationen):
@@ -193,9 +193,12 @@ Vorher Xcode beenden, Branch holen (`git fetch`, `git switch claude/tender-feynm
    - Marketing Version **0.2.0**, Current Project Version **1**
    - Code Signing Entitlements: `MailwerkWatch/MailwerkWatch.entitlements`
    - App Icon (`ASSETCATALOG_COMPILER_APPICON_NAME`): `AppIcon`
+   - Global Accent Color Name: leer (die Akzentfarbe liegt im Asset-Katalog der App, der nicht zur Watch gehört)
+   - benutzerdefiniert (+ → Add User-Defined Setting): `REGISTER_APP_GROUPS` = `YES`
+   - „Supports Running Without iOS App Installation“ bietet die Vorlage nicht an; ohne Eintrag gilt „No“
 6. **Signing & Capabilities:** automatische Signierung; die App Group steht in der Entitlements-Datei (wie beim iPhone mit `$(MAILWERK_BUNDLE_SUFFIX)`). Falls Xcode „App Groups“ nicht registriert: + Capability → App Groups → Gruppe `group.de.sieber-bw.Mailwerk.dev` bzw. `group.de.sieber-bw.Mailwerk` anhaken und danach in der Entitlements-Datei wieder den Wert mit `$(MAILWERK_BUNDLE_SUFFIX)` herstellen.
 7. **Zielzugehörigkeit** (Navigator: Dateien mit ⌘-Klick wählen → File Inspector → Target Membership → **MailwerkWatch Watch App** anhaken):
-   - `Mailwerk/AppIcon.icon`, `Mailwerk/Assets.xcassets`
+   - `Mailwerk/AppIcon.icon` (`Assets.xcassets` nicht – Xcode bietet dafür keine Zuordnung an, und die Watch braucht sie nicht)
    - `Mailwerk/Models/AccountColor.swift`, `Mailwerk/Models/SenderDomain.swift`
    - `Mailwerk/Services/Log.swift`, `ListDateFormatter.swift`, `HTMLRichTextParser.swift`
    - `Mailwerk/Services/Spam/FilterAddress.swift`, `FilterDomain.swift`, `FilterEntry.swift`, `SpamClassifier.swift`, `SpamHeaderParser.swift`, `SpamMark.swift`, `SpamMenuChoice.swift`
@@ -204,11 +207,13 @@ Vorher Xcode beenden, Branch holen (`git fetch`, `git switch claude/tender-feynm
 
 ### 6.2 Ziel Komplikation
 
-1. **File → New → Target… → watchOS → Widget Extension.** Product Name `MailwerkWatchWidget`, **ohne** Configuration App Intent, Embed in **MailwerkWatch Watch App** → Finish (Schema nicht aktivieren).
-2. Den neuen Ordner **„MailwerkWatchWidget“** löschen (**Move to Trash**).
-3. **Add Files to "Mailwerk"…** → Ordner `MailwerkWatchComplication` → **Create folders**, Ziel nur **MailwerkWatchWidget**.
-4. Build Settings: Bundle Identifier `de.sieber-bw.Mailwerk$(MAILWERK_BUNDLE_SUFFIX).watchkitapp.MailwerkWatchWidget`; watchOS 26.5; Swift-Einstellungen wie 6.1; Marketing Version 0.2.0, Build 1; `INFOPLIST_KEY_CFBundleDisplayName` = `$(MAILWERK_DISPLAY_NAME)`; Code Signing Entitlements `MailwerkWatchComplication/MailwerkWatchWidget.entitlements`.
-5. Zielzugehörigkeit **MailwerkWatchWidget** für `Mailwerk/Services/Watch/WatchAppGroup.swift` und `Mailwerk/Services/ListDateFormatter.swift`.
+1. **File → New → Target… → watchOS → Widget Extension.** Product Name `MailwerkWatchWidget`, **ohne** Include Control und **ohne** Configuration App Intent, Embed in **MailwerkWatch Watch App** → Finish (Schema nicht aktivieren). Das Ziel heißt danach „MailwerkWatchWidgetExtension“.
+2. Im neuen Ordner **„MailwerkWatchWidget“** nur die beiden Swift-Dateien der Vorlage löschen (**Move to Trash**). `Info.plist` (Kennung als Widget-Erweiterung) und `Assets.xcassets` bleiben.
+3. **Add Files to "Mailwerk"…** → Ordner `MailwerkWatchComplication` → **Create folders**, Ziel nur **MailwerkWatchWidgetExtension** (nicht zusätzlich die Watch-App – sonst „'main' attribute can only apply to one type in a module“).
+4. `MailwerkWatchWidget/Info.plist`: in der Zielzugehörigkeit **keinen** Haken (sonst „Multiple commands produce …Info.plist“); sie wirkt über „Info.plist File“.
+5. Build Settings: Bundle Identifier `de.sieber-bw.Mailwerk$(MAILWERK_BUNDLE_SUFFIX).watchkitapp.MailwerkWatchWidget`; watchOS 26.5; Swift-Einstellungen wie 6.1; Marketing Version 0.2.0, Build 1; `INFOPLIST_KEY_CFBundleDisplayName` = `$(MAILWERK_DISPLAY_NAME)`; Code Signing Entitlements `MailwerkWatchComplication/MailwerkWatchWidget.entitlements`; benutzerdefiniert `REGISTER_APP_GROUPS` = `YES`.
+6. Zielzugehörigkeit **MailwerkWatchWidgetExtension** für `Mailwerk/Services/Watch/WatchAppGroup.swift` und `Mailwerk/Services/ListDateFormatter.swift`.
+7. Später aufräumen (vorgemerkt): `Info.plist` und `Assets.xcassets` nach `MailwerkWatchComplication` verschieben, „Info.plist File“ anpassen, leeren Ordner `MailwerkWatchWidget` löschen.
 
 ### 6.3 Ziel Mailwerk (iPhone/Mac)
 
@@ -216,7 +221,8 @@ Vorher Xcode beenden, Branch holen (`git fetch`, `git switch claude/tender-feynm
 - Danach in Source Control prüfen, dass `project.pbxproj` keine festen Anzeigenamen („Mailwerk Dev“) enthält (Erfahrung aus v0.1.20).
 
 **Mögliche Stolpersteine:**
-- „Multiple commands produce …Info.plist“ bzw. eine `.entitlements`-Datei unter Copy Bundle Resources: die Datei im File Inspector aus der Zielzugehörigkeit nehmen.
+- „Multiple commands produce …Info.plist“ bzw. eine `.entitlements`-Datei unter Copy Bundle Resources: die Datei im File Inspector aus der Zielzugehörigkeit nehmen (bei der Einrichtung aufgetreten, siehe 6.2).
+- „'main' attribute can only apply to one type in a module“: Ordner `MailwerkWatchComplication` ist zusätzlich der Watch-App zugeordnet (bei der Einrichtung aufgetreten).
 - Fehler zu `SwiftMail` in `FilterAddress.swift` beim Watch-Ziel: SwiftMail darf dem Watch-Ziel nicht zugeordnet sein (Frameworks-Liste des Ziels leer lassen).
 
 ---

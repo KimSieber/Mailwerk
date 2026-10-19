@@ -72,8 +72,8 @@ enum WatchSnapshotBuilder {
 
         let inbox = store.allMessages(accountIDs: accountIDs, folder: MailFolder.inboxPath)
         let spam = store.messages(in: spamFolders)
-        let inboxIDs = Set(WatchMailSelection.inbox(inbox.map(candidate)))
-        let spamIDs = Set(WatchMailSelection.spam(spam.map(candidate)))
+        let inboxIDs = Set(WatchMailSelection.inbox(inbox.map { candidate($0) }))
+        let spamIDs = Set(WatchMailSelection.spam(spam.map { candidate($0) }))
 
         let mails = inbox.filter { inboxIDs.contains($0.id) }.map { mail(from: $0, box: .inbox, colors: colors) }
             + spam.filter { spamIDs.contains($0.id) }.map { mail(from: $0, box: .spam, colors: colors) }
