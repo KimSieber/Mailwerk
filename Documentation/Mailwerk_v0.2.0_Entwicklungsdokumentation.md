@@ -299,6 +299,7 @@ Vorher Xcode beenden, Branch holen (`git fetch`, `git switch claude/tender-feynm
 - **Watch, später möglich:** eingebettete Bilder (`cid:`) mitliefern; Mitteilungen; Mac als Lieferant ist technisch nicht möglich (WatchConnectivity nur mit dem gekoppelten iPhone).
 - **Default Mail App:** Antwort von Apple abwarten; danach Capability „Default Mail App“ an `de.sieber-bw.Mailwerk` einrichten, neuen Build hochladen; Test-Postfach für Apple löschen.
 - **Mac:** produktive „Mailwerk“ (TestFlight) noch nicht installiert.
+- **Mac – Mail öffnet sich nicht (Fenstergröße):** Beim Test von v0.2.0 öffneten sich manche Mails nicht (Konsole: „⏱ Mail geöffnet“, „⏱ HTML geladen“, Bildschirm unverändert). Nach dem Vergrößern des Fensters gegenüber der Startgröße öffneten sie sich; die auslösende Größe ließ sich danach nicht mehr herstellen. Vermutung (nicht belegt): Zusammenhang mit der Titel-Mindestbreite (`viewWidth`) in `InboxView`. Beim nächsten Auftreten Screenshot des Fensters und Konsole (`XPCConnectionTerminationWatchdog`, `WebContent`) sichern. Ähnliches Bild in v0.1.17 (damals Umgebung).
 - **Azure-Probephase:** nach Ablauf Outlook in „Mailwerk Dev“ neu anmelden; vor App Store Herausgeber-Verifizierung.
 - **`mailto:`-Randfall:** bei offener QuickLook-Vorschau oder Rückfrage kann das Fenster ausbleiben – beobachten.
 - **Spam:** Prüfung mit neu eingehender GMX/web.de-Mail eines Whitelist-Absenders mit `X-Spam-Flag: YES` steht noch aus.
