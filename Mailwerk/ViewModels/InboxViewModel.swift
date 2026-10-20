@@ -76,8 +76,9 @@
 //  FolderKey, MailFolder, SpamClassifier, SpamMark, FilterAddress, OAuthError,
 //  OAuthSignInState, Log.
 //
-//  Apple Watch: `onInboxesRefreshed` meldet jeden Abruf der Posteingänge an
-//  die WatchBridge, die der Watch daraufhin den neuen Stand liefert.
+//  Apple Watch: `onInboxesRefreshed` meldet jeden Abruf der Posteingänge,
+//  `onCacheReloaded` jedes Neuladen der Liste an die WatchBridge, die der
+//  Watch daraufhin den neuen Stand liefert.
 //
 
 import Foundation
@@ -181,6 +182,11 @@ final class InboxViewModel {
     /// oder nach Fehlern) – die Anbindung der Apple Watch liefert dann den
     /// neuen Stand (WatchBridge).
     @ObservationIgnored var onInboxesRefreshed: (() -> Void)?
+
+    /// Wird nach jedem Neuladen der Liste aus dem Cache aufgerufen (Aktion,
+    /// Abruf, Ansichtswechsel) – die Anbindung der Apple Watch schickt dann
+    /// einer gerade offenen Watch-App den neuen Stand (WatchBridge).
+    @ObservationIgnored var onCacheReloaded: (() -> Void)?
 
     /// Stimmt die Abrufe ab: nacheinander, ohne Doppelungen; bei mehreren
     /// wartenden Ordnern zählt nur der zuletzt gewählte.
@@ -304,6 +310,7 @@ final class InboxViewModel {
         }
         reloadFilterLists()
         cacheGeneration += 1
+        onCacheReloaded?()
         #if DEBUG
         reportCacheLoad(startedAt: started)
         #endif

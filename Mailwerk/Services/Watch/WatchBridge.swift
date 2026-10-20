@@ -24,6 +24,11 @@
 //  Fehler werden als gescheitert gemeldet. Bereits ausgeführte Aktionen
 //  werden nicht doppelt ausgeführt (`completed`).
 //
+//  Sofort: Ändert sich auf dem iPhone etwas (Aktion, Abruf) und ist die
+//  Watch-App gerade offen, geht der neue Stand aus dem Cache nach kurzer
+//  Wartezeit an sie (`cacheReloaded`). Aktionen der Watch zeigt die Liste
+//  auf dem iPhone sofort.
+//
 //  Hintergrund: Ruft die App selbst ab (Start, Herunterziehen), bekommt die
 //  Watch den neuen Stand als Datei im Hintergrund – samt den Inhalten, die
 //  sie noch nicht hat. So ist er beim nächsten Öffnen der Watch schon da.
@@ -79,6 +84,12 @@ final class WatchBridge {
     private var completed: [UUID: WatchActionOutcome.Result] = [:]
     /// Kennzeichen des zuletzt gelieferten Stands (nichts doppelt senden).
     private var lastSignature: String?
+    /// Wartet kurz, bevor eine Änderung auf dem iPhone an die offene
+    /// Watch-App geht; weitere Änderungen in dieser Zeit ersetzen sie.
+    private var pendingPush: Task<Void, Never>?
+
+    /// Wartezeit, in der Änderungen auf dem iPhone zusammengefasst werden.
+    static let pushDelay: Duration = .seconds(1)
 
     /// Nur die gemeinsame Instanz.
     private init() {}
@@ -93,6 +104,7 @@ final class WatchBridge {
         guard self.objects == nil, WCSession.isSupported() else { return }
         self.objects = objects
         objects.inbox.onInboxesRefreshed = { [weak self] in self?.inboxesRefreshed() }
+        objects.inbox.onCacheReloaded = { [weak self] in self?.cacheReloaded() }
         let session = WCSession.default
         session.delegate = sessionDelegate
         session.activate()
@@ -174,6 +186,10 @@ final class WatchBridge {
             waitingActions = []
             refreshRequested = false
             let outcomes = await perform(batch, objects: objects)
+            if !batch.isEmpty {
+                // Die Liste auf dem iPhone zeigt die Aktionen der Watch sofort.
+                objects.inbox.loadFromCache()
+            }
             var problems: [String] = []
             if refresh {
                 await objects.inbox.refresh()
@@ -340,6 +356,28 @@ final class WatchBridge {
             guard Self.signature(of: snapshot) != lastSignature else { return }
             lastSignature = Self.signature(of: snapshot)
             await transferPackage(snapshot)
+        }
+    }
+
+    /// Nach einer Änderung auf dem iPhone (Aktion, Abruf): den neuen Stand
+    /// an die Watch-App schicken, wenn sie gerade offen ist.
+    ///
+    /// Verarbeitung: Nur bei erreichbarer Watch (Watch-App im Vordergrund),
+    /// nicht während einer Aktualisierung für die Watch (die liefert
+    /// selbst). Änderungen innerhalb von `pushDelay` werden zu einer
+    /// Lieferung zusammengefasst; unveränderte Stände gehen nicht hinaus.
+    /// Geliefert wird der Stand aus dem Cache, ohne Abruf vom Server.
+    private func cacheReloaded() {
+        guard !isSyncing, let session, session.activationState == .activated,
+              session.isPaired, session.isWatchAppInstalled, session.isReachable else { return }
+        pendingPush?.cancel()
+        pendingPush = Task {
+            try? await Task.sleep(for: Self.pushDelay)
+            guard !Task.isCancelled, !isSyncing, let objects else { return }
+            let snapshot = await snapshot(objects, isFresh: false)
+            guard Self.signature(of: snapshot) != lastSignature else { return }
+            push(.snapshot(snapshot))
+            Log.watch.info("⌚️ Änderung auf dem iPhone an die offene Watch-App geschickt")
         }
     }
 

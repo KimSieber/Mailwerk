@@ -90,7 +90,8 @@ WatchStore (Dateien) ── badge.plist ──► Komplikation
 2. **Inhalte:** Fehlende Inhalte und Absenderbilder holt die Watch in Gruppen nach (6 Mails bzw. 20 Bilder je Anfrage), neueste zuerst. Eine geöffnete Mail ohne Inhalt wird sofort angefragt.
 3. **Einzelne Aktion:** Nur die Aktion geht zum iPhone, ohne Abruf.
 4. **Ohne iPhone:** Die Watch zeigt ihren gespeicherten Stand („iPhone nicht erreichbar“, „Stand: …“). Aktionen wirken sofort und kommen mit der nächsten Verbindung mit.
-5. **Hintergrund:** Ruft die iPhone-App selbst ab (Start, Herunterziehen), schickt sie den neuen Stand samt den Inhalten, die die Watch noch nicht hat, als Datei (`transferFile`). watchOS weckt die Watch-App kurz; beim nächsten Öffnen ist alles da.
+5. **Sofort bei offener Watch-App:** Ändert sich auf dem iPhone etwas (Aktion in der App, Abruf), schickt das iPhone den neuen Stand aus dem Cache nach etwa 1 Sekunde an die offene Watch-App; mehrere Änderungen werden zusammengefasst, unveränderte Stände gehen nicht hinaus. Umgekehrt lädt das iPhone seine Liste nach jeder Aktion der Watch neu. Ist die Watch-App geschlossen, kommt der Stand beim nächsten Öffnen.
+6. **Hintergrund:** Ruft die iPhone-App selbst ab (Start, Herunterziehen), schickt sie den neuen Stand samt den Inhalten, die die Watch noch nicht hat, als Datei (`transferFile`). watchOS weckt die Watch-App kurz; beim nächsten Öffnen ist alles da.
 
 ### Übertragung
 
@@ -243,6 +244,20 @@ Vorher Xcode beenden, Branch holen (`git fetch`, `git switch claude/tender-feynm
 | 10 | „Auf iPhone fortfahren“ | iPhone zeigt die Mail als Blatt |
 | 11 | Begrenzung | höchstens 100 Eingangsmails + 20 Spam auf der Watch |
 | 12 | Dev/Produktion | „Mailwerk Dev“ mit Testpostfächern; keine Produktivmails verändern |
+
+---
+
+## 8. Erster Test im Simulator
+
+Echte Watch: Xcode zeigt die gekoppelte Watch nicht an (vermutlich Richtlinie des verwalteten Firmen-iPhones, nicht belegt). Getestet wurde deshalb mit gekoppelten Simulatoren (iPhone 17 + Apple Watch Series 11, 46 mm).
+
+| Punkt | Ergebnis |
+|---|---|
+| Bau iPhone, Mac, Watch; 743 Tests | erfolgreich |
+| Verbindung, Startansicht mit Zählern, Liste, Mailansicht, gelesen beim Öffnen | erfolgreich |
+| Datum und Spam-Einschätzung im Mailkopf nebeneinander und umbrochen | geändert: je eine eigene Zeile, einzeilig |
+| Änderungen kamen erst nach „Aktualisieren“ an | geändert: sofort bei offener Watch-App (Abschnitt 3, Punkt 5) |
+| Bedienbarkeit (Größe, Finger), Hintergrundzeit, Komplikation auf dem Zifferblatt | offen – nur auf echter Watch prüfbar (TestFlight) |
 
 ---
 

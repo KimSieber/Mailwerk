@@ -133,16 +133,22 @@ struct WatchMailDetailView: View {
                     }
                 }
             }
-            HStack(spacing: 4) {
-                if let date = mail.date {
-                    Text(ListDateFormatter.string(for: date))
-                }
-                if let mark = spamMark(mail) {
-                    Text(mark)
-                }
+            // Datum und Spam-Einschätzung je in einer eigenen Zeile, nie
+            // umbrochen – nebeneinander wäre es auf der Watch zu eng.
+            if let date = mail.date {
+                Text(ListDateFormatter.string(for: date))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
+            if let mark = spamMark(mail) {
+                Text(mark)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
             if !mail.to.isEmpty {
                 Text("An: \(mail.to.joined(separator: ", "))")
                     .font(.caption2)
