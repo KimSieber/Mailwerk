@@ -18,7 +18,7 @@
 //  iPhone nicht erreichbar, Hinweise des iPhones.
 //
 //  Abgrenzung: Regeln des Zustands → WatchMailbox; Austausch mit dem
-//  iPhone → WatchConnector; Komplikation → MailwerkWatchWidget.
+//  iPhone → WatchConnector; Komplikation → MailwerkUnreadWidget.
 //
 //  Abhängigkeiten: Foundation, Observation, WidgetKit, WatchMailbox,
 //  WatchTransfer, WatchAppGroup, WatchBadge, SpamClassifier, Log.

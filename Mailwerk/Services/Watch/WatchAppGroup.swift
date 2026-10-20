@@ -14,7 +14,7 @@
 //  iPhone; die Geräte teilen dadurch aber nichts – jede Uhr und jedes
 //  iPhone hat ihren eigenen Speicher.
 //
-//  Abgrenzung: Mails und Inhalte → WatchStore; Anzeige → MailwerkWatchWidget.
+//  Abgrenzung: Mails und Inhalte → WatchStore; Anzeige → MailwerkUnreadWidget.
 //
 //  Abhängigkeiten: Foundation.
 //

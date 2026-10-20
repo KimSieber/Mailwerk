@@ -185,7 +185,7 @@
 			);
 			target = 3B7E79FE30869EA500AAB722 /* MailwerkWatchWidgetExtension */;
 		};
-		3B7E7A353086A26F00AAB722 /* Exceptions for "MailwerkWatchWidget" folder in "MailwerkWatchWidgetExtension" target */ = {
+		3B7E7A353086A26F00AAB722 /* Exceptions for "MailwerkWatchComplication" folder in "MailwerkWatchWidgetExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
@@ -224,16 +224,11 @@
 			path = MailwerkWatch;
 			sourceTree = "<group>";
 		};
-		3B7E7A0430869EA500AAB722 /* MailwerkWatchWidget */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				3B7E7A353086A26F00AAB722 /* Exceptions for "MailwerkWatchWidget" folder in "MailwerkWatchWidgetExtension" target */,
-			);
-			path = MailwerkWatchWidget;
-			sourceTree = "<group>";
-		};
 		3B7E7A3130869FD900AAB722 /* MailwerkWatchComplication */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				3B7E7A353086A26F00AAB722 /* Exceptions for "MailwerkWatchComplication" folder in "MailwerkWatchWidgetExtension" target */,
+			);
 			path = MailwerkWatchComplication;
 			sourceTree = "<group>";
 		};
@@ -340,7 +335,6 @@
 				3B3F6DB730802A69001BA55D /* MailwerkShare */,
 				3B3F6E6530812089001BA55D /* MailwerkShareMac */,
 				3B7E7A3130869FD900AAB722 /* MailwerkWatchComplication */,
-				3B7E7A0430869EA500AAB722 /* MailwerkWatchWidget */,
 				3B3F6DC730802D80001BA55D /* Frameworks */,
 				3B8C3B20305DE0980028B269 /* Products */,
 				3B7E79DF3086286C00AAB722 /* MailwerkWatch */,
@@ -449,7 +443,6 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				3B7E7A0430869EA500AAB722 /* MailwerkWatchWidget */,
 				3B7E7A3130869FD900AAB722 /* MailwerkWatchComplication */,
 			);
 			name = MailwerkWatchWidgetExtension;
@@ -980,7 +973,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 62QD57DH52;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = MailwerkWatchWidget/Info.plist;
+				INFOPLIST_FILE = MailwerkWatchComplication/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "$(MAILWERK_DISPLAY_NAME)";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1016,7 +1009,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 62QD57DH52;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = MailwerkWatchWidget/Info.plist;
+				INFOPLIST_FILE = MailwerkWatchComplication/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "$(MAILWERK_DISPLAY_NAME)";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
