@@ -48,8 +48,23 @@
 //  Die Liste arbeitet mit Listeneinträgen ohne Mailinhalt
 //  (`MessageListItem`). Erst beim Öffnen einer Mail lädt
 //  `MessageDetailLoader` die vollständige Nachricht aus dem Cache. Im
-//  Ordner „Entwürfe“ öffnet ein Tipp den Entwurf zum Weiterbearbeiten
+//  Ordner „Entwürfe” öffnet ein Tipp den Entwurf zum Weiterbearbeiten
 //  (`DraftComposeLoader`).
+//
+//  iPad: Auf dem iPad (horizontalSizeClass == .regular) erscheint eine
+//  geteilte Ansicht. Ohne ausgewählte Mail füllt die Liste die volle
+//  (verbleibende) Breite. Mit ausgewählter Mail:
+//  - Querformat: 2 Spalten (Liste + Detail, Ordner per SideDrawer) oder
+//    3 Spalten (Ordnerleiste + Liste + Detail) – Einstellung je Gerät.
+//    Bei 3 Spalten steht die Ordnerleiste dauerhaft, auch ohne
+//    ausgewählte Mail; der Knopf für die einblendbare Leiste entfällt.
+//  - Hochformat: 2 Spalten (Liste + Detail).
+//  - In beiden Ausrichtungen schaltet ein Knopf in der Detailansicht
+//    auf Vollbild und zurück.
+//  Alle Zustände nutzen dasselbe Spaltengerüst; nur die Breiten ändern
+//  sich. Die Liste wird dabei nie neu angelegt (siehe `regularColumns`).
+//  Auf dem iPhone und dem Mac bleibt die Navigation unverändert (Push
+//  per NavigationStack).
 //
 //  ViewModel und Ordnerkatalog legt die App einmal beim Start an und
 //  reicht sie herein. Würde die Ansicht sie selbst im `init` erzeugen,
@@ -135,6 +150,27 @@ struct InboxView: View {
     /// Zustand der Suche. Bewusst als `@State`: Das Anlegen ist billig
     /// (kein Laden im `init`), SwiftUI behält das erste Objekt.
     @State private var search: SearchViewModel
+
+    // MARK: - iPad-Spaltenlayout
+
+    /// Größenklasse: `.regular` auf dem iPad (quer und hoch), `.compact`
+    /// auf dem iPhone. Auf dem Mac nicht gesetzt, dort bleibt alles beim
+    /// NavigationStack.
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #endif
+    /// Auf dem iPad im Querformat drei Spalten statt zwei. Einstellung je
+    /// Gerät, über das Einstellungsmenü umschaltbar.
+    @AppStorage("iPadLandscapeThreeColumns") private var usesThreeColumns = false
+    /// ID der im iPad-Spaltenlayout ausgewählten Mail; `nil` = keine Mail
+    /// offen → Liste auf voller Breite.
+    @State private var selectedMessageID: String?
+    /// `true`, wenn die Detailansicht auf dem iPad den vollen Bildschirm
+    /// einnimmt (Hochformat: X schließt, Pfeile vergrößern).
+    @State private var isDetailFullscreen = false
+    /// `true` im Querformat; wird über `onGeometryChange` aktualisiert,
+    /// damit kein veraltetes `UIScreen.main` nötig ist.
+    @State private var isLandscape = false
 
     /// Übernimmt die beim App-Start angelegten Objekte.
     ///
@@ -253,9 +289,74 @@ struct InboxView: View {
         return Color(hex: hex)
     }
 
-    /// Aufbau der Ansicht: Liste bzw. Lade- oder Leerzustand, Symbolleiste,
-    /// Dialoge, „Rückgängig“-Hinweis und Ordnerleiste.
+    /// Aufbau der Ansicht: auf dem iPhone und Mac der klassische
+    /// NavigationStack (`compactBody`), auf dem iPad das Spaltenlayout
+    /// (`regularBody`).
     var body: some View {
+        Group {
+            #if os(iOS)
+            if horizontalSizeClass == .regular {
+                regularBody
+            } else {
+                compactBody
+            }
+            #else
+            compactBody
+            #endif
+        }
+        // Meldungskanal und Ordnerleiste: für beide Layouts gleich.
+        .alertItem($viewModel.alert)
+        .sideDrawer(isPresented: $showingFolders) {
+            FolderSidebarView(
+                accounts: accountStore.accounts,
+                pausedAccountIDs: accountStore.pausedAccountIDs,
+                signInRequiredIDs: signInState.signInRequired,
+                catalog: folderCatalog,
+                expandedAccounts: $expandedFolderAccounts,
+                selection: $viewModel.selection,
+                unreadCount: viewModel.unreadCount,
+                flaggedCount: viewModel.flaggedCount,
+                onCreateFolder: { account, parentPath, name in
+                    _ = try await MailActionService.createFolder(
+                        named: name,
+                        parentPath: parentPath,
+                        accountID: account.id,
+                        accountStore: accountStore
+                    )
+                },
+                onDeleteFolder: { account, node in
+                    try await deleteFolder(node, in: account)
+                },
+                onClose: { showingFolders = false }
+            )
+        }
+        // iPad: Ordnerwechsel setzt die Auswahl zurück.
+        .onChange(of: viewModel.selection) { _, _ in
+            #if os(iOS)
+            if horizontalSizeClass == .regular {
+                selectedMessageID = nil
+                isDetailFullscreen = false
+            }
+            #endif
+        }
+        // iPad: Auswahl zurücksetzen, wenn die Mail nicht mehr sichtbar ist
+        // (gelöscht, verschoben oder durch Filter entfernt).
+        #if os(iOS)
+        .onChange(of: viewModel.visibleMessages) { _, messages in
+            if let id = selectedMessageID,
+               !messages.contains(where: { $0.id == id }) {
+                selectedMessageID = nil
+                isDetailFullscreen = false
+            }
+        }
+        #endif
+    }
+
+    // MARK: - Compact-Layout (iPhone / Mac)
+
+    /// Klassische Navigation: NavigationStack mit Push. Unverändert
+    /// gegenüber dem bisherigen Aufbau.
+    private var compactBody: some View {
         NavigationStack {
             // WICHTIG: Jeder Zweig dieser Group muss genau EIN View liefern.
             // Modifier an einer Group wirken auf jedes Kind einzeln – bei
@@ -506,34 +607,554 @@ struct InboxView: View {
                 .countsAsOpenWindow()
             }
         }
-        // Einziger Meldungskanal der Liste – am äußeren Element, getrennt
-        // von der Rückfrage am Inhalt.
-        .alertItem($viewModel.alert)
-        .sideDrawer(isPresented: $showingFolders) {
-            FolderSidebarView(
-                accounts: accountStore.accounts,
-                pausedAccountIDs: accountStore.pausedAccountIDs,
-                signInRequiredIDs: signInState.signInRequired,
-                catalog: folderCatalog,
-                expandedAccounts: $expandedFolderAccounts,
-                selection: $viewModel.selection,
-                unreadCount: viewModel.unreadCount,
-                flaggedCount: viewModel.flaggedCount,
-                onCreateFolder: { account, parentPath, name in
-                    _ = try await MailActionService.createFolder(
-                        named: name,
-                        parentPath: parentPath,
-                        accountID: account.id,
-                        accountStore: accountStore
-                    )
-                },
-                onDeleteFolder: { account, node in
-                    try await deleteFolder(node, in: account)
-                },
-                onClose: { showingFolders = false }
+    }
+
+    // MARK: - iPad-Spaltenlayout
+
+    /// iPad-Layout: geteilte Ansicht mit programmatischer Navigation.
+    ///
+    /// Ohne ausgewählte Mail füllt die Mailliste die volle Breite. Mit
+    /// Mail: optionale Ordnerleiste, Liste und Detail nebeneinander. Im
+    /// Vollbild schrumpft die Liste auf Breite null, die Pfeile in der
+    /// Detailansicht holen sie zurück.
+    #if os(iOS)
+    private var regularBody: some View {
+        regularColumns
+        // Ausrichtung aus der tatsächlichen Fenstergröße ableiten (auch
+        // korrekt bei Split View / Stage Manager).
+        .onGeometryChange(for: Bool.self) { proxy in
+            proxy.size.width > proxy.size.height
+        } action: { landscape in
+            isLandscape = landscape
+        }
+        // Gemeinsame Modifier für Daten und Zustand (alle Layouts).
+        .task {
+            guard !hasLoadedOnce else { return }
+            hasLoadedOnce = true
+            Task { await ContactImageDirectory.shared.start() }
+            Task { await SearchIndexBuilder.run(store: MessageStore.shared) }
+            await viewModel.refresh()
+        }
+        .onChange(of: accountStore.accounts.map(\.id)) { oldIDs, newIDs in
+            guard !Set(newIDs).isSubset(of: Set(oldIDs)) else { return }
+            viewModel.loadFromCache()
+            Task { await viewModel.refresh() }
+        }
+        .onChange(of: showsRecipients, initial: true) { _, recipients in
+            viewModel.sortsByRecipients = recipients
+        }
+        .onReceive(FilterListCloudEvents.remoteChangesImported) {
+            viewModel.reloadFilterLists()
+        }
+        .onChange(of: network.isOnline) { wasOnline, isOnline in
+            guard isOnline, !wasOnline else { return }
+            Task { await refreshCurrentView() }
+        }
+        .onChange(of: signInState.signInRequired) { oldExpired, newExpired in
+            guard !oldExpired.isSubset(of: newExpired) else { return }
+            Task { await refreshCurrentView() }
+        }
+        .onChange(of: accountStore.pausedAccountIDs) { oldPaused, newPaused in
+            updateSearchScope()
+            viewModel.loadFromCache()
+            guard !oldPaused.isSubset(of: newPaused) else { return }
+            Task { await viewModel.refresh() }
+        }
+        .onChange(of: search.matchingIDs) { _, ids in
+            viewModel.searchFilter = ids
+        }
+        .onChange(of: viewModel.cacheGeneration) {
+            search.refreshLocal()
+        }
+        .onChange(of: viewModel.selection, initial: true) {
+            updateSearchScope()
+        }
+        .sheet(isPresented: $showingAccounts) {
+            AccountListView(accountStore: accountStore)
+                .countsAsOpenWindow()
+        }
+        .confirmationRequest(confirmation)
+        .sheet(isPresented: $showingSpamSettings, onDismiss: {
+            viewModel.reloadFilterLists()
+        }) {
+            SpamSettingsView(settings: spamSettings, filterLists: filterLists)
+                .countsAsOpenWindow()
+        }
+        .sheet(isPresented: $showingCompose) {
+            ComposeView(
+                accountStore: accountStore,
+                kind: .new,
+                senderAccountID: viewModel.selection.accountID,
+                onSent: { viewModel.loadFromCache() }
             )
+            .countsAsOpenWindow()
+        }
+        .sheet(item: $listCompose) { request in
+            ComposeView(
+                accountStore: accountStore,
+                kind: request.kind,
+                original: request.original,
+                onSent: { viewModel.loadFromCache() }
+            )
+            .countsAsOpenWindow()
+        }
+        .onContinueUserActivity(WatchHandoff.activityType) { activity in
+            guard let id = activity.userInfo?[WatchHandoff.messageIDKey] as? String else { return }
+            handoffMessage = HandoffMessageRequest(id: id)
+        }
+        .sheet(item: $handoffMessage) { request in
+            NavigationStack {
+                MessageDetailLoader(
+                    messageID: request.id,
+                    accountStore: accountStore,
+                    spamFilter: viewModel.spamFilter,
+                    scoreLimit: spamSettings.scoreLimit,
+                    onChange: { viewModel.loadFromCache() }
+                )
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Fertig") { handoffMessage = nil }
+                    }
+                }
+            }
+            .countsAsOpenWindow()
+        }
+        .sheet(item: $draftToEdit) { request in
+            DraftComposeLoader(
+                messageID: request.id,
+                accountStore: accountStore,
+                onSent: { refreshAfterDraft() }
+            )
+            .countsAsOpenWindow()
+        }
+        .sheet(isPresented: $showingSelectionMove) {
+            selectionMoveSheet
+                .countsAsOpenWindow()
+        }
+        .sheet(item: $moveItem) { item in
+            Group {
+                if let account = accountStore.accounts.first(where: { $0.id == item.accountID }) {
+                    FolderMoveSheet(
+                        account: account,
+                        currentFolder: item.folder,
+                        accountStore: accountStore
+                    ) { path in
+                        Task { await viewModel.move(item, to: path) }
+                    }
+                }
+            }
+            .countsAsOpenWindow()
         }
     }
+
+    /// Spaltengerüst des iPad: optionale Ordnerleiste, Liste, Detail.
+    ///
+    /// Verarbeitung: Alle drei Zustände (Liste allein, Spalten, Vollbild)
+    /// verwenden denselben Aufbau; es ändern sich nur Rahmenbreiten und
+    /// eingeblendete Nachbarn. Die Liste behält damit ihre Identität –
+    /// NavigationStack, Suchfeld und Scrollposition werden beim Antippen
+    /// einer Mail nicht verworfen. Ein Austausch des ganzen Ansichtsbaums
+    /// mitten in der Berührung kann unter iOS einen Übergang hängen lassen,
+    /// danach nimmt die App keine Eingaben mehr an.
+    private var regularColumns: some View {
+        let hasMessage = selectedMessageID != nil
+        let showsList = !(hasMessage && isDetailFullscreen)
+        return HStack(spacing: 0) {
+            if showsPermanentSidebar {
+                FolderSidebarView(
+                    accounts: accountStore.accounts,
+                    pausedAccountIDs: accountStore.pausedAccountIDs,
+                    signInRequiredIDs: signInState.signInRequired,
+                    catalog: folderCatalog,
+                    expandedAccounts: $expandedFolderAccounts,
+                    selection: $viewModel.selection,
+                    unreadCount: viewModel.unreadCount,
+                    flaggedCount: viewModel.flaggedCount,
+                    onCreateFolder: { account, parentPath, name in
+                        _ = try await MailActionService.createFolder(
+                            named: name,
+                            parentPath: parentPath,
+                            accountID: account.id,
+                            accountStore: accountStore
+                        )
+                    },
+                    onDeleteFolder: { account, node in
+                        try await deleteFolder(node, in: account)
+                    },
+                    onClose: { }
+                )
+                .frame(width: 280)
+                .background(AppTheme.background)
+                Divider()
+            }
+            // Mailliste: ohne Mail volle Breite, sonst feste Breite,
+            // im Vollbild Breite null (bleibt aber bestehen).
+            NavigationStack {
+                regularListContent
+            }
+            // Ausblenden per Deckkraft statt `.clipped()`: Das Abschneiden
+            // träfe auch die getönte Fläche unter der Statusleiste, die
+            // dann weiß erschiene.
+            .frame(width: regularListWidth(hasMessage: hasMessage, showsList: showsList))
+            .frame(maxWidth: hasMessage ? nil : .infinity)
+            .opacity(showsList ? 1 : 0)
+            .allowsHitTesting(showsList)
+            .accessibilityHidden(!showsList)
+            if hasMessage {
+                if showsList {
+                    Divider()
+                }
+                NavigationStack {
+                    regularDetailView
+                }
+            }
+        }
+        // Getönte Fläche auch hinter Spaltengrenzen und Statusleiste.
+        .background(AppTheme.background.ignoresSafeArea())
+        // Wird die feste Ordnerleiste sichtbar, ist die einblendbare
+        // überflüssig – sonst lägen zwei gleiche Leisten übereinander.
+        .onChange(of: showsPermanentSidebar) { _, permanent in
+            if permanent { showingFolders = false }
+        }
+    }
+
+    /// `true`, wenn die Ordnerleiste fest als erste Spalte steht.
+    ///
+    /// Verarbeitung: Im Querformat mit Einstellung „Drei Spalten“ steht
+    /// die Leiste dauerhaft – auch ohne ausgewählte Mail, damit sie beim
+    /// Ordnerwechsel nicht verschwindet. Nur im Vollbild der Detailansicht
+    /// tritt sie zurück.
+    private var showsPermanentSidebar: Bool {
+        isLandscape && usesThreeColumns
+            && !(selectedMessageID != nil && isDetailFullscreen)
+    }
+
+    /// Breite der Mailliste im Spaltengerüst.
+    ///
+    /// - Parameters:
+    ///   - hasMessage: `true`, wenn eine Mail ausgewählt ist.
+    ///   - showsList: `false` im Vollbild der Detailansicht.
+    /// - Returns: Breite in Punkt; `nil` = volle Breite (keine Mail).
+    private func regularListWidth(hasMessage: Bool, showsList: Bool) -> CGFloat? {
+        guard hasMessage else { return nil }
+        guard showsList else { return 0 }
+        return isLandscape ? 380 : 320
+    }
+
+    /// Seitenrand der Mailliste auf dem iPad, unabhängig von der Breite.
+    private static var regularListMargin: CGFloat { 16 }
+    /// Waagerechter Innenabstand der Mailzeilen auf dem iPad, unabhängig
+    /// von der Breite.
+    private static var regularRowInset: CGFloat { 16 }
+
+    /// Inhalt der Mailliste mit Toolbar, Suchfeld und Leisten. Wird
+    /// sowohl im Vollbild-Listenmodus als auch in der Spaltenansicht
+    /// wiederverwendet.
+    private var regularListContent: some View {
+        Group {
+            if viewModel.messages.isEmpty && viewModel.isLoading {
+                InitialLoadingView()
+            } else if viewModel.messages.isEmpty && !search.isPresented {
+                EmptyMailboxView(
+                    selection: viewModel.selection,
+                    hasAccounts: !accountStore.accounts.isEmpty
+                ) {
+                    if viewModel.showsOlderRow && !accountStore.accounts.isEmpty {
+                        olderRow
+                            .padding(.horizontal)
+                    }
+                }
+            } else {
+                regularMessageList
+            }
+        }
+        .appBackground()
+        .refreshable {
+            await refreshCurrentView()
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                Divider()
+                ForEach(expiredAccounts) { account in
+                    SignInRequiredBar(
+                        accountName: account.displayName,
+                        isRenewing: renewingAccountID == account.id,
+                        onRenew: { Task { await renewSignIn(account) } }
+                    )
+                    Divider()
+                }
+            }
+        }
+        .searchable(
+            text: $search.text,
+            tokens: $search.tokens,
+            isPresented: $search.isPresented,
+            placement: Self.searchPlacement,
+            prompt: "Suchen"
+        ) { person in
+            Label(person.title, systemImage: "person.fill")
+        }
+        .searchSuggestions {
+            ForEach(search.suggestions) { person in
+                PersonSuggestionRow(person: person)
+                    .searchCompletion(person)
+            }
+        }
+        .searchPresentationToolbarBehavior(.avoidHidingContent)
+        .navigationTitle(viewModel.selection.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { viewWidth = $0 }
+        .toolbar { regularListToolbar }
+        .overlay(alignment: .bottom) {
+            if let offer = viewModel.undoOffer {
+                UndoBar(
+                    text: offer.text,
+                    systemImage: offer.systemImage,
+                    duration: UndoOffer.duration,
+                    onUndo: { Task { await viewModel.undo(offer) } },
+                    onDismiss: { viewModel.dismissUndo() }
+                )
+                .id(offer.id)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .padding(.bottom, 10)
+                .padding(.horizontal, 12)
+            }
+        }
+        .animation(.snappy(duration: 0.25), value: viewModel.undoOffer?.id)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            bottomInset
+        }
+        .animation(.snappy(duration: 0.25), value: viewModel.isSelecting)
+        .animation(.snappy(duration: 0.25), value: search.isPresented)
+    }
+
+    /// Mailliste für das iPad-Layout: wie `messageList`, aber mit Button
+    /// statt NavigationLink.
+    private var regularMessageList: some View {
+        let colors = accountColors
+        let recipients = showsRecipients
+        let drafts = showsDrafts
+        return List(selection: listSelection) {
+            ForEach(viewModel.visibleMessages) { message in
+                regularMessageRow(
+                    for: message,
+                    colorHex: colors[message.accountID],
+                    showsRecipients: recipients,
+                    opensDraft: drafts
+                )
+                .cardRowBackground(
+                    isSelected: viewModel.isSelecting && viewModel.selectedIDs.contains(message.id)
+                )
+                // Fester waagerechter Innenabstand: Auch ihn bemisst das
+                // System nach der Containerbreite, sonst springt der
+                // Zeileninhalt beim Wechsel auf Spaltenbreite. Senkrecht
+                // bleibt der Systemstandard.
+                .listRowInsets(.horizontal, Self.regularRowInset)
+            }
+
+            if search.isFiltering {
+                if viewModel.visibleMessages.isEmpty {
+                    Text("Keine Treffer auf diesem Gerät")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .cardRowBackground()
+                }
+                if search.offersServerSearch && !viewModel.isSelecting {
+                    serverSection(colors: colors, showsRecipients: recipients)
+                }
+            } else if viewModel.showsOlderRow && !viewModel.isSelecting {
+                Section {
+                    olderRow
+                }
+                .cardRowBackground()
+            } else if let note = completeListNote, !viewModel.isSelecting {
+                Section {
+                    Text(note)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                }
+                .cardRowBackground()
+            }
+        }
+        // Feste Seitenränder: Ohne sie richtet das System die Ränder nach
+        // der Containerbreite, und der linke Rand der Liste springt, wenn
+        // sie von voller Breite auf Spaltenbreite wechselt.
+        .contentMargins(.horizontal, Self.regularListMargin, for: .scrollContent)
+        .environment(\.editMode, .constant(viewModel.isSelecting ? .active : .inactive))
+    }
+
+    /// Eine Zeile im iPad-Mailliste: Button statt NavigationLink, damit
+    /// die Mail in der Detailspalte erscheint statt per Push.
+    ///
+    /// - Parameters:
+    ///   - message: Darzustellender Listeneintrag.
+    ///   - colorHex: Farbe des Postfachs; `nil` = keine.
+    ///   - showsRecipients: `true` in Gesendet und Entwürfen.
+    ///   - opensDraft: `true` im Entwürfe-Ordner.
+    /// - Returns: Die fertige Zeile.
+    private func regularMessageRow(
+        for message: MessageListItem,
+        colorHex: String?,
+        showsRecipients: Bool,
+        opensDraft: Bool
+    ) -> some View {
+        Group {
+            if viewModel.isSelecting {
+                selectableRow(for: message, colorHex: colorHex, showsRecipients: showsRecipients)
+            } else if opensDraft {
+                Button {
+                    draftToEdit = DraftEditRequest(id: message.id)
+                } label: {
+                    rowContent(for: message, colorHex: colorHex, showsRecipients: showsRecipients)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            } else {
+                Button {
+                    selectedMessageID = message.id
+                    isDetailFullscreen = false
+                } label: {
+                    rowContent(for: message, colorHex: colorHex, showsRecipients: showsRecipients)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            Button {
+                Task { await viewModel.toggleRead(message) }
+            } label: {
+                Label(
+                    message.isUnread ? "Gelesen" : "Ungelesen",
+                    systemImage: message.isUnread ? "envelope.open" : "envelope.badge"
+                )
+            }
+            .tint(.blue)
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button {
+                Task { await viewModel.toggleFlag(message) }
+            } label: {
+                Label(
+                    message.isFlagged ? "Entflaggen" : "Flaggen",
+                    systemImage: message.isFlagged ? "flag.slash" : "flag"
+                )
+            }
+            .tint(.orange)
+        }
+        .contextMenu {
+            MessageMenuItems(
+                context: MessageMenuContext(message),
+                showsSelect: true,
+                onAction: { handleMenuAction($0, for: message) }
+            ) {
+                EmptyView()
+            }
+        }
+        .disabled(viewModel.processingMessageIDs.contains(message.id))
+    }
+
+    /// Detailansicht für das iPad-Spaltenlayout.
+    @ViewBuilder
+    private var regularDetailView: some View {
+        if let id = selectedMessageID {
+            MessageDetailLoader(
+                messageID: id,
+                accountStore: accountStore,
+                spamFilter: viewModel.spamFilter,
+                scoreLimit: spamSettings.scoreLimit,
+                onChange: { viewModel.loadFromCache() },
+                onSearchPerson: { startPersonSearch($0) },
+                showsRecipients: showsRecipients,
+                onToggleFullscreen: {
+                    withAnimation(.snappy(duration: 0.25)) {
+                        isDetailFullscreen.toggle()
+                    }
+                },
+                isFullscreen: isDetailFullscreen
+            )
+            // Eigene Identität je Mail: Der Loader lädt nur einmal; ohne
+            // `.id` bliebe beim Antippen einer anderen Mail die alte stehen.
+            .id(id)
+        } else {
+            // Platzhalter, falls das Spaltenlayout ohne Mail gezeigt wird
+            // (sollte durch die Logik nicht passieren).
+            ContentUnavailableView(
+                "Keine Nachricht ausgewählt",
+                systemImage: "envelope",
+                description: Text("Wähle eine Nachricht aus der Liste.")
+            )
+            .appBackground()
+        }
+    }
+
+    /// Symbolleiste der iPad-Liste: wie `listToolbar`, aber mit
+    /// Dreispalten-Einstellung im Einstellungsmenü.
+    @ToolbarContentBuilder
+    private var regularListToolbar: some ToolbarContent {
+        if viewModel.isSelecting {
+            ToolbarItem(placement: .topBarLeading) {
+                Button(viewModel.isAllSelected ? "Auswahl aufheben" : "Alle auswählen") {
+                    viewModel.toggleSelectAll()
+                }
+            }
+            ToolbarItem(placement: .principal) {
+                Text("\(viewModel.selectedIDs.count) ausgewählt")
+                    .font(.subheadline.weight(.semibold))
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Fertig") {
+                    withAnimation(.snappy(duration: 0.25)) { viewModel.endSelection() }
+                }
+            }
+        } else {
+            // Steht die Ordnerleiste fest als erste Spalte, entfällt der
+            // Knopf für die einblendbare Leiste.
+            if !showsPermanentSidebar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showingFolders = true
+                    } label: {
+                        Label("Ordner", systemImage: "sidebar.left")
+                    }
+                }
+            }
+            ToolbarItem(placement: .principal) {
+                InboxTitle(
+                    selection: viewModel.selection,
+                    accountColor: selectedAccountColor,
+                    syncState: viewModel.syncState,
+                    connectionStatus: connectionStatus,
+                    isLoading: viewModel.isLoading && !viewModel.messages.isEmpty,
+                    minWidth: max(0, viewWidth - Self.toolbarButtonsWidth)
+                )
+            }
+            ToolbarItem {
+                Menu {
+                    Button {
+                        showingAccounts = true
+                    } label: {
+                        Label("Postfächer", systemImage: "envelope")
+                    }
+                    Button {
+                        showingSpamSettings = true
+                    } label: {
+                        Label("Spamfilter", systemImage: "shield")
+                    }
+                    Divider()
+                    Toggle(isOn: $usesThreeColumns) {
+                        Label("Drei Spalten im Querformat", systemImage: "rectangle.split.3x1")
+                    }
+                } label: {
+                    Label("Einstellungen", systemImage: "gearshape")
+                }
+            }
+        }
+    }
+    #endif
 
     // MARK: - Symbolleiste
 
@@ -1685,6 +2306,10 @@ private struct MessageDetailLoader: View {
     var onSearchPerson: ((SearchPerson) -> Void)? = nil
     /// `true` in Gesendet und Entwürfen (Kreis im Mailkopf zeigt den Empfänger).
     var showsRecipients = false
+    /// Schaltet zwischen Vollbild und Spaltenansicht (iPad-Hochformat).
+    var onToggleFullscreen: (() -> Void)? = nil
+    /// `true` im Vollbild; steuert das Symbol der Schaltfläche.
+    var isFullscreen = false
 
     /// Geladene Mail; `nil`, solange sie lädt oder fehlt.
     @State private var message: CachedMessage?
@@ -1702,7 +2327,9 @@ private struct MessageDetailLoader: View {
                     scoreLimit: scoreLimit,
                     onChange: onChange,
                     onSearchPerson: onSearchPerson,
-                    showsRecipients: showsRecipients
+                    showsRecipients: showsRecipients,
+                    onToggleFullscreen: onToggleFullscreen,
+                    isFullscreen: isFullscreen
                 )
             } else if isMissing {
                 ContentUnavailableView(

@@ -104,6 +104,12 @@ struct MessageDetailView: View {
     /// `true` in Gesendet und Entwürfen – der Kreis im Kopf zeigt dann wie
     /// in der Liste den ersten Empfänger statt des Absenders.
     let showsRecipients: Bool
+    /// Schaltet die Detailansicht auf dem iPad zwischen Spalte und Vollbild
+    /// um; `nil` = kein iPad-Spaltenlayout → kein Knopf.
+    let onToggleFullscreen: (() -> Void)?
+    /// `true`, wenn die Detailansicht den vollen Bildschirm einnimmt
+    /// (iPad); sonst teilt sie sich den Platz mit der Mailliste.
+    let isFullscreen: Bool
 
     @Environment(\.dismiss) private var dismiss
 
@@ -178,6 +184,9 @@ struct MessageDetailView: View {
     ///   - onSearchPerson: Suche nach einer Person in der Liste; `nil` =
     ///     ohne Liste.
     ///   - showsRecipients: `true` in Gesendet und Entwürfen.
+    ///   - onToggleFullscreen: Umschaltung Spalte/Vollbild (iPad); `nil` =
+    ///     kein Knopf.
+    ///   - isFullscreen: `true`, wenn die Detailansicht im Vollbild steht.
     init(
         message: CachedMessage,
         accountStore: AccountStore,
@@ -185,7 +194,9 @@ struct MessageDetailView: View {
         scoreLimit: Double,
         onChange: (() -> Void)? = nil,
         onSearchPerson: ((SearchPerson) -> Void)? = nil,
-        showsRecipients: Bool = false
+        showsRecipients: Bool = false,
+        onToggleFullscreen: (() -> Void)? = nil,
+        isFullscreen: Bool = false
     ) {
         self.message = message
         self.accountStore = accountStore
@@ -194,6 +205,8 @@ struct MessageDetailView: View {
         self.onChange = onChange
         self.onSearchPerson = onSearchPerson
         self.showsRecipients = showsRecipients
+        self.onToggleFullscreen = onToggleFullscreen
+        self.isFullscreen = isFullscreen
         _isUnread = State(initialValue: message.isUnread)
         _isFlagged = State(initialValue: message.isFlagged)
     }
@@ -362,6 +375,21 @@ struct MessageDetailView: View {
     /// Varianten) und das Aktionsmenü.
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        // iPad-Spaltenlayout: Knopf zum Vergrößern/Verkleinern links oben.
+        if onToggleFullscreen != nil {
+            ToolbarItem(placement: Self.fullscreenPlacement) {
+                Button {
+                    onToggleFullscreen?()
+                } label: {
+                    Label(
+                        isFullscreen ? "Spaltenansicht" : "Vollbild",
+                        systemImage: isFullscreen
+                            ? "arrow.down.right.and.arrow.up.left"
+                            : "arrow.up.left.and.arrow.down.right"
+                    )
+                }
+            }
+        }
         ToolbarItem(placement: .primaryAction) {
             Menu {
                 ReplyMenuButtons(onAction: handleMenuAction)
@@ -378,6 +406,16 @@ struct MessageDetailView: View {
                 messageMenu
             }
         }
+    }
+
+    /// Platz des Vollbild-Knopfs: links oben. Auf dem Mac `.navigation`,
+    /// auf iPhone/iPad `.topBarLeading`.
+    private static var fullscreenPlacement: ToolbarItemPlacement {
+        #if os(macOS)
+        .navigation
+        #else
+        .topBarLeading
+        #endif
     }
 
     /// Aktionsmenü der Mail: der gemeinsame Baustein, ergänzt um Teilen,
