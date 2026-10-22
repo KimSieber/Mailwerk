@@ -9,7 +9,7 @@
 //  Abgrenzung: Laden, Vorschau und Teilen-Dateien → MessageDetailView,
 //  AttachmentManager.
 //
-//  Abhängigkeiten: SwiftUI, CachedAttachment.
+//  Abhängigkeiten: SwiftUI, CachedAttachment, AttachmentFilename.
 //
 
 import SwiftUI
@@ -36,7 +36,9 @@ struct AttachmentRow: View {
                     .frame(width: 32)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(attachment.filename)
+                    // Mit passender Endung, wie die Datei beim Öffnen und
+                    // Teilen heißt (AttachmentFilename).
+                    Text(attachment.completedFilename)
                         .font(.subheadline)
                         .lineLimit(1)
 

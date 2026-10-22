@@ -45,7 +45,8 @@
 //  MailSendService, AttachmentManager, MessageStore, InlineImages,
 //  InlineImageLoader, SignatureStore, SignatureEditing, HTMLSignatureBlock,
 //  DraftService, DraftFormat, RichTextImport, MailImageAttachment,
-//  SharedContent; UIKit bzw. AppKit für das Link-Attribut (`.link`).
+//  SharedContent, AttachmentFilename (Endung weitergeleiteter Anhänge);
+//  UIKit bzw. AppKit für das Link-Attribut (`.link`).
 //
 
 import Foundation
@@ -240,10 +241,12 @@ final class ComposeViewModel {
             pendingOriginalAttachments = InlineImages.visibleAttachments(
                 originalAttachments, html: original.htmlBody
             )
+            // Fehlt einem Namen die Endung, bekommt er die zum Typ passende –
+            // so kann auch der Empfänger die Datei öffnen.
             attachments = pendingOriginalAttachments.compactMap { attachment in
                 guard let data = attachment.data else { return nil }
                 return OutgoingAttachment(
-                    filename: attachment.filename,
+                    filename: attachment.completedFilename,
                     mimeType: attachment.contentType,
                     data: data
                 )
@@ -966,7 +969,7 @@ final class ComposeViewModel {
                 guard let data = loaded.data else { continue }
                 attachments.append(
                     OutgoingAttachment(
-                        filename: loaded.filename,
+                        filename: loaded.completedFilename,
                         mimeType: loaded.contentType,
                         data: data
                     )
