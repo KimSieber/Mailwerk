@@ -25,13 +25,19 @@
 //  ein Ordner Mails enthält, prüft erst der Server unmittelbar vor dem
 //  Löschen.
 //
+//  Steht die Leiste als feste Spalte neben der Liste (iPad, drei Spalten),
+//  lassen sich Mails auf einen Ordner ziehen und werden dorthin
+//  verschoben (`onDropMessages`). Der Ordner hebt sich dabei hervor (ab
+//  iOS 27). Die einblendbare Leiste nimmt nichts an – sie verdeckt die
+//  Liste ohnehin.
+//
 //  Dialoge: „Neuer Ordner“ ist ein Eingabedialog mit Textfeld. Die
 //  Rückfrage vor dem Löschen und Fehlermeldungen laufen über je einen
 //  Kanal (siehe Dialogs.swift).
 //
-//  Abgrenzung: Anlegen und Löschen übernimmt der Aufrufer
-//  (`onCreateFolder`, `onDeleteFolder`); den Ordnerbaum liefert der
-//  FolderCatalog.
+//  Abgrenzung: Anlegen, Löschen und Verschieben übernimmt der Aufrufer
+//  (`onCreateFolder`, `onDeleteFolder`, `onDropMessages`); den Ordnerbaum
+//  liefert der FolderCatalog.
 //
 //  Abhängigkeiten: SwiftUI, FolderCatalog, FolderNode, FolderLabel, Dialogs,
 //  FetchPausedBadge, SignInRequiredBadge.
@@ -65,6 +71,9 @@ struct FolderSidebarView: View {
     let onDeleteFolder: (MailAccount, FolderNode) async throws -> FolderDeletion.Outcome
     /// Schließt die Leiste.
     let onClose: () -> Void
+    /// Auf einen Ordner gezogene Mails (Kennungen) verschieben; `nil` = die
+    /// Leiste nimmt nichts an (einblendbare Leiste, die die Liste verdeckt).
+    var onDropMessages: ((MailAccount, FolderNode, [String]) -> Void)? = nil
 
     /// Offener Dialog „Neuer Ordner“.
     @State private var creation: FolderCreationRequest?
@@ -117,7 +126,10 @@ struct FolderSidebarView: View {
                             onDeleteFolder: { node in
                                 confirmDeletion(of: node, in: account)
                             },
-                            onRetry: { Task { await catalog.retry(account) } }
+                            onRetry: { Task { await catalog.retry(account) } },
+                            onDropMessages: onDropMessages.map { drop in
+                                { (node: FolderNode, ids: [String]) in drop(account, node, ids) }
+                            }
                         )
                     }
                 }
@@ -298,6 +310,8 @@ private struct AccountFolderSection: View {
     let onDeleteFolder: (FolderNode) -> Void
     /// Laden nach einem Fehler erneut versuchen.
     let onRetry: () -> Void
+    /// Auf einen Ordner gezogene Mails verschieben; `nil` = keine Annahme.
+    var onDropMessages: ((FolderNode, [String]) -> Void)? = nil
 
     /// Aufbau: Kopfzeile, bei aufgeklapptem Abschnitt der Inhalt.
     var body: some View {
@@ -419,7 +433,10 @@ private struct AccountFolderSection: View {
                         isSelected: isFolderSelected(entry.node),
                         onSelect: { onSelect(entry.node) },
                         onNewSubfolder: { onNewFolder(entry.node) },
-                        deletion: deletionOption(for: entry.node)
+                        deletion: deletionOption(for: entry.node),
+                        onDrop: onDropMessages.map { drop in
+                            { (ids: [String]) in drop(entry.node, ids) }
+                        }
                     )
                 }
             }
@@ -444,6 +461,12 @@ private struct FolderRow: View {
     let onNewSubfolder: () -> Void
     /// Eintrag „Löschen …“ im Kontextmenü.
     var deletion: DeletionOption = .hidden
+    /// Auf den Ordner gezogene Mails (Kennungen) verschieben; `nil` = der
+    /// Ordner nimmt nichts an.
+    var onDrop: (([String]) -> Void)? = nil
+
+    /// Eine gezogene Mail schwebt über dem Ordner (Hervorhebung).
+    @State private var isDropTargeted = false
 
     /// Darstellung des Eintrags „Löschen …“.
     enum DeletionOption {
@@ -480,7 +503,10 @@ private struct FolderRow: View {
             .padding(.trailing, 10)
             .padding(.vertical, 7)
             .background {
-                if isSelected {
+                if isDropTargeted {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.accentColor.opacity(0.25))
+                } else if isSelected {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(Color.accentColor.opacity(0.10))
                 }
@@ -489,6 +515,11 @@ private struct FolderRow: View {
         }
         .buttonStyle(.plain)
         .disabled(!entry.node.isSelectable)
+        // Reine Container nehmen keine Mails auf.
+        .modifier(MessageDropTarget(
+            onDrop: entry.node.isSelectable ? onDrop : nil,
+            isTargeted: $isDropTargeted
+        ))
         .contextMenu {
             Button("Neuer Unterordner …", systemImage: "folder.badge.plus",
                    action: onNewSubfolder)
@@ -505,6 +536,62 @@ private struct FolderRow: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityHint(entry.depth > 0 ? "Unterordner, Ebene \(entry.depth + 1)" : "")
+    }
+}
+
+// MARK: - Mails auf einen Ordner ziehen
+
+/// Macht eine Ordnerzeile zum Ziel für gezogene Mails.
+///
+/// Verarbeitung: Angenommen werden nur Ziehvorgänge aus Mailwerk selbst
+/// (`localSession`); Text aus anderen Apps wird übergangen. Gezogen wird
+/// die Kennung einer Mail; welche Kennungen gültig sind, prüft der
+/// Aufrufer (MessageSelection.dropTargets). Die Hervorhebung beim
+/// Darüberschweben setzt `onDropSessionUpdated` voraus (ab iOS 27); unter
+/// iOS 26 funktioniert das Ablegen, nur ohne Hervorhebung.
+private struct MessageDropTarget: ViewModifier {
+    /// Verschiebt die gezogenen Mails; `nil` = kein Ziel.
+    let onDrop: (([String]) -> Void)?
+    /// Eine gezogene Mail schwebt über der Zeile.
+    @Binding var isTargeted: Bool
+
+    /// Zeile mit oder ohne Drop-Ziel.
+    ///
+    /// - Parameter content: Ordnerzeile.
+    /// - Returns: Zeile, die gezogene Mails annimmt, bzw. unverändert.
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let onDrop {
+            if #available(iOS 27.0, macOS 26.0, *) {
+                accepting(content, onDrop: onDrop)
+                    .onDropSessionUpdated { session in
+                        switch session.phase {
+                        case .entering, .active:
+                            isTargeted = true
+                        default:
+                            isTargeted = false
+                        }
+                    }
+            } else {
+                accepting(content, onDrop: onDrop)
+            }
+        } else {
+            content
+        }
+    }
+
+    /// Nimmt gezogene Kennungen an, sofern sie aus der App stammen.
+    ///
+    /// - Parameters:
+    ///   - content: Ordnerzeile.
+    ///   - onDrop: Verschiebt die gezogenen Mails.
+    /// - Returns: Zeile als Drop-Ziel.
+    private func accepting(_ content: Content, onDrop: @escaping ([String]) -> Void) -> some View {
+        content.dropDestination(for: String.self) { ids, session in
+            isTargeted = false
+            guard session.localSession != nil else { return }
+            MainActor.assumeIsolated { onDrop(ids) }
+        }
     }
 }
 

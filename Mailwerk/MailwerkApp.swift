@@ -29,12 +29,15 @@
 //  `handlesExternalEvents` dafür, dass ein Link im vorhandenen Fenster
 //  landet, statt ein weiteres zu öffnen.
 //
+//  Menübefehle: Auf iPhone/iPad hängt die Szene die Befehle der Mailliste
+//  an (InboxCommands – Menüleiste des iPad und Tastaturkürzel).
+//
 //  Abgrenzung: Wurzelansicht → ContentView.
 //
 //  Abhängigkeiten: SwiftUI, SwiftData, AttachmentManager (Aufräumen),
 //  MessageStore (Starthinweis), AppObjects, FilterEntry, AccountSignature,
 //  SignatureStore, Dialogs, OAuthSignInState, OAuthError,
-//  ExternalMailtoRouter, WatchBridge (nur iPhone), Log.
+//  ExternalMailtoRouter, WatchBridge (nur iPhone), InboxCommands, Log.
 //
 
 import SwiftUI
@@ -106,6 +109,10 @@ struct MailwerkApp: App {
             .alertItem($storeNotice)
         }
         .modelContainer(modelContainer)
+        #if os(iOS)
+        // Menüleiste und Tastaturkürzel der Mailliste (iPad, Tastatur).
+        .commands { InboxCommands() }
+        #endif
     }
 
     // MARK: - Container

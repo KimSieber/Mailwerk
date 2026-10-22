@@ -6,10 +6,13 @@
 //  wird abgedunkelt; ein Tipp darauf oder die Escape-Taste schließt die
 //  Leiste. Die Leiste liegt auf der getönten Fläche der App (AppTheme).
 //
-//  Bewusst schlicht gehalten, Fokus iPhone. Auf dem Mac und dem iPad im
-//  Querformat soll später eine feste Seitenleiste folgen.
+//  Bewusst schlicht gehalten. Genutzt auf dem iPhone, auf dem iPad mit
+//  zwei Spalten und im Hochformat sowie vorerst auf dem Mac. Bei drei
+//  Spalten im Querformat steht die Ordnerleiste stattdessen fest neben der
+//  Liste (InboxView); dort entfällt der Knopf für diese Leiste.
 //
-//  Abgrenzung: Inhalt der Leiste → FolderSidebarView.
+//  Abgrenzung: Inhalt der Leiste → FolderSidebarView; feste Spalte →
+//  InboxView.
 //
 //  Abhängigkeiten: SwiftUI, AppTheme.
 //

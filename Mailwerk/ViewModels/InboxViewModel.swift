@@ -27,7 +27,10 @@
 //  Sicht „Spam“: die Spam-Ordner aller Postfächer mit eingeschaltetem
 //  Abruf gemeinsam; „Ältere laden“ lädt in allen zugleich nach. Die
 //  Spam-Ordner sind auch bei ausgeschaltetem Spamfilter bekannt
-//  (`locateSpamFolderIfNeeded`).
+//  (`locateSpamFolderIfNeeded`). Jeder Abruf der Posteingänge holt –
+//  gleich aus welcher Sammelsicht – je Postfach Posteingang und
+//  Spam-Ordner über eine gemeinsame Verbindung; scheitert nur der
+//  Spam-Ordner, folgt ein zweiter Versuch (`retrySpamFolder`).
 //
 //  Suche: Während einer Suche zeigt die Liste nur die Treffer
 //  (`searchFilter`, Cache-IDs aus der lokalen Suche). Liste, Auswahl und
@@ -827,8 +830,12 @@ final class InboxViewModel {
     ///
     /// Verarbeitung: Erst filtern, dann abrufen – so landet erkannter Spam
     /// gar nicht erst im Posteingang. Ein Fehler des Filters verhindert den
-    /// Abruf nicht – außer einer abgelaufenen Anmeldung. Scheitert der Posteingang, entfällt der Spam-Ordner,
-    /// denn dann liegt meist die Verbindung danieder.
+    /// Abruf nicht – außer einer abgelaufenen Anmeldung. Posteingang und
+    /// Spam-Ordner kommen über eine gemeinsame Verbindung (eine Anmeldung
+    /// weniger; manche Anbieter bremsen dichte Anmeldefolgen aus).
+    /// Scheitert der Posteingang, entfällt der Spam-Ordner, denn dann liegt
+    /// meist die Verbindung danieder. Scheitert nur der Spam-Ordner, wird
+    /// er nach kurzer Pause einmal allein abgerufen (`retrySpamFolder`).
     ///
     /// - Parameter account: Postfach.
     /// - Returns: Meldungstexte der aufgetretenen Fehler (Verbindungsfehler
@@ -856,17 +863,31 @@ final class InboxViewModel {
         // Filter aus: Spam-Ordner trotzdem ermitteln (Sammelansicht „Spam“).
         await locateSpamFolderIfNeeded(for: account)
 
+        // Spam-Ordner frisch aus dem Postfach lesen: Der Spamfilter kann ihn
+        // eben erst gefunden und gemerkt haben.
+        let spamFolder = currentSpamFolder(of: account.id)
+        let folders = [MailFolder.inboxPath] + (spamFolder.map { [$0] } ?? [])
         do {
-            try await MailFetchService.refreshAndCache(credentials)
-        } catch {
-            Log.fetch.error("❌ \(account.displayName, privacy: .private): \(error.localizedDescription, privacy: .public)")
-            if let message = classify(error, context: account.displayName) {
-                errors.append(message)
+            try await MailFetchService.refreshAndCache(credentials, folders: folders)
+            if let spamFolder {
+                Log.fetch.info("📬 [\(account.displayName, privacy: .private)] Spam-Ordner \(spamFolder, privacy: .public) abgerufen")
             }
-            return errors
+        } catch {
+            let failure = error as? MailFetchService.FolderRefreshError
+            let underlying = failure?.underlying ?? error
+            if let spamFolder, failure?.completed.contains(MailFolder.inboxPath) == true {
+                // Posteingang ist aktuell, nur der Spam-Ordner fehlt.
+                Log.fetch.error("⚠️ [\(account.displayName, privacy: .private)] Spam-Abruf fehlgeschlagen: \(underlying.localizedDescription, privacy: .public)")
+                await retrySpamFolder(spamFolder, of: account, credentials: credentials)
+            } else {
+                Log.fetch.error("❌ \(account.displayName, privacy: .private): \(underlying.localizedDescription, privacy: .public)")
+                if let message = classify(underlying, context: account.displayName) {
+                    errors.append(message)
+                }
+                return errors
+            }
         }
 
-        await refreshSpamFolder(of: account.id, credentials: credentials)
         Log.fetch.info("✅ \(account.displayName, privacy: .private): Abruf abgeschlossen")
         return errors
     }
@@ -926,26 +947,40 @@ final class InboxViewModel {
         }
     }
 
-    /// Ruft den Spam-Ordner eines Postfachs mit ab – dort wird am meisten
-    /// gearbeitet.
+    /// Spam-Ordner eines Postfachs, frisch aus der Postfachliste gelesen.
     ///
-    /// Verarbeitung: Der Spam-Ordner wird frisch aus dem Postfach gelesen,
-    /// weil der Spamfilter ihn eben erst gefunden und gemerkt haben kann.
-    /// Fehler werden nur protokolliert; der Posteingang ist dann bereits
-    /// aktuell.
+    /// - Parameter accountID: Postfach.
+    /// - Returns: IMAP-Pfad; `nil`, wenn keiner bekannt ist.
+    private func currentSpamFolder(of accountID: UUID) -> String? {
+        guard let folder = accountStore.accounts.first(where: { $0.id == accountID })?.spamFolder,
+              !folder.isEmpty else { return nil }
+        return folder
+    }
+
+    /// Pause vor dem zweiten Versuch beim Spam-Ordner.
+    private static let spamRetryDelay: Duration = .seconds(2)
+
+    /// Ruft den Spam-Ordner nach einem gescheiterten Versuch einmal allein ab.
+    ///
+    /// Verarbeitung: Nach kurzer Pause über eine eigene Verbindung – fängt
+    /// Aussetzer ab, etwa eine Anmeldung, die beim Anbieter in die
+    /// Zeitüberschreitung lief. Ohne Netz entfällt der Versuch. Fehler
+    /// werden nur protokolliert: Der Posteingang ist bereits aktuell, und
+    /// die Standzeile der Sicht „Spam“ zeigt, dass der Ordner zurückliegt.
     ///
     /// - Parameters:
-    ///   - accountID: Postfach.
+    ///   - folder: IMAP-Pfad des Spam-Ordners.
+    ///   - account: Postfach.
     ///   - credentials: Zugangsdaten des Postfachs.
     @MainActor
-    private func refreshSpamFolder(of accountID: UUID, credentials: MailCredentials) async {
-        guard let account = accountStore.accounts.first(where: { $0.id == accountID }),
-              let spamFolder = account.spamFolder, !spamFolder.isEmpty else { return }
+    private func retrySpamFolder(_ folder: String, of account: MailAccount, credentials: MailCredentials) async {
+        try? await Task.sleep(for: Self.spamRetryDelay)
+        guard network.isOnline else { return }
         do {
-            try await MailFetchService.refreshAndCache(credentials, folder: spamFolder)
-            Log.fetch.info("📬 [\(account.displayName, privacy: .private)] Spam-Ordner \(spamFolder, privacy: .public) abgerufen")
+            try await MailFetchService.refreshAndCache(credentials, folder: folder)
+            Log.fetch.info("📬 [\(account.displayName, privacy: .private)] Spam-Ordner \(folder, privacy: .public) im zweiten Versuch abgerufen")
         } catch {
-            Log.fetch.error("⚠️ [\(account.displayName, privacy: .private)] Spam-Abruf fehlgeschlagen: \(error.localizedDescription, privacy: .public)")
+            Log.fetch.error("⚠️ [\(account.displayName, privacy: .private)] Spam-Abruf auch im zweiten Versuch fehlgeschlagen: \(error.localizedDescription, privacy: .public)")
         }
     }
 

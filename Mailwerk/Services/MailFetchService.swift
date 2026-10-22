@@ -7,7 +7,9 @@
 //  Zugangspunkte:
 //  - `refreshAndCache`: Abruf der letzten 30 Tage (plus gekennzeichnete
 //    und ungelesene im Posteingang, unabhängig vom Alter) mit
-//    anschließendem Abgleich.
+//    anschließendem Abgleich – für einen Ordner oder für mehrere Ordner
+//    über eine gemeinsame Verbindung (Posteingang und Spam-Ordner: eine
+//    Anmeldung statt zwei).
 //  - `fetchOlder`: Zeitfenster blockweise zurückschieben.
 //  - `searchOnServer`: Suche in einem Ordner auf dem Server; liefert nur
 //    Kopfdaten der Treffer, die nicht im Cache liegen (nichts wird
@@ -93,7 +95,46 @@ enum MailFetchService {
 
     /// Holt neue Nachrichten eines Ordners und gleicht den Cache ab.
     ///
-    /// Verarbeitung:
+    /// Verarbeitung: Wie `refreshAndCache(_:folders:)` mit einem einzigen
+    /// Ordner; ein Fehler wird unverändert weitergegeben.
+    ///
+    /// - Parameters:
+    ///   - credentials: Postfach und Passwort.
+    ///   - folder: IMAP-Ordner (Standard: INBOX).
+    /// - Throws: Verbindungsfehler oder IMAP-Fehler.
+    static func refreshAndCache(
+        _ credentials: MailCredentials,
+        folder: String = MailFolder.inboxPath
+    ) async throws {
+        do {
+            try await refreshAndCache(credentials, folders: [folder])
+        } catch let failure as FolderRefreshError {
+            throw failure.underlying
+        }
+    }
+
+    /// Fehler beim Abruf mehrerer Ordner über eine Verbindung.
+    struct FolderRefreshError: LocalizedError {
+        /// Ordner, bei dem der Abruf abbrach; `nil` = vor dem ersten Ordner
+        /// (Verbindung, Anmeldung) oder beim Abmelden.
+        let folder: String?
+        /// Ordner, die vorher vollständig abgerufen und vermerkt wurden.
+        let completed: [String]
+        /// Eigentlicher Fehler.
+        let underlying: Error
+
+        /// Meldungstext des eigentlichen Fehlers.
+        var errorDescription: String? { underlying.localizedDescription }
+    }
+
+    /// Holt neue Nachrichten mehrerer Ordner über *eine* Verbindung und
+    /// gleicht den Cache ab – nacheinander, in der übergebenen Reihenfolge.
+    ///
+    /// Eine Verbindung statt einer je Ordner spart Anmeldungen. Manche
+    /// Anbieter (z. B. Gmail) bremsen dichte Anmeldefolgen so stark, dass
+    /// eine Anmeldung in die Zeitüberschreitung läuft.
+    ///
+    /// Verarbeitung je Ordner (`syncFolder`):
     /// 1. SELECT liefert UIDVALIDITY und UIDNEXT. Zusammen mit dem
     ///    gespeicherten Zustand entscheidet der SyncStatePlanner über das
     ///    Vorgehen. Bei geänderter UIDVALIDITY wird der Cache des Ordners
@@ -114,123 +155,158 @@ enum MailFetchService {
     ///    älter als das Zeitfenster), werden nachgeladen – höchstens
     ///    `SyncStatePlanner.unreadBackfillLimit` je Abruf. Ihre UIDs kennt
     ///    der Abgleich bereits; eine eigene Suche ist nicht nötig.
-    /// 7. Erst nach vollständigem Erfolg werden Zeitpunkt und Zustand
-    ///    gespeichert. Bricht der Abruf ab, wiederholt der nächste ihn ab
-    ///    dem alten Stand.
+    ///
+    /// Vermerken (Zeitpunkt und Zustand): Läuft alles durch, werden alle
+    /// Ordner nach dem Abmelden vermerkt. Bricht der Abruf bei einem Ordner
+    /// ab, werden die Ordner davor trotzdem vermerkt – ihr Abruf war
+    /// vollständig; der abgebrochene und alle folgenden nicht, der nächste
+    /// Abruf wiederholt sie ab dem alten Stand. Scheitert erst das Abmelden,
+    /// wird nichts vermerkt.
     ///
     /// - Parameters:
     ///   - credentials: Postfach und Passwort.
-    ///   - folder: IMAP-Ordner (Standard: INBOX).
-    /// - Throws: Verbindungsfehler oder IMAP-Fehler.
-    static func refreshAndCache(
-        _ credentials: MailCredentials,
-        folder: String = MailFolder.inboxPath
-    ) async throws {
+    ///   - folders: IMAP-Ordner in Abrufreihenfolge.
+    /// - Throws: `FolderRefreshError` mit dem Ordner, bei dem es abbrach.
+    static func refreshAndCache(_ credentials: MailCredentials, folders: [String]) async throws {
         let account = credentials.account
-        let outcome = try await MailSession.withIMAP(credentials) {
-            server -> (decision: SyncStatePlanner.Decision, uidValidity: UInt32, uidNext: UInt32) in
-            let selection = try await server.selectMailbox(folder)
-
-            // 1. Vorgehen anhand des Sync-Zustands
-            let serverValidity = selection.uidValidity.value
-            let serverUIDNext = selection.uidNext.value
-            let decision = SyncStatePlanner.decide(
-                stored: MessageStore.shared.syncState(accountID: account.id, folder: folder),
-                serverUIDValidity: serverValidity,
-                serverUIDNext: serverUIDNext
-            )
-            if decision == .reset {
-                Log.fetch.info("♻️ [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] UIDVALIDITY geändert → Ordner-Cache wird neu aufgebaut")
-                MessageStore.shared.deleteFolder(accountID: account.id, folder: folder)
-            }
-
-            // 2. Serverseitig nur Mails des Standardfensters suchen
-            let sinceDate = SyncWindow.standardStart()
-            var uids = try await searchNewestFirst(
-                on: server,
-                criteria: [.since(sinceDate)],
-                calendar: SyncWindow.calendar
-            )
-
-            Log.fetch.info("📬 [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] SEARCH ergab \(uids.count) UIDs (seit \(sinceDate, privacy: .public))")
-
-            // Gekennzeichnete Mails des Posteingangs, auch ältere. Die Menge
-            // ist klein, die Antwort bleibt weit unter den Puffergrenzen.
-            // Bereits gecachte Mails bekommen dabei ihre Flags abgeglichen.
-            if MailFolder.isInbox(folder) {
-                let flagged = try await searchNewestFirst(
-                    on: server,
-                    criteria: [.flagged],
-                    calendar: SyncWindow.calendar
-                )
-                let known = Set(uids.map(\.value))
-                let older = flagged.filter { !known.contains($0.value) }
-                uids += older
-                Log.fetch.info("📬 [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] Gekennzeichnet: \(flagged.count), davon älter: \(older.count)")
-            }
-
-            // 3. Gefundene Mails speichern
-            if uids.isEmpty {
-                Log.fetch.info("📬 [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] Keine UIDs im Zeitraum")
-            } else {
-                try await cacheMessages(uids: uids, server: server, account: account, folder: folder)
-            }
-
-            // 4. Abgleich mit dem ganzen Ordner
-            let serverState = try await reconcile(
-                server: server, account: account, folder: folder, uidNext: serverUIDNext
-            )
-
-            // 5. Neuankünfte seit dem letzten Abruf
-            var nextUIDNext = serverUIDNext
-            if case .incremental(let fromUID) = decision {
-                let arrivals = SyncStatePlanner.arrivals(
-                    serverUIDs: serverState.all,
-                    fromUID: fromUID,
-                    serverUIDNext: serverUIDNext,
-                    known: MessageStore.shared.cachedUIDs(accountID: account.id, folder: folder)
-                )
-                var failed = 0
-                if !arrivals.toLoad.isEmpty {
-                    let result = try await cacheMessages(
-                        uids: arrivals.toLoad.map { SwiftMail.UID($0) },
-                        server: server, account: account, folder: folder
-                    )
-                    failed = result.failed
-                    Log.fetch.info("🆕 [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] Neuankünfte: \(result.saved) geladen, \(result.failed) fehlgeschlagen, \(arrivals.deferredCount) zurückgestellt")
+        var completed: [(folder: String, state: FolderSyncState?)] = []
+        var current: String?
+        do {
+            try await MailSession.withIMAP(credentials) { server in
+                for folder in folders {
+                    current = folder
+                    let state = try await syncFolder(folder, on: server, account: account)
+                    completed.append((folder: folder, state: state))
                 }
-                // Fehlt eine Neuankunft, bleibt UIDNEXT stehen → nächster Abruf versucht sie erneut.
-                nextUIDNext = SyncStatePlanner.uidNextAfterLoading(
-                    plan: arrivals, fromUID: fromUID, failedCount: failed
-                )
+                current = nil
             }
+        } catch {
+            // Vor dem abgebrochenen Ordner vollständig abgerufene Ordner
+            // vermerken; beim Abmelden (current == nil) bleibt alles offen.
+            let finished = current == nil ? [] : completed
+            for entry in finished {
+                MessageStore.shared.recordSync(accountID: account.id, folder: entry.folder, state: entry.state)
+            }
+            throw FolderRefreshError(folder: current, completed: finished.map(\.folder), underlying: error)
+        }
+        // Stand und Zustand vermerken – erst hier, nach vollständigem
+        // Abruf einschließlich Abmelden.
+        for entry in completed {
+            MessageStore.shared.recordSync(accountID: account.id, folder: entry.folder, state: entry.state)
+        }
+    }
 
-            // 6. Ältere ungelesene Mails des Posteingangs (für die Sicht
-            //    „Ungelesen“). Der Abgleich kennt ihre UIDs bereits – keine
-            //    zusätzliche Abfrage. Fehlgeschlagene folgen beim nächsten
-            //    Abruf, weil sie dann weiterhin im Cache fehlen.
-            if MailFolder.isInbox(folder) {
-                let backfill = SyncStatePlanner.unreadBackfill(
-                    unseen: serverState.unseen,
-                    known: MessageStore.shared.cachedUIDs(accountID: account.id, folder: folder)
-                )
-                if !backfill.toLoad.isEmpty {
-                    let result = try await cacheMessages(
-                        uids: backfill.toLoad.map { SwiftMail.UID($0) },
-                        server: server, account: account, folder: folder
-                    )
-                    Log.fetch.info("✉️ [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] Ältere ungelesene: \(result.saved) geladen, \(result.failed) fehlgeschlagen, \(backfill.deferredCount) zurückgestellt")
-                }
-            }
-            return (decision: decision, uidValidity: serverValidity, uidNext: nextUIDNext)
+    /// Ruft einen Ordner auf einer angemeldeten Verbindung ab (Schritte 1–6
+    /// von `refreshAndCache(_:folders:)`).
+    ///
+    /// - Parameters:
+    ///   - folder: IMAP-Ordner.
+    ///   - server: Angemeldete IMAP-Verbindung.
+    ///   - account: Postfach.
+    /// - Returns: Zu vermerkender Sync-Zustand; `nil`, wenn der Server ihn
+    ///   nicht unterstützt.
+    /// - Throws: Verbindungs- oder IMAP-Fehler.
+    private static func syncFolder(
+        _ folder: String,
+        on server: SwiftMail.IMAPServer,
+        account: MailAccount
+    ) async throws -> FolderSyncState? {
+        let selection = try await server.selectMailbox(folder)
+
+        // 1. Vorgehen anhand des Sync-Zustands
+        let serverValidity = selection.uidValidity.value
+        let serverUIDNext = selection.uidNext.value
+        let decision = SyncStatePlanner.decide(
+            stored: MessageStore.shared.syncState(accountID: account.id, folder: folder),
+            serverUIDValidity: serverValidity,
+            serverUIDNext: serverUIDNext
+        )
+        if decision == .reset {
+            Log.fetch.info("♻️ [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] UIDVALIDITY geändert → Ordner-Cache wird neu aufgebaut")
+            MessageStore.shared.deleteFolder(accountID: account.id, folder: folder)
         }
 
-        // 7. Stand und Zustand vermerken – erst hier, nach vollständigem
-        //    Abruf einschließlich Abmelden.
-        let state: FolderSyncState? = outcome.decision == .unsupported
+        // 2. Serverseitig nur Mails des Standardfensters suchen
+        let sinceDate = SyncWindow.standardStart()
+        var uids = try await searchNewestFirst(
+            on: server,
+            criteria: [.since(sinceDate)],
+            calendar: SyncWindow.calendar
+        )
+
+        Log.fetch.info("📬 [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] SEARCH ergab \(uids.count) UIDs (seit \(sinceDate, privacy: .public))")
+
+        // Gekennzeichnete Mails des Posteingangs, auch ältere. Die Menge
+        // ist klein, die Antwort bleibt weit unter den Puffergrenzen.
+        // Bereits gecachte Mails bekommen dabei ihre Flags abgeglichen.
+        if MailFolder.isInbox(folder) {
+            let flagged = try await searchNewestFirst(
+                on: server,
+                criteria: [.flagged],
+                calendar: SyncWindow.calendar
+            )
+            let known = Set(uids.map(\.value))
+            let older = flagged.filter { !known.contains($0.value) }
+            uids += older
+            Log.fetch.info("📬 [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] Gekennzeichnet: \(flagged.count), davon älter: \(older.count)")
+        }
+
+        // 3. Gefundene Mails speichern
+        if uids.isEmpty {
+            Log.fetch.info("📬 [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] Keine UIDs im Zeitraum")
+        } else {
+            try await cacheMessages(uids: uids, server: server, account: account, folder: folder)
+        }
+
+        // 4. Abgleich mit dem ganzen Ordner
+        let serverState = try await reconcile(
+            server: server, account: account, folder: folder, uidNext: serverUIDNext
+        )
+
+        // 5. Neuankünfte seit dem letzten Abruf
+        var nextUIDNext = serverUIDNext
+        if case .incremental(let fromUID) = decision {
+            let arrivals = SyncStatePlanner.arrivals(
+                serverUIDs: serverState.all,
+                fromUID: fromUID,
+                serverUIDNext: serverUIDNext,
+                known: MessageStore.shared.cachedUIDs(accountID: account.id, folder: folder)
+            )
+            var failed = 0
+            if !arrivals.toLoad.isEmpty {
+                let result = try await cacheMessages(
+                    uids: arrivals.toLoad.map { SwiftMail.UID($0) },
+                    server: server, account: account, folder: folder
+                )
+                failed = result.failed
+                Log.fetch.info("🆕 [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] Neuankünfte: \(result.saved) geladen, \(result.failed) fehlgeschlagen, \(arrivals.deferredCount) zurückgestellt")
+            }
+            // Fehlt eine Neuankunft, bleibt UIDNEXT stehen → nächster Abruf versucht sie erneut.
+            nextUIDNext = SyncStatePlanner.uidNextAfterLoading(
+                plan: arrivals, fromUID: fromUID, failedCount: failed
+            )
+        }
+
+        // 6. Ältere ungelesene Mails des Posteingangs (für die Sicht
+        //    „Ungelesen“). Der Abgleich kennt ihre UIDs bereits – keine
+        //    zusätzliche Abfrage. Fehlgeschlagene folgen beim nächsten
+        //    Abruf, weil sie dann weiterhin im Cache fehlen.
+        if MailFolder.isInbox(folder) {
+            let backfill = SyncStatePlanner.unreadBackfill(
+                unseen: serverState.unseen,
+                known: MessageStore.shared.cachedUIDs(accountID: account.id, folder: folder)
+            )
+            if !backfill.toLoad.isEmpty {
+                let result = try await cacheMessages(
+                    uids: backfill.toLoad.map { SwiftMail.UID($0) },
+                    server: server, account: account, folder: folder
+                )
+                Log.fetch.info("✉️ [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] Ältere ungelesene: \(result.saved) geladen, \(result.failed) fehlgeschlagen, \(backfill.deferredCount) zurückgestellt")
+            }
+        }
+        return decision == .unsupported
             ? nil
-            : FolderSyncState(uidValidity: outcome.uidValidity, uidNext: outcome.uidNext)
-        MessageStore.shared.recordSync(accountID: account.id, folder: folder, state: state)
+            : FolderSyncState(uidValidity: serverValidity, uidNext: nextUIDNext)
     }
 
     // MARK: - Server-Abgleich

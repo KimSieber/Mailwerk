@@ -11,11 +11,14 @@
 //  - Geändert werden nur Mails, deren Zustand abweicht – genau diese
 //    nimmt „Rückgängig“ später zurück.
 //  - Verschieben geht nur, wenn alle Mails aus demselben Postfach stammen.
+//  - Ziehen auf einen Ordner (iPad): nur Mails aus der Liste, nur in einen
+//    gültigen Ordner desselben Postfachs.
 //
 //  Abgrenzung: Ausführung → MessageActions; Zustand der Auswahl →
 //  InboxViewModel; Darstellung → InboxView, SelectionActionBar.
 //
-//  Abhängigkeiten: MessageListItem, MessageActions (Target, StateChange).
+//  Abhängigkeiten: MessageListItem, MessageActions (Target, StateChange),
+//  FolderNode.
 //
 
 import Foundation
@@ -73,5 +76,33 @@ enum MessageSelection {
     static func commonFolder(_ items: [MessageListItem]) -> String? {
         let folders = Set(items.map(\.folder))
         return folders.count == 1 ? folders.first : nil
+    }
+
+    /// Mails, die per Ziehen in einen Ordner verschoben werden.
+    ///
+    /// Verarbeitung: Gezogen wird nur die Kennung einer Mail. Berücksichtigt
+    /// werden ausschließlich Kennungen, die in der Liste stehen – fremde
+    /// Texte, die jemand auf einen Ordner zieht, bewirken nichts. Wie beim
+    /// Verschieben per Menü nur innerhalb des Postfachs und nur in einen
+    /// gültigen Zielordner (nicht der eigene, kein reiner Container).
+    ///
+    /// - Parameters:
+    ///   - ids: Gezogene Kennungen.
+    ///   - items: Einträge der Liste.
+    ///   - accountID: Postfach des Zielordners.
+    ///   - folder: Zielordner.
+    /// - Returns: Zu verschiebende Mails in der Reihenfolge der Liste.
+    static func dropTargets(
+        ids: [String],
+        in items: [MessageListItem],
+        accountID: UUID,
+        folder: FolderNode
+    ) -> [MessageListItem] {
+        let dragged = Set(ids)
+        return items.filter { item in
+            dragged.contains(item.id)
+                && item.accountID == accountID
+                && folder.isMoveTarget(from: item.folder)
+        }
     }
 }

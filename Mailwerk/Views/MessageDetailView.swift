@@ -64,6 +64,10 @@
 //  erlaubt ist, entscheidet beim Öffnen dieselbe Regel wie in der Liste
 //  (SpamFilterService.allowsSenderImage).
 //
+//  Im Spaltenlayout des iPad stehen links oben der Knopf für Vollbild und
+//  Spaltenansicht sowie die Pfeile zur vorigen und nächsten Mail der Liste
+//  (`MessageStepButtons`). Auf dem iPhone und in Blättern fehlen sie.
+//
 //  Ganz unten im Menü, abgesetzt, steht „Originalquelle“ (RawSourceView):
 //  die Mail als reiner Text mit allen Kopfzeilen, für Analysen. Mit
 //  Tastatur auch per ⌥⌘U, wie in Apple Mail.
@@ -110,6 +114,9 @@ struct MessageDetailView: View {
     /// `true`, wenn die Detailansicht den vollen Bildschirm einnimmt
     /// (iPad); sonst teilt sie sich den Platz mit der Mailliste.
     let isFullscreen: Bool
+    /// Vorige/nächste Mail der Liste (iPad-Spaltenlayout); `nil` = keine
+    /// Knöpfe.
+    let stepping: MessageStepButtons?
 
     @Environment(\.dismiss) private var dismiss
 
@@ -187,6 +194,7 @@ struct MessageDetailView: View {
     ///   - onToggleFullscreen: Umschaltung Spalte/Vollbild (iPad); `nil` =
     ///     kein Knopf.
     ///   - isFullscreen: `true`, wenn die Detailansicht im Vollbild steht.
+    ///   - stepping: Vorige/nächste Mail (iPad); `nil` = keine Knöpfe.
     init(
         message: CachedMessage,
         accountStore: AccountStore,
@@ -196,7 +204,8 @@ struct MessageDetailView: View {
         onSearchPerson: ((SearchPerson) -> Void)? = nil,
         showsRecipients: Bool = false,
         onToggleFullscreen: (() -> Void)? = nil,
-        isFullscreen: Bool = false
+        isFullscreen: Bool = false,
+        stepping: MessageStepButtons? = nil
     ) {
         self.message = message
         self.accountStore = accountStore
@@ -207,6 +216,7 @@ struct MessageDetailView: View {
         self.showsRecipients = showsRecipients
         self.onToggleFullscreen = onToggleFullscreen
         self.isFullscreen = isFullscreen
+        self.stepping = stepping
         _isUnread = State(initialValue: message.isUnread)
         _isFlagged = State(initialValue: message.isFlagged)
     }
@@ -390,6 +400,26 @@ struct MessageDetailView: View {
                 }
             }
         }
+        // iPad-Spaltenlayout: vorige/nächste Mail der Liste. Ein Knopf ohne
+        // Ziel (Listenanfang bzw. -ende) ist ausgegraut. Die Pfeiltasten
+        // trägt die Liste (InboxView), damit sie auch ohne geöffnete Mail
+        // wirken.
+        if let stepping {
+            ToolbarItemGroup(placement: Self.fullscreenPlacement) {
+                Button {
+                    stepping.previous?()
+                } label: {
+                    Label("Vorige E-Mail", systemImage: "chevron.up")
+                }
+                .disabled(stepping.previous == nil)
+                Button {
+                    stepping.next?()
+                } label: {
+                    Label("Nächste E-Mail", systemImage: "chevron.down")
+                }
+                .disabled(stepping.next == nil)
+            }
+        }
         ToolbarItem(placement: .primaryAction) {
             Menu {
                 ReplyMenuButtons(onAction: handleMenuAction)
@@ -408,8 +438,9 @@ struct MessageDetailView: View {
         }
     }
 
-    /// Platz des Vollbild-Knopfs: links oben. Auf dem Mac `.navigation`,
-    /// auf iPhone/iPad `.topBarLeading`.
+    /// Platz des Vollbild-Knopfs und der Pfeile (vorige/nächste Mail):
+    /// links oben. Auf dem Mac `.navigation`, auf iPhone/iPad
+    /// `.topBarLeading`.
     private static var fullscreenPlacement: ToolbarItemPlacement {
         #if os(macOS)
         .navigation
@@ -837,4 +868,14 @@ struct MessageDetailView: View {
             }
         }
     }
+}
+
+/// Aktionen der Knöpfe „Vorige E-Mail“ und „Nächste E-Mail“ in der
+/// Mailansicht (iPad-Spaltenlayout). Ein fehlendes Ziel (`nil`) graut den
+/// Knopf aus – am Anfang bzw. Ende der Liste.
+struct MessageStepButtons {
+    /// Öffnet die Mail darüber; `nil` = keine.
+    let previous: (() -> Void)?
+    /// Öffnet die Mail darunter; `nil` = keine.
+    let next: (() -> Void)?
 }
