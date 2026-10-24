@@ -12,7 +12,10 @@
 //  vor dem Namen ein orangefarbenes Pause-Zeichen (FetchPausedBadge);
 //  seine Ordnerliste wird nicht von selbst geladen (siehe FolderCatalog).
 //  Ist die Anmeldung eines Postfachs abgelaufen, steht davor ein rotes
-//  Warnzeichen (SignInRequiredBadge).
+//  Warnzeichen (SignInRequiredBadge); hat sein letzter Abruf den Server
+//  nicht erreicht, ein gelbes (FetchFailedBadge). Die Zeichen stellt
+//  AccountStatusBadges zusammen; ihre Hinweise erscheinen als Tooltip
+//  (Maus, Trackpad) und in der VoiceOver-Beschreibung des Postfachkopfs.
 //
 //  Ordner sind auswählbar: Ein Tipp zeigt den Ordnerinhalt. Unterordner
 //  sind immer sichtbar und nur durch Einrückung erkennbar; auf- und
@@ -40,7 +43,7 @@
 //  liefert der FolderCatalog.
 //
 //  Abhängigkeiten: SwiftUI, FolderCatalog, FolderNode, FolderLabel, Dialogs,
-//  FetchPausedBadge, SignInRequiredBadge.
+//  AccountStatusBadges.
 //
 
 import SwiftUI
@@ -53,6 +56,8 @@ struct FolderSidebarView: View {
     var pausedAccountIDs: Set<UUID> = []
     /// Postfächer, deren Anmeldung abgelaufen ist.
     var signInRequiredIDs: Set<UUID> = []
+    /// Postfächer, deren letzter Abruf den Server nicht erreichte.
+    var unreachableIDs: Set<UUID> = []
     /// Ordnerbäume der Postfächer.
     let catalog: FolderCatalog
     /// Aufgeklappte Postfächer. Liegt beim Aufrufer, damit der Zustand
@@ -109,6 +114,7 @@ struct FolderSidebarView: View {
                             account: account,
                             isPaused: pausedAccountIDs.contains(account.id),
                             needsSignIn: signInRequiredIDs.contains(account.id),
+                            isUnreachable: unreachableIDs.contains(account.id),
                             state: catalog.state(for: account.id),
                             isBusy: busyAccountID == account.id,
                             isExpanded: expansionBinding(for: account.id),
@@ -294,6 +300,8 @@ private struct AccountFolderSection: View {
     var isPaused = false
     /// `true`, wenn die Anmeldung des Postfachs abgelaufen ist.
     var needsSignIn = false
+    /// `true`, wenn der letzte Abruf des Postfachs den Server nicht erreichte.
+    var isUnreachable = false
     /// Ladezustand des Ordnerbaums.
     let state: FolderCatalog.State
     /// Eine Aktion im Postfach läuft (etwa: Ordner wird angelegt).
@@ -324,9 +332,16 @@ private struct AccountFolderSection: View {
         }
     }
 
-    /// Kopfzeile: Pfeil, Farbpunkt, Warnzeichen (Anmeldung abgelaufen),
-    /// Pause-Zeichen (Abruf aus), Name,
-    /// Ladeanzeige; Kontextmenü „Neuer Ordner …“.
+    /// Hinweise der Kennzeichen als ein Text; `nil` = keiner.
+    private var statusSummary: String? {
+        AccountStatusBadges.summary(needsSignIn: needsSignIn, isUnreachable: isUnreachable, isPaused: isPaused)
+    }
+
+    /// Kopfzeile: Pfeil, Farbpunkt, Kennzeichen (Anmeldung abgelaufen,
+    /// nicht erreichbar, Abruf aus), Name, Ladeanzeige; Kontextmenü
+    /// „Neuer Ordner …“. Die Hinweise der Kennzeichen stehen auch im
+    /// Tooltip und in der VoiceOver-Beschreibung der ganzen Zeile – deren
+    /// eigene Beschreibung würde sie sonst verdecken.
     private var header: some View {
         Button {
             withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
@@ -340,12 +355,12 @@ private struct AccountFolderSection: View {
                 Circle()
                     .fill(account.colorHex.map { Color(hex: $0) } ?? Color.secondary)
                     .frame(width: 8, height: 8)
-                if needsSignIn {
-                    SignInRequiredBadge(font: .subheadline)
-                }
-                if isPaused {
-                    FetchPausedBadge(font: .subheadline)
-                }
+                AccountStatusBadges(
+                    needsSignIn: needsSignIn,
+                    isUnreachable: isUnreachable,
+                    isPaused: isPaused,
+                    font: .subheadline
+                )
                 Text(account.displayName)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
@@ -366,7 +381,8 @@ private struct AccountFolderSection: View {
                 onNewFolder(nil)
             }
         }
-        .accessibilityLabel("Postfach \(account.displayName)")
+        .accountStatusHelp(statusSummary)
+        .accessibilityLabel(statusSummary.map { "Postfach \(account.displayName), \($0)" } ?? "Postfach \(account.displayName)")
         .accessibilityValue(isExpanded ? "aufgeklappt" : "zugeklappt")
     }
 

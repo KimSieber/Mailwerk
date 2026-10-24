@@ -9,7 +9,8 @@
 //  Aktualisiert wird beim Öffnen, bei jeder Rückkehr in den Vordergrund,
 //  per Herunterziehen und per Knopf. Ist das iPhone nicht erreichbar,
 //  zeigt die Watch ihren gespeicherten Stand mit Uhrzeit des letzten
-//  Abrufs.
+//  Abrufs. Hinweise des iPhones zum letzten Abruf stehen über dem Stand –
+//  alle, z. B. je nicht erreichbarem Postfach eine Zeile.
 //
 //  Abgrenzung: Liste einer Sicht → WatchMailListView; Austausch →
 //  WatchConnector.
@@ -117,8 +118,10 @@ struct WatchRootView: View {
             }
             if !store.hasAccounts {
                 Text("Auf dem iPhone ist kein Postfach mit eingeschaltetem Abruf eingerichtet.")
-            } else if let problem = store.problem {
-                Text(problem)
+            } else {
+                ForEach(store.problems, id: \.self) { problem in
+                    Text(problem)
+                }
             }
             Text(syncText)
                 .foregroundStyle(.secondary)

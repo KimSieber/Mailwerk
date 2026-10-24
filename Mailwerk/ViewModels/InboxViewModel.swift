@@ -46,6 +46,12 @@
 //  die Liste schrittweise. Ohne Netz bleibt es beim Cache; der Zustand
 //  wird still im Titel angezeigt.
 //
+//  Erreichbarkeit je Postfach: Scheitert der Abruf eines Postfachs an der
+//  Verbindung, gilt nur dieses Postfach als „nicht erreichbar“
+//  (AccountFetchState) – bis zu seinem nächsten erfolgreichen Abruf. Die
+//  Titelzeile, das Warnzeichen am Postfach und die Apple Watch zeigen das
+//  an. Fehler des Spamfilters oder nur des Spam-Ordners zählen nicht.
+//
 //  Abgelaufene Anmeldung (OAuth 2): Ein solches Postfach wird in der
 //  Abrufrunde übersprungen; seine Mails bleiben im Cache sichtbar. Der
 //  Fehler erscheint nicht als Meldung – das übernehmen Warnzeichen und
@@ -77,7 +83,7 @@
 //  MessageActionDialogs, SpamMenuRequest, MessageSelection,
 //  MessageStore, MessageSort, NetworkMonitor, SyncWindow, FetchCoordinator,
 //  FolderKey, MailFolder, SpamClassifier, SpamMark, FilterAddress, OAuthError,
-//  OAuthSignInState, Log.
+//  OAuthSignInState, AccountFetchState, Log.
 //
 //  Apple Watch: `onInboxesRefreshed` meldet jeden Abruf der Posteingänge,
 //  `onCacheReloaded` jedes Neuladen der Liste an die WatchBridge, die der
@@ -161,9 +167,9 @@ final class InboxViewModel {
     /// Überlebt Neustarts und ist auch offline bekannt. `nil` nur, wenn
     /// kein Postfach eingerichtet ist.
     var syncState: SyncState?
-    /// `true`, wenn der letzte Abrufversuch dieser Ansicht an der
-    /// Verbindung scheiterte. Wird still im Titel angezeigt, nicht als Alert.
-    var connectionFailed = false
+    /// Postfächer, deren letzter Abruf den Server nicht erreichte – je
+    /// Postfach, nicht je Ansicht (Titelzeile, Warnzeichen, Watch).
+    private let fetchState = AccountFetchState.shared
 
     /// Läuft gerade „Ältere Nachrichten laden"?
     var isLoadingOlder = false
@@ -210,9 +216,9 @@ final class InboxViewModel {
     /// Aktive Ansicht. Ändert sich durch die Seitenleiste.
     var selection: MailboxSelection = .allInboxes {
         didSet {
-            // Der Verbindungsstatus gilt für die bisherige Ansicht; die neue
-            // ermittelt ihn bei ihrem eigenen Abruf.
-            connectionFailed = false
+            // Der Hinweis der Zeile „Ältere laden“ gilt für die bisherige
+            // Ansicht. Die Erreichbarkeit der Postfächer bleibt bestehen –
+            // sie gilt je Postfach, nicht je Ansicht.
             olderConnectionFailed = false
             endSelection()
             // Die Sortierung gilt nur für die bisherige Ansicht.
@@ -323,6 +329,20 @@ final class InboxViewModel {
     /// fallen (Herunterziehen). Die Liste zeigt danach nur Ungelesenes.
     func releaseKeptUnread() {
         keptUnreadIDs = []
+    }
+
+    /// Postfächer der gewählten Ansicht – Grundlage des Hinweises
+    /// „nicht erreichbar“ in der Titelzeile.
+    ///
+    /// Verarbeitung: Sammelansichten umfassen die Postfächer mit
+    /// eingeschaltetem Abruf, ein Ordner nur sein Postfach.
+    var viewAccounts: [MailAccount] {
+        switch selection {
+        case .allInboxes, .unread, .flagged, .spam:
+            return accountStore.fetchingAccounts
+        case .folder(let accountID, _, _):
+            return accountStore.accounts.filter { $0.id == accountID }
+        }
     }
 
     /// Spam-Ordner der Postfächer mit eingeschaltetem Abruf; Postfächer
@@ -520,7 +540,6 @@ final class InboxViewModel {
     func loadOlder() async {
         guard !isLoadingOlder else { return }
         guard network.isOnline else {
-            connectionFailed = true
             olderConnectionFailed = true
             return
         }
@@ -589,8 +608,10 @@ final class InboxViewModel {
     ///
     /// Verarbeitung: Eine abgelaufene Anmeldung (OAuth 2) wird nur
     /// protokolliert – sie zeigen Warnzeichen und Hinweisleiste.
-    /// Verbindungsfehler werden still vermerkt (`connectionFailed`), alle
-    /// anderen als Meldungstext zurückgegeben.
+    /// Verbindungsfehler werden nur protokolliert; ob ein Postfach als
+    /// „nicht erreichbar“ gilt, entscheidet der Aufrufer
+    /// (`updateReachability`), weil nicht jeder Teilschritt zählt. Alle
+    /// anderen Fehler werden als Meldungstext zurückgegeben.
     ///
     /// - Parameters:
     ///   - error: Aufgetretener Fehler.
@@ -602,12 +623,42 @@ final class InboxViewModel {
             Log.fetch.info("🔑 \(context, privacy: .private): Anmeldung abgelaufen – übersprungen")
             return nil
         }
-        if MailFetchService.isConnectionError(error) || !network.isOnline {
-            connectionFailed = true
+        if isConnectionFailure(error) {
             Log.fetch.info("📴 \(context, privacy: .private): keine Verbindung (\(error.localizedDescription, privacy: .public))")
             return nil
         }
         return "\(context): \(error.localizedDescription)"
+    }
+
+    /// Prüft, ob ein Fehler an der Verbindung lag.
+    ///
+    /// Verarbeitung: Ohne Netz gilt jeder Fehler als Verbindungsfehler
+    /// (die Ursache ist dann klar, die Meldung wäre irreführend).
+    ///
+    /// - Parameter error: Aufgetretener Fehler.
+    /// - Returns: `true` bei einem Verbindungsfehler.
+    private func isConnectionFailure(_ error: Error) -> Bool {
+        MailFetchService.isConnectionError(error) || !network.isOnline
+    }
+
+    /// Vermerkt nach dem Abruf eines Postfachs, ob es erreichbar war.
+    ///
+    /// Verarbeitung: Erfolg löscht „nicht erreichbar“; ein
+    /// Verbindungsfehler setzt es. Andere Fehler (Anmeldung, Protokoll)
+    /// ändern nichts – sie erscheinen als Meldung. Ohne Netz am Gerät wird
+    /// nichts gesetzt: Dann zeigt die Titelzeile „Offline“, und das
+    /// Postfach selbst ist nicht schuld.
+    ///
+    /// - Parameters:
+    ///   - account: Abgerufenes Postfach.
+    ///   - error: Fehler des Abrufs; `nil` = erfolgreich.
+    private func updateReachability(of account: MailAccount, error: Error?) {
+        guard let error else {
+            fetchState.setUnreachable(false, for: account.id, name: account.displayName)
+            return
+        }
+        guard network.isOnline, MailFetchService.isConnectionError(error) else { return }
+        fetchState.setUnreachable(true, for: account.id, name: account.displayName)
     }
 
     /// Anzahl ungelesener Mails in den Posteingängen (für die Leiste).
@@ -702,9 +753,9 @@ final class InboxViewModel {
             return
         }
 
-        // Ohne Netz gar nicht erst versuchen: Cache zeigen, still vermerken.
+        // Ohne Netz gar nicht erst versuchen: Cache zeigen; die Titelzeile
+        // zeigt „Offline“.
         guard network.isOnline else {
-            connectionFailed = true
             loadFromCache()
             return
         }
@@ -712,7 +763,6 @@ final class InboxViewModel {
         isLoading = true
         defer { isLoading = false }
 
-        connectionFailed = false
         let kind = FetchSelection.folderRefresh(
             isInbox: path == MailFolder.inboxPath,
             isPaused: !accountStore.isFetchEnabled(accountID)
@@ -726,7 +776,9 @@ final class InboxViewModel {
         case .folderOnly:
             do {
                 try await MailFetchService.refreshAndCache(credentials, folder: path)
+                updateReachability(of: account, error: nil)
             } catch {
+                updateReachability(of: account, error: error)
                 if let message = classify(error, context: account.displayName) {
                     alert = AlertItem(title: "Fehler beim Abrufen", message: message)
                 }
@@ -784,9 +836,9 @@ final class InboxViewModel {
     /// nicht abgerufen – das übernimmt `refreshFolder`.
     @MainActor
     private func performRefresh() async {
-        // Ohne Netz gar nicht erst versuchen: Cache zeigen, still vermerken.
+        // Ohne Netz gar nicht erst versuchen: Cache zeigen; die Titelzeile
+        // zeigt „Offline“.
         guard network.isOnline else {
-            connectionFailed = true
             loadFromCache()
             Log.fetch.info("📴 Refresh übersprungen: kein Netz")
             return
@@ -794,7 +846,6 @@ final class InboxViewModel {
 
         isLoading = true
         defer { isLoading = false }
-        connectionFailed = false
 
         let accountCount = accountStore.fetchingAccounts.count
         let pausedCount = accountStore.accounts.count - accountCount
@@ -813,7 +864,6 @@ final class InboxViewModel {
             loadFromCache()
 
             if !network.isOnline {
-                connectionFailed = true
                 Log.fetch.info("📴 Refresh abgebrochen: Netz verloren")
                 break
             }
@@ -837,9 +887,13 @@ final class InboxViewModel {
     /// meist die Verbindung danieder. Scheitert nur der Spam-Ordner, wird
     /// er nach kurzer Pause einmal allein abgerufen (`retrySpamFolder`).
     ///
+    /// Erreichbarkeit (`updateReachability`): Es zählt allein der
+    /// Posteingang. Ein Verbindungsfehler des Spamfilters oder nur des
+    /// Spam-Ordners markiert das Postfach nicht als „nicht erreichbar“.
+    ///
     /// - Parameter account: Postfach.
     /// - Returns: Meldungstexte der aufgetretenen Fehler (Verbindungsfehler
-    ///   werden still vermerkt und erscheinen hier nicht).
+    ///   werden am Postfach vermerkt und erscheinen hier nicht).
     @MainActor
     private func refreshAccount(_ account: MailAccount) async -> [String] {
         Log.fetch.info("🔄 Starte Abruf: \(account.displayName, privacy: .private) (ID: \(account.id.uuidString, privacy: .public))")
@@ -869,6 +923,7 @@ final class InboxViewModel {
         let folders = [MailFolder.inboxPath] + (spamFolder.map { [$0] } ?? [])
         do {
             try await MailFetchService.refreshAndCache(credentials, folders: folders)
+            updateReachability(of: account, error: nil)
             if let spamFolder {
                 Log.fetch.info("📬 [\(account.displayName, privacy: .private)] Spam-Ordner \(spamFolder, privacy: .public) abgerufen")
             }
@@ -876,10 +931,13 @@ final class InboxViewModel {
             let failure = error as? MailFetchService.FolderRefreshError
             let underlying = failure?.underlying ?? error
             if let spamFolder, failure?.completed.contains(MailFolder.inboxPath) == true {
-                // Posteingang ist aktuell, nur der Spam-Ordner fehlt.
+                // Posteingang ist aktuell, nur der Spam-Ordner fehlt: Das
+                // Postfach war erreichbar.
+                updateReachability(of: account, error: nil)
                 Log.fetch.error("⚠️ [\(account.displayName, privacy: .private)] Spam-Abruf fehlgeschlagen: \(underlying.localizedDescription, privacy: .public)")
                 await retrySpamFolder(spamFolder, of: account, credentials: credentials)
             } else {
+                updateReachability(of: account, error: underlying)
                 Log.fetch.error("❌ \(account.displayName, privacy: .private): \(underlying.localizedDescription, privacy: .public)")
                 if let message = classify(underlying, context: account.displayName) {
                     errors.append(message)

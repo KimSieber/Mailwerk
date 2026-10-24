@@ -7,9 +7,9 @@
 //  Postfachliste und in der Ordnerleiste.
 //
 //  Abgrenzung: Schalter und Speichern → AccountStore; Verwendung →
-//  AccountListView, FolderSidebarView.
+//  AccountStatusBadges (Postfachliste, Ordnerleiste).
 //
-//  Abhängigkeiten: SwiftUI.
+//  Abhängigkeiten: SwiftUI, AccountStatusBadges (Hinweistext).
 //
 
 import SwiftUI
@@ -25,8 +25,8 @@ struct FetchPausedBadge: View {
             .symbolRenderingMode(.palette)
             .foregroundStyle(.white, .orange)
             .font(font)
-            .help("Abruf ausgeschaltet")
-            .accessibilityLabel("Abruf ausgeschaltet")
+            .help(AccountStatusBadges.pausedText)
+            .accessibilityLabel(AccountStatusBadges.pausedText)
     }
 }
 

@@ -6,8 +6,10 @@
 //  E-Mail-Adresse; Hinzufügen, Bearbeiten (Tipp) und Entfernen (Wischen);
 //  je Postfach der Schalter „Abruf“ (nur dieses Gerät; aus = nicht über
 //  „Alle Eingänge“ abrufen, Pause-Zeichen vor dem Namen); rotes
-//  Warnzeichen, wenn die Anmeldung eines Postfachs abgelaufen ist; Wahl
-//  des Standard-Postfachs für neue Mails.
+//  Warnzeichen, wenn die Anmeldung eines Postfachs abgelaufen ist, gelbes,
+//  wenn sein letzter Abruf den Server nicht erreichte (Kennzeichen über
+//  AccountStatusBadges, mit Tooltip); Wahl des Standard-Postfachs für
+//  neue Mails.
 //
 //  Ein Postfach zu entfernen löscht auch seinen gesamten Cache, sein
 //  Passwort aus dem Schlüsselbund und seine Signatur. Deshalb gibt es davor eine Rückfrage –
@@ -20,7 +22,7 @@
 //  Speichern und Entfernen → AccountStore.
 //
 //  Abhängigkeiten: SwiftUI, AccountStore, SignatureStore, Dialogs, Log,
-//  FetchPausedBadge, SignInRequiredBadge, OAuthSignInState, AppTheme,
+//  AccountStatusBadges, OAuthSignInState, AccountFetchState, AppTheme,
 //  ExternalMailtoPresenter (Blätter melden sich als offene Fenster).
 //
 
@@ -118,12 +120,12 @@ struct AccountListView: View {
                             }
                             VStack(alignment: .leading) {
                                 HStack(spacing: 6) {
-                                    if OAuthSignInState.shared.isSignInRequired(account.id) {
-                                        SignInRequiredBadge(font: .headline)
-                                    }
-                                    if !accountStore.isFetchEnabled(account.id) {
-                                        FetchPausedBadge(font: .headline)
-                                    }
+                                    AccountStatusBadges(
+                                        needsSignIn: OAuthSignInState.shared.isSignInRequired(account.id),
+                                        isUnreachable: AccountFetchState.shared.isUnreachable(account.id),
+                                        isPaused: !accountStore.isFetchEnabled(account.id),
+                                        font: .headline
+                                    )
                                     Text(account.displayName)
                                         .font(.headline)
                                 }
@@ -137,6 +139,11 @@ struct AccountListView: View {
                     }
                     .buttonStyle(.borderless)
                     .tint(.primary)
+                    .accountStatusHelp(AccountStatusBadges.summary(
+                        needsSignIn: OAuthSignInState.shared.isSignInRequired(account.id),
+                        isUnreachable: AccountFetchState.shared.isUnreachable(account.id),
+                        isPaused: !accountStore.isFetchEnabled(account.id)
+                    ))
 
                     Toggle("Abruf", isOn: fetchBinding(for: account.id))
                         .labelsHidden()

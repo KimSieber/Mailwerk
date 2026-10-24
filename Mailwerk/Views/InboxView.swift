@@ -38,6 +38,14 @@
 //  Anmeldefenster. Nach erfolgreicher Anmeldung wird die Ansicht sofort
 //  abgerufen.
 //
+//  Die zweite Titelzeile nennt den Stand und Verbindungsprobleme: ohne
+//  Netz „Offline“, sind alle Postfächer der Ansicht nicht erreichbar
+//  „Keine Verbindung“, sonst das betroffene Postfach bzw. deren Anzahl
+//  (AccountFetchState). Die Ordnerleiste zeigt dazu ein gelbes
+//  Warnzeichen am Postfach. Auf dem Mac steht dieselbe Zeile als
+//  Untertitel des Fensters; während eines Abrufs zeigt dort der Knopf
+//  „Aktualisieren“ selbst den Kreisel.
+//
 //  Am Listenende steht „Ältere Nachrichten laden“; in den Sichten
 //  „Ungelesen“ und „Mit Kennzeichnung“, die jeder Abruf unabhängig vom
 //  Alter vollständig holt, stattdessen ein Hinweis darauf.
@@ -106,7 +114,7 @@
 //  SearchViewModel, SearchPerson, ServerMessageLoader, MessageStepping,
 //  ComposeView, DraftComposeLoader, Dialogs, AppTheme, ListBottomBar,
 //  UndoOffer, OAuthSignInState, SignInRequiredBar, ExternalMailtoPresenter,
-//  WatchHandoff, Log.
+//  WatchHandoff, AccountFetchState, Log.
 //
 
 import SwiftUI
@@ -158,6 +166,12 @@ struct InboxView: View {
     private let network = NetworkMonitor.shared
     /// Postfächer, deren Anmeldung abgelaufen ist.
     private let signInState = OAuthSignInState.shared
+    /// Postfächer, deren letzter Abruf den Server nicht erreichte.
+    private let fetchState = AccountFetchState.shared
+    #if os(macOS)
+    /// Minütlicher Takt für den Untertitel des Fensters („vor 5 Minuten“).
+    @State private var subtitleTick = Date.now
+    #endif
     /// Postfach, das gerade neu angemeldet wird; `nil` = keins.
     @State private var renewingAccountID: UUID?
     /// Zustand der Suche. Bewusst als `@State`: Das Anlegen ist billig
@@ -242,11 +256,28 @@ struct InboxView: View {
         )
     }
 
-    /// Verbindungshinweis für die zweite Titelzeile, `nil` = alles in Ordnung.
+    #if os(macOS)
+    /// Untertitel des Fensters (Mac): Stand und Verbindungshinweis, gleiche
+    /// Regel wie die zweite Titelzeile auf iPhone/iPad
+    /// (`InboxTitle.statusText`).
+    ///
+    /// Verarbeitung: Liest `subtitleTick`, damit die Ansicht minütlich neu
+    /// rechnet und die Zeitangabe mitläuft.
+    private var macSubtitle: String {
+        _ = subtitleTick
+        guard let state = viewModel.syncState else { return "" }
+        return InboxTitle.statusText(state, connectionStatus: connectionStatus)
+    }
+    #endif
+
+    /// Verbindungshinweis für die zweite Titelzeile, `nil` = alles in
+    /// Ordnung. Regel siehe `AccountFetchState.titleStatus`.
     private var connectionStatus: String? {
-        if !network.isOnline { return "Offline" }
-        if viewModel.connectionFailed { return "Keine Verbindung" }
-        return nil
+        AccountFetchState.titleStatus(
+            isOnline: network.isOnline,
+            accounts: viewModel.viewAccounts.map { (id: $0.id, name: $0.displayName) },
+            unreachable: fetchState.unreachable
+        )
     }
 
     /// Ruft die gerade angezeigte Ansicht ab.
@@ -361,6 +392,7 @@ struct InboxView: View {
             accounts: accountStore.accounts,
             pausedAccountIDs: accountStore.pausedAccountIDs,
             signInRequiredIDs: signInState.signInRequired,
+            unreachableIDs: fetchState.unreachable,
             catalog: folderCatalog,
             expandedAccounts: $expandedFolderAccounts,
             selection: $viewModel.selection,
@@ -666,6 +698,17 @@ struct InboxView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        #if os(macOS)
+        // Mac: Stand und Verbindungshinweis als Untertitel des Fensters
+        // (wie Apple Mail); minütlich neu, damit „vor 5 Minuten“ mitläuft.
+        .navigationSubtitle(macSubtitle)
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                subtitleTick = .now
+            }
+        }
+        #endif
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { viewWidth = $0 }
         .toolbar { listToolbar }
         // „Rückgängig“ über der unteren Leiste: Als Überlagerung des
@@ -926,7 +969,8 @@ struct InboxView: View {
 
     /// Symbolleiste: im Auswahlmodus „Alle auswählen“, Anzahl und „Fertig“,
     /// sonst oben Ordnerleiste, Titel und Einstellungen, unten Sortieren
-    /// und Verfassen (Mac: alles oben, dazu Ladeanzeige und Aktualisieren).
+    /// und Verfassen (Mac: alles oben, dazu Aktualisieren, das während
+    /// eines Abrufs selbst den Kreisel zeigt).
     /// Steht die Ordnerleiste fest als erste Spalte (iPad, drei Spalten),
     /// entfällt der Knopf für die einblendbare Leiste; im Spaltengerüst
     /// bieten die Einstellungen zusätzlich „Drei Spalten im Querformat“.
@@ -971,12 +1015,6 @@ struct InboxView: View {
                 )
             }
             #if os(macOS)
-            ToolbarItem {
-                if viewModel.isLoading && !viewModel.messages.isEmpty {
-                    ProgressView()
-                        .controlSize(.small)
-                }
-            }
             ToolbarItem {
                 refreshButton
             }
@@ -1264,17 +1302,37 @@ struct InboxView: View {
     /// Knopf „Aktualisieren“ in der Symbolleiste des Mac, auch per ⌘R.
     ///
     /// Auf dem Mac ist Herunterziehen keine übliche Bedienung; deshalb gibt
-    /// es dort einen ausdrücklichen Knopf. Während ein Abruf läuft, ist er
-    /// gesperrt, damit nicht mehrere Abrufe gleichzeitig starten.
+    /// es dort einen ausdrücklichen Knopf. Während ein Abruf läuft, zeigt
+    /// der Knopf selbst den Kreisel statt des Pfeils und löst nichts aus,
+    /// damit nicht mehrere Abrufe gleichzeitig starten.
+    ///
+    /// Verarbeitung: Kreisel und Pfeil stehen in einem Rahmen fester Größe.
+    /// Ein eigenes Element nur für den Kreisel änderte beim Erscheinen die
+    /// Leiste; unter dem gemeinsamen Glas-Hintergrund der Knöpfe wurde es
+    /// dabei abgeschnitten. Der Knopf bleibt während des Abrufs bewusst
+    /// bedienbar statt gesperrt – gesperrt würde der Kreisel ausgegraut.
     private var refreshButton: some View {
         Button {
+            guard !viewModel.isLoading else { return }
             Task { await refreshCurrentView() }
         } label: {
-            Label("Aktualisieren", systemImage: "arrow.clockwise")
+            Label {
+                Text(viewModel.isLoading ? "Wird aktualisiert" : "Aktualisieren")
+            } icon: {
+                ZStack {
+                    if viewModel.isLoading {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                .frame(width: 18, height: 18)
+            }
         }
         .keyboardShortcut("r", modifiers: .command)
-        .help("Aktualisieren (⌘R)")
-        .disabled(viewModel.isLoading || accountStore.accounts.isEmpty)
+        .help(viewModel.isLoading ? "Wird aktualisiert …" : "Aktualisieren (⌘R)")
+        .disabled(accountStore.accounts.isEmpty)
     }
     #endif
 
@@ -1804,7 +1862,8 @@ struct InboxView: View {
 /// linksbündig: iOS zentriert einen Titel nur, solange er zwischen die
 /// Knöpfe passt, und rückt ihn sonst nach links – je nach Länge sprang er.
 /// Auf dem Mac trägt die Fensterleiste den Titel bereits
-/// (`navigationTitle`), dort bleibt der Platz leer.
+/// (`navigationTitle`), dort bleibt der Platz leer; die Standzeile steht
+/// dort als Untertitel des Fensters (`statusText`, siehe InboxView).
 private struct InboxTitle: View {
     /// Gewählte Ansicht (Titel und Symbol).
     let selection: MailboxSelection
@@ -1813,7 +1872,8 @@ private struct InboxTitle: View {
     /// Stand der Ansicht; erscheint als zweite Zeile. Der untere
     /// Bildschirmrand bleibt so frei für die untere Leiste.
     var syncState: SyncState?
-    /// „Offline" bzw. „Keine Verbindung", sonst `nil`.
+    /// „Offline“, „Keine Verbindung“ bzw. welche Postfächer nicht
+    /// erreichbar sind (AccountFetchState.titleStatus), sonst `nil`.
     var connectionStatus: String?
     /// Ein Abruf läuft – kleines Drehsymbol vor der Standzeile.
     var isLoading = false
@@ -1844,7 +1904,7 @@ private struct InboxTitle: View {
                             ProgressView()
                                 .controlSize(.mini)
                         }
-                        statusLine(syncState)
+                        Text(Self.statusText(syncState, connectionStatus: connectionStatus))
                     }
                     .font(.caption2)
                     .foregroundStyle(connectionStatus == nil ? Color.secondary : Color.orange)
@@ -1860,20 +1920,27 @@ private struct InboxTitle: View {
         #endif
     }
 
-    /// Text der Standzeile.
+    /// Text der Standzeile – auf iPhone/iPad unter dem Titel, auf dem Mac
+    /// als Untertitel des Fensters. Eine Regel für beide, damit die Texte
+    /// nie auseinanderlaufen.
     ///
-    /// - Parameter state: Stand der Ansicht.
+    /// Verarbeitung: Die Zeitangabe („vor 5 Minuten“) gilt für den
+    /// Zeitpunkt des Aufrufs; der Aufrufer ruft minütlich neu auf.
+    ///
+    /// - Parameters:
+    ///   - state: Stand der Ansicht.
+    ///   - connectionStatus: Verbindungshinweis; `nil` = keiner.
     /// - Returns: „Aktualisiert: …“ bzw. mit Verbindungshinweis.
-    private func statusLine(_ state: SyncState) -> Text {
+    static func statusText(_ state: SyncState, connectionStatus: String?) -> String {
         switch (state, connectionStatus) {
         case (.at(let date), nil):
-            return Text("Aktualisiert: \(date, format: .relative(presentation: .named))")
+            return "Aktualisiert: \(date.formatted(.relative(presentation: .named)))"
         case (.at(let date), let status?):
-            return Text("\(status) · Stand: \(date, format: .relative(presentation: .named))")
+            return "\(status) · Stand: \(date.formatted(.relative(presentation: .named)))"
         case (.never, nil):
-            return Text("Noch nicht abgerufen")
+            return "Noch nicht abgerufen"
         case (.never, let status?):
-            return Text("\(status) · noch nicht abgerufen")
+            return "\(status) · noch nicht abgerufen"
         }
     }
 }

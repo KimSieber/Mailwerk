@@ -114,9 +114,10 @@ final class WatchStore {
     /// `true`, wenn auf dem iPhone Postfächer mit Abruf eingerichtet sind.
     var hasAccounts: Bool { mailbox.snapshot?.hasAccounts ?? true }
 
-    /// Hinweis des iPhones zum letzten Abruf (z. B. keine Verbindung zum
-    /// Mailserver); `nil` = keiner.
-    var problem: String? { mailbox.snapshot?.problems.first }
+    /// Hinweise des iPhones zum letzten Abruf, z. B. „iPhone ohne
+    /// Internet“ oder je nicht erreichbarem Postfach „GMX: keine
+    /// Verbindung zum Mailserver“; leer = keine.
+    var problems: [String] { mailbox.snapshot?.problems ?? [] }
 
     /// Letzter Abruf aller Posteingänge auf dem iPhone; `nil` = unbekannt.
     var lastServerSync: Date? { mailbox.snapshot?.lastServerSync }

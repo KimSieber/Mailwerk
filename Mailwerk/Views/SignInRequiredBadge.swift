@@ -8,10 +8,10 @@
 //  der Hinweisleiste über der Mailliste; Gegenstück zum orangefarbenen
 //  Pause-Zeichen (FetchPausedBadge).
 //
-//  Abgrenzung: Zustand → OAuthSignInState; Verwendung → AccountListView,
-//  FolderSidebarView, EditAccountView, SignInRequiredBar.
+//  Abgrenzung: Zustand → OAuthSignInState; Verwendung → AccountStatusBadges
+//  (Postfachliste, Ordnerleiste), EditAccountView, SignInRequiredBar.
 //
-//  Abhängigkeiten: SwiftUI.
+//  Abhängigkeiten: SwiftUI, AccountStatusBadges (Hinweistext).
 //
 
 import SwiftUI
@@ -27,8 +27,8 @@ struct SignInRequiredBadge: View {
             .symbolRenderingMode(.palette)
             .foregroundStyle(.white, .red)
             .font(font)
-            .help("Anmeldung abgelaufen")
-            .accessibilityLabel("Anmeldung abgelaufen")
+            .help(AccountStatusBadges.signInText)
+            .accessibilityLabel(AccountStatusBadges.signInText)
     }
 }
 

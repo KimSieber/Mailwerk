@@ -35,6 +35,10 @@
 //  Damit die App im Hintergrund nicht mitten im Abruf angehalten wird,
 //  hält `BackgroundGrace` sie für die Dauer wach (soweit iOS es zulässt).
 //
+//  Hinweise zum Abruf: ohne Netz „iPhone ohne Internet“, sonst je
+//  Postfach, das den Server nicht erreichte, eine Zeile
+//  (AccountFetchState) – die Watch zeigt alle.
+//
 //  Große Lieferungen werden gepackt und in Stücke geteilt (WatchWire); die
 //  Stücke bleiben einige Minuten zum Abholen bereit.
 //
@@ -48,7 +52,7 @@
 //  InboxViewModel, SpamSettings), MessageActions, SpamMenuRequest,
 //  MessageStore, NetworkMonitor, ConnectionErrorClassifier,
 //  MailFetchService (Verbindungsfehler), ContactImageDirectory,
-//  ContactSuggestionService, Log.
+//  ContactSuggestionService, AccountFetchState, Log.
 //
 
 #if os(iOS) && canImport(WatchConnectivity)
@@ -195,8 +199,12 @@ final class WatchBridge {
                 await objects.inbox.refresh()
                 if !NetworkMonitor.shared.isOnline {
                     problems.append("iPhone ohne Internet")
-                } else if objects.inbox.connectionFailed {
-                    problems.append("Keine Verbindung zum Mailserver")
+                } else {
+                    // Je nicht erreichbarem Postfach eine Zeile.
+                    problems += AccountFetchState.watchProblems(
+                        accounts: objects.accountStore.fetchingAccounts.map { (id: $0.id, name: $0.displayName) },
+                        unreachable: AccountFetchState.shared.unreachable
+                    )
                 }
             }
             push(.snapshot(await snapshot(objects, isFresh: refresh, outcomes: outcomes, problems: problems)))
