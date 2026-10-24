@@ -17,14 +17,29 @@
 //  gemeinsam). Meldungen und Rückfragen haben je einen Kanal
 //  (`activeAlert`, `activeConfirmation`, siehe Dialogs.swift).
 //
-//  Abgrenzung: Kopfbereich und Hinweis auf externe Inhalte →
-//  MessageDetailHeader; Anhangliste → MessageAttachmentList; Menüeinträge
-//  → MessageMenu; Rückfragen und Meldungen zu den Aktionen →
+//  Abgrenzung: Kopfbereich und Hinweise auf externe Inhalte und auf eine
+//  Übersetzung → MessageDetailHeader; Anhangliste → MessageAttachmentList;
+//  Menüeinträge → MessageMenu; Rückfragen und Meldungen zu den Aktionen →
 //  MessageActionDialogs; Laden der Mail aus dem Cache → MessageDetailLoader;
 //  HTML-Darstellung → HTMLMailView; Verfassen → ComposeView; Ordnerwahl →
 //  FolderMoveSheet; Anhang-Zeile → AttachmentRow; Druck → MailPrinter;
 //  HTML für Druck und Teilen → MailPrintFormatter; Regeln für externe
-//  Inhalte → RemoteContentPolicy; Originalquelle → RawSourceView.
+//  Inhalte → RemoteContentPolicy; Originalquelle → RawSourceView;
+//  Spracherkennung und Prüfung der Übersetzbarkeit → MessageLanguage.
+//
+//  Übersetzung (v0.2.2a, Apples on-device-Übersetzung): Erkennt
+//  MessageLanguage beim Öffnen eine fremde, übersetzbare Sprache im Text
+//  der Mail, erscheint ein Hinweis mit Knopf „<Sprache> übersetzen“ unter
+//  einem eventuellen Hinweis auf externe Inhalte. Ein Tipp übersetzt
+//  Betreff und Text über eine `TranslationSession` (`.translationTask`,
+//  ausgelöst durch `translationConfiguration`); der Text erscheint dabei
+//  als reiner Text, nicht als HTML – Formatierung ist hier zweitrangig.
+//  Die Übersetzung dient nur der Anzeige: nichts wird im Cache verändert,
+//  ein Mailwechsel verwirft sie. „Original anzeigen“ schaltet zurück,
+//  ohne erneut zu übersetzen (das Ergebnis bleibt für diese Anzeige
+//  erhalten). Schlägt die Übersetzung fehl, bietet der Hinweis „Erneut
+//  versuchen“. Kennt Apple das Sprachpaar nicht, erscheint von vornherein
+//  kein Hinweis.
 //
 //  Spam-Einschätzung: Beim Öffnen wird der Text (z. B. `[SPAM score=7.2]`,
 //  `[NoSpam score=2.1]`, `[NoSpam]`)
@@ -72,20 +87,21 @@
 //  die Mail als reiner Text mit allen Kopfzeilen, für Analysen. Mit
 //  Tastatur auch per ⌥⌘U, wie in Apple Mail.
 //
-//  Abhängigkeiten: SwiftUI, QuickLook, MessageActions, MessageMenu,
-//  MessageActionDialogs, MessageDetailHeader, MessageAttachmentList,
-//  SpamFilterService,
+//  Abhängigkeiten: SwiftUI, QuickLook, WebKit, Translation, MessageActions,
+//  MessageMenu, MessageActionDialogs, MessageDetailHeader,
+//  MessageAttachmentList, SpamFilterService,
 //  AttachmentManager, MessageStore, MailPrintFormatter, RemoteContentPolicy,
 //  RawSourceView, InlineImages, InlineImageLoader, NetworkMonitor, Dialogs,
 //  AppTheme, HeaderPerson, ContactCardView, MailtoLink, SearchPerson,
 //  ExternalMailtoPresenter (Blätter melden sich als offene Fenster),
 //  MessageRowParty, SenderAvatarView, ContactImageDirectory,
-//  SenderIconCache, Log.
+//  SenderIconCache, MessageLanguage, SearchText, Log.
 //
 
 import SwiftUI
 import QuickLook
 import WebKit
+import Translation
 import os
 
 /// Ansicht einer einzelnen Mail.
@@ -171,6 +187,27 @@ struct MessageDetailView: View {
     @State private var activeAlert: AlertItem?
     /// Einziger Rückfragekanal der Ansicht.
     @State private var activeConfirmation: ConfirmationRequest?
+
+    // MARK: - Übersetzung
+
+    /// Erkannte fremde Sprache der Mail; `nil` = Deutsch, nicht erkannt
+    /// oder nicht übersetzbar (dann auch kein Hinweis).
+    @State private var detectedLanguage: Locale.Language?
+    /// `true`, sobald die Spracherkennung gelaufen ist (läuft nur einmal
+    /// je Anzeige, analog `isRemoteContentDecided`).
+    @State private var isLanguageDecided = false
+    /// Zustand des Übersetzungs-Hinweises; `nil` = kein Hinweis.
+    @State private var translationNoticeState: TranslationNoticeState?
+    /// `true`, solange die übersetzte Fassung angezeigt wird.
+    @State private var showsTranslation = false
+    /// Übersetzter Betreff; bleibt auch nach „Original anzeigen“ erhalten,
+    /// damit erneutes Umschalten keinen neuen Übersetzungsversuch braucht.
+    @State private var translatedSubject: String?
+    /// Übersetzter Text (reiner Text, unabhängig von einer HTML-Mail).
+    @State private var translatedBody: String?
+    /// Löst `.translationTask` aus; eine neue Instanz startet einen neuen
+    /// Übersetzungsversuch (auch bei „Erneut versuchen“).
+    @State private var translationConfiguration: TranslationSession.Configuration?
 
     /// Kapselt die Art der zu verfassenden Nachricht für das Sheet.
     private struct ComposeRequest: Identifiable {
@@ -279,6 +316,9 @@ struct MessageDetailView: View {
             .quickLookPreview($previewURL)
             .confirmationRequest($activeConfirmation)
             .task { await prepareOnOpen() }
+            .translationTask(translationConfiguration) { session in
+                await performTranslation(session: session)
+            }
     }
 
     /// Unsichtbarer Knopf für ⌥⌘U (Originalquelle).
@@ -321,7 +361,8 @@ struct MessageDetailView: View {
                         onSearchPerson?(person.searchPerson)
                     },
                     spamMark: spamMark,
-                    avatar: headerAvatar
+                    avatar: headerAvatar,
+                    translatedSubject: showsTranslation ? translatedSubject : nil
                 )
                 .padding()
                 messageBody
@@ -343,17 +384,40 @@ struct MessageDetailView: View {
         .alertItem($activeAlert)
     }
 
-    /// Inhalt der Mail: HTML bevorzugt, sonst Text. Über einer HTML-Mail
-    /// mit gesperrten externen Inhalten steht der Hinweis zum Laden. Bis
-    /// über externe Inhalte entschieden ist, bleibt nur der Platz frei.
+    /// Inhalt der Mail samt Hinweisen auf externe Inhalte und Übersetzung.
+    /// Bis über externe Inhalte entschieden ist, bleibt nur der Platz
+    /// frei (Spracherkennung läuft parallel, bremst den Inhalt nicht).
     @ViewBuilder
     private var messageBody: some View {
         if message.htmlBody != nil && !isRemoteContentDecided {
             Color.clear.frame(height: 100)
-        } else if let html = message.htmlBody {
-            if hasRemoteContent && !allowsRemoteContent {
-                RemoteContentNotice(onLoad: allowRemoteContent)
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                // Externe Inhalte zuerst (Sicherheitsthema); eine
+                // übersetzte Anzeige hat kein HTML und damit auch keine
+                // externen Inhalte mehr, der Hinweis entfällt dann.
+                if hasRemoteContent && !allowsRemoteContent && !showsTranslation {
+                    RemoteContentNotice(onLoad: allowRemoteContent)
+                }
+                if let translationNoticeState {
+                    TranslationNotice(
+                        state: translationNoticeState,
+                        onTranslate: translate,
+                        onShowOriginal: showOriginal
+                    )
+                }
+                translatableContent
             }
+        }
+    }
+
+    /// Übersetzte Fassung (reiner Text) oder die gewöhnliche Anzeige:
+    /// HTML bevorzugt, sonst Text.
+    @ViewBuilder
+    private var translatableContent: some View {
+        if showsTranslation, let translatedBody {
+            Text(translatedBody)
+        } else if let html = message.htmlBody {
             HTMLMailView(
                 html: resolvedHTML ?? html,
                 contentHeight: $webViewHeight,
@@ -586,6 +650,9 @@ struct MessageDetailView: View {
         if !isRemoteContentDecided {
             await decideRemoteContent()
         }
+        if !isLanguageDecided {
+            await decideLanguage()
+        }
         spamMark = await spamFilter.spamMark(of: message, scoreLimit: scoreLimit)
         showsSenderImage = await spamFilter.allowsSenderImage(of: message, scoreLimit: scoreLimit)
         writeMailFile()
@@ -752,6 +819,99 @@ struct MessageDetailView: View {
         allowsRemoteContent = true
         writeMailFile()
         Log.view.info("🖼 Externe Inhalte für diese Anzeige freigegeben")
+    }
+
+    // MARK: - Übersetzung
+
+    /// Erkennt die Sprache der Mail und prüft, ob Apple sie übersetzt;
+    /// erst danach erscheint ggf. der Hinweis.
+    ///
+    /// Verarbeitung: Läuft nur einmal je Anzeige (wie `decideRemoteContent`).
+    /// Ohne Treffer oder ohne Übersetzbarkeit bleibt `translationNoticeState`
+    /// `nil` – kein Hinweis. Beide Zwischenergebnisse werden protokolliert
+    /// (ohne Mailinhalt), damit sich spätere Fehlberichte („kein Knopf“)
+    /// ohne erneuten Nachbau einordnen lassen.
+    @MainActor
+    private func decideLanguage() async {
+        defer { isLanguageDecided = true }
+        let body = SearchText.body(text: message.textBody, html: message.htmlBody)
+        let source = "Textteil \(message.textBody == nil ? "nein" : "ja"), HTML \(message.htmlBody == nil ? "nein" : "ja")"
+        Log.view.info("🌐 Spracherkennung: \(source, privacy: .public); \(MessageLanguage.diagnosis(forBody: body), privacy: .public)")
+        guard let language = MessageLanguage.detectedLanguage(forBody: body) else {
+            Log.view.info("🌐 Keine fremde Sprache erkannt")
+            return
+        }
+        let translatable = await MessageLanguage.isTranslatable(language)
+        Log.view.info("🌐 Sprache erkannt: \(language.languageCode?.identifier ?? "?", privacy: .public), übersetzbar: \(translatable, privacy: .public)")
+        guard translatable else { return }
+        detectedLanguage = language
+        translationNoticeState = .offer(languageName: MessageLanguage.germanName(for: language))
+    }
+
+    /// Startet die Übersetzung – oder schaltet, falls schon einmal
+    /// übersetzt wurde, ohne neuen Versuch zurück auf die übersetzte
+    /// Anzeige (z. B. nach „Original anzeigen“).
+    private func translate() {
+        guard let detectedLanguage else { return }
+        if translatedBody != nil {
+            showsTranslation = true
+            translationNoticeState = .translated
+            return
+        }
+        translationNoticeState = .translating
+        translationConfiguration = TranslationSession.Configuration(
+            source: detectedLanguage,
+            target: Locale.Language(identifier: "de")
+        )
+    }
+
+    /// Übersetzt Betreff und Text mit der von `.translationTask`
+    /// gelieferten Sitzung und zeigt das Ergebnis an.
+    ///
+    /// Verarbeitung: Beide Texte in einer Anfrage, damit ein eventuell
+    /// nötiger Download des Sprachmodells nur einmal anfällt. Schlägt die
+    /// Übersetzung fehl (z. B. kein Netz für den Download, Sprachmodell
+    /// nicht verfügbar), bleibt die Originalanzeige; der Hinweis bietet
+    /// „Erneut versuchen“. Die Fehlermeldung ist bewusst allgemein – genauere
+    /// Texte folgen nach dem Testdurchlauf anhand der echten Fehlerfälle.
+    ///
+    /// Achtung: `session.translations(from:)` sowie `.targetText` und
+    /// `.clientIdentifier` auf `TranslationSession.Request`/`.Response`
+    /// konnten nicht gegen die offizielle Apple-Dokumentation geprüft werden
+    /// (JS-gerenderte Seiten). Bitte beim ersten Build gegen Xcodes
+    /// Autovervollständigung/Compiler-Fehler prüfen und diesen Hinweis dann
+    /// entfernen.
+    @MainActor
+    private func performTranslation(session: TranslationSession) async {
+        let body = SearchText.body(text: message.textBody, html: message.htmlBody)
+        do {
+            let responses = try await session.translations(from: [
+                TranslationSession.Request(sourceText: message.subject, clientIdentifier: "subject"),
+                TranslationSession.Request(sourceText: body, clientIdentifier: "body")
+            ])
+            for response in responses {
+                switch response.clientIdentifier {
+                case "subject": translatedSubject = response.targetText
+                case "body": translatedBody = response.targetText
+                default: break
+                }
+            }
+            showsTranslation = true
+            translationNoticeState = .translated
+            Log.view.info("🌐 Mail übersetzt")
+        } catch {
+            Log.view.error("🌐 Übersetzung fehlgeschlagen: \(error.localizedDescription, privacy: .public)")
+            translationNoticeState = .failed("Übersetzung fehlgeschlagen")
+        }
+    }
+
+    /// Rückweg: zeigt wieder das Original. Die Übersetzung bleibt
+    /// erhalten, damit erneutes Umschalten keinen neuen Versuch braucht.
+    private func showOriginal() {
+        showsTranslation = false
+        if let detectedLanguage {
+            translationNoticeState = .offer(languageName: MessageLanguage.germanName(for: detectedLanguage))
+        }
     }
 
     // MARK: - Teilen & Drucken

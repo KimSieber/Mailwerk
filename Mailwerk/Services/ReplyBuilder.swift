@@ -297,8 +297,13 @@ enum ReplyBuilder {
 
     // MARK: - Weiterleiten
 
-    /// Trennzeile über dem weitergeleiteten Inhalt.
-    private static let forwardSeparator = "---------- Weitergeleitete Nachricht ----------"
+    /// Trennzeile über dem weitergeleiteten Inhalt. Nicht `private`, weil
+    /// `MessageLanguage` daran erkennt, wo bei einer selbst
+    /// weitergeleiteten Mail der eigentliche Originalinhalt beginnt (für
+    /// die Spracherkennung, ohne die eigene Signatur und den Kopfblock).
+    /// `nonisolated`, weil `MessageLanguage` nicht an den Main Actor
+    /// gebunden ist; als unveränderlicher Text ist das unbedenklich.
+    nonisolated static let forwardSeparator = "---------- Weitergeleitete Nachricht ----------"
 
     /// Zeilen des Kopfblocks einer Weiterleitung (Von, Datum, Betreff, An, Cc).
     ///

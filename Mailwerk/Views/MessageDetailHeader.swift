@@ -4,8 +4,12 @@
 //
 //  Zweck: Kopfbereich der Mailansicht – Betreff mit Kennzeichen, Absender,
 //  Empfänger, Kopie, „Antwort an“ und Datum (rechts daneben die
-//  Spam-Einschätzung, z. B. `[SPAM score=7.2]` oder `[NoSpam]`) – sowie der
-//  schmale Hinweis „Externe Inhalte blockiert“ mit dem Knopf „Laden“.
+//  Spam-Einschätzung, z. B. `[SPAM score=7.2]` oder `[NoSpam]`) – sowie die
+//  schmalen Hinweise „Externe Inhalte blockiert“ (Knopf „Laden“) und zur
+//  Übersetzung fremdsprachiger Mails (`TranslationNotice`).
+//
+//  Ist ein Betreff übersetzt, zeigt der Kopf ihn statt des Originals
+//  (`translatedSubject`); die Mail selbst entscheidet, wann das gilt.
 //
 //  Links neben Personen und Datum steht wie in Apple Mail derselbe Kreis
 //  wie in der Mailliste (SenderAvatarView): Kontaktbild, Logo oder
@@ -62,12 +66,14 @@ struct MessageDetailHeader: View {
     /// Kreis wie in der Mailliste (Kontaktbild, Logo, Initialen oder leer);
     /// `nil` = kein Kreis.
     var avatar: SenderAvatar? = nil
+    /// Übersetzter Betreff; `nil` = das Original wird gezeigt.
+    var translatedSubject: String? = nil
 
     /// Betreff, Kennzeichnung, Personen und Datum.
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text(message.subject)
+                Text(translatedSubject ?? message.subject)
                     .font(.title2)
                     .bold()
                     .textSelection(.enabled)
@@ -238,6 +244,75 @@ struct RemoteContentNotice: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
             .accessibilityLabel("Externe Inhalte laden")
+        }
+        .font(.footnote)
+    }
+}
+
+// MARK: - Hinweis Übersetzung
+
+/// Zustand des Übersetzungs-Hinweises einer Mail.
+enum TranslationNoticeState {
+    /// Fremde Sprache erkannt, noch nicht übersetzt; Knopf trägt den
+    /// Sprachnamen (z. B. „Schwedisch übersetzen“).
+    case offer(languageName: String)
+    /// Übersetzung läuft (ggf. inkl. Herunterladen des Sprachmodells).
+    case translating
+    /// Übersetzung wird angezeigt; Rückweg zum Original.
+    case translated
+    /// Übersetzung fehlgeschlagen; Knopf zum erneuten Versuch.
+    case failed(String)
+}
+
+/// Schmaler Hinweis zur Übersetzung einer fremdsprachigen Mail – analog
+/// `RemoteContentNotice`, aber mit vier Zuständen in einem Baustein, damit
+/// an derselben Stelle steht, was gerade gilt.
+struct TranslationNotice: View {
+    /// Aktueller Zustand.
+    let state: TranslationNoticeState
+    /// Startet die Übersetzung (auch „Erneut versuchen“).
+    let onTranslate: () -> Void
+    /// Rückweg: zeigt wieder das Original.
+    let onShowOriginal: () -> Void
+
+    /// Symbol, Hinweis und ein Knopf je Zustand, in einer Zeile.
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "character.bubble")
+                .foregroundStyle(.secondary)
+            switch state {
+            case .offer(let languageName):
+                Spacer(minLength: 8)
+                Button("\(languageName) übersetzen") {
+                    onTranslate()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            case .translating:
+                Text("Wird übersetzt …")
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                ProgressView()
+                    .controlSize(.small)
+            case .translated:
+                Text("Übersetzt")
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Button("Original anzeigen") {
+                    onShowOriginal()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            case .failed(let message):
+                Text(message)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Button("Erneut versuchen") {
+                    onTranslate()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
         }
         .font(.footnote)
     }
