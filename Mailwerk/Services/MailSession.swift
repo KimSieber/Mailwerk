@@ -21,6 +21,11 @@
 //
 //  Die Verschlüsselung erzwingt weiterhin `MailServerFactory`.
 //
+//  Nebenläufigkeit (v0.2.3b): `nonisolated`. `withIMAP` läuft im Kontext
+//  des Aufrufers – aus dem Abruf (`@concurrent`) also abseits des
+//  Hauptthreads. Die Erweiterung von `AccountStore` am Ende bleibt am
+//  Main-Actor wie `AccountStore` selbst.
+//
 //  Abgrenzung: Was auf der Verbindung geschieht, bestimmen die Dienste
 //  (MailFetchService, MailActionService, SpamFilterService,
 //  MailSendService, AttachmentManager). SMTP baut seine Verbindung im
@@ -44,7 +49,7 @@ nonisolated enum MailSecret: Equatable, Sendable {
 }
 
 /// Postfach und Zugang für eine Verbindung.
-struct MailCredentials {
+nonisolated struct MailCredentials: Sendable {
     /// Postfach (Server, Port, Benutzername).
     let account: MailAccount
     /// Passwort bzw. Anbieter der Anmeldung per OAuth 2.
@@ -52,7 +57,7 @@ struct MailCredentials {
 }
 
 /// Fehler beim Bestimmen der Zugangsdaten.
-enum MailCredentialError: LocalizedError, Equatable {
+nonisolated enum MailCredentialError: LocalizedError, Equatable {
     /// Das Postfach ist (nicht mehr) eingerichtet.
     case accountNotFound
     /// Für das Postfach ist kein Passwort gespeichert.
@@ -70,7 +75,7 @@ enum MailCredentialError: LocalizedError, Equatable {
 }
 
 /// Zugangsdaten bestimmen, anmelden und IMAP-Verbindungen führen.
-enum MailSession {
+nonisolated enum MailSession {
 
     /// Bestimmt die Zugangsdaten zu einer Postfach-ID.
     ///

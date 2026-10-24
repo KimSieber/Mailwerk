@@ -182,7 +182,7 @@ struct MessageStoreListTests {
         #expect(sqlite(at: path, "SELECT count(*) FROM pragma_table_info('message') WHERE name = 'preview'") == "0")
         #expect(sqlite(at: path, "SELECT count(*) FROM sqlite_master WHERE name = 'idx_message_account_folder_date'") == "1")
         #expect(sqlite(at: path, "SELECT count(*) FROM sqlite_master WHERE name = 'idx_message_account_folder'") == "0")
-        #expect(sqlite(at: path, "PRAGMA user_version") == "7")
+        #expect(sqlite(at: path, "PRAGMA user_version") == "8")
     }
 
     /// Testhilfe: versetzt eine Datenbank in den Zustand von Schema-Stufe 2

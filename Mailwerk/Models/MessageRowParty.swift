@@ -13,6 +13,11 @@
 //  Deshalb eine eigene, feste Prüfsumme (FNV-1a) statt `hashValue`, der
 //  bei jedem Programmstart anders ausfällt.
 //
+//  Nebenläufigkeit (v0.2.3c): `nonisolated` und `Sendable`, damit das
+//  Zeilenmodell (MessageRowModel) im Hintergrund entstehen kann. Nur
+//  `colorIndex` bleibt am Main-Actor, weil es die Farbpalette
+//  (`AccountColor`) liest.
+//
 //  Abgrenzung: Darstellung der Zeile → MessageRow; Kreis mit Initialen
 //  bzw. Bild → SenderAvatarView; ob ein Bild gezeigt werden darf →
 //  SpamClassifier.allowsSenderImage.
@@ -24,7 +29,7 @@
 import Foundation
 
 /// Die in einer Listenzeile gezeigte Person samt Texten und Platzhalter.
-struct MessageRowParty: Equatable {
+nonisolated struct MessageRowParty: Equatable, Sendable {
     /// Anzeigename; `nil`, wenn keiner angegeben ist.
     let name: String?
     /// E-Mail-Adresse; `nil`, wenn sich keine auswerten lässt.
@@ -137,6 +142,7 @@ struct MessageRowParty: Equatable {
     ///
     /// Verarbeitung: FNV-1a über die kleingeschriebene Adresse (ersatzweise
     /// den Namen), Rest der Division durch die Anzahl der Farben.
+    @MainActor
     var colorIndex: Int {
         let key = (address ?? name ?? "").lowercased()
         var hash: UInt32 = 2_166_136_261

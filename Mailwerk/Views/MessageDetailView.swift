@@ -644,8 +644,13 @@ struct MessageDetailView: View {
     /// (z. B. nach einer Vorschau), bleibt eine Freigabe per Knopf
     /// erhalten. Scheitert das Markieren, bleibt die Mail ungelesen; eine
     /// Meldung erscheint nicht, weil der Nutzer nichts ausgelöst hat.
+    /// Messpunkt für Instruments: „Mail öffnen“ – nur die Vorbereitung auf
+    /// dem Gerät, ohne Markieren und Nachladen über das Netz.
     @MainActor
     private func prepareOnOpen() async {
+        // Messpunkt nur für die Vorbereitung auf dem Gerät – das Markieren
+        // als gelesen und das Nachladen von Bildern gehen über das Netz.
+        let interval = Log.beginInterval(Log.Interval.openMessage)
         updateAttachments(MessageStore.shared.attachments(forMessage: message.id))
         if !isRemoteContentDecided {
             await decideRemoteContent()
@@ -656,6 +661,7 @@ struct MessageDetailView: View {
         spamMark = await spamFilter.spamMark(of: message, scoreLimit: scoreLimit)
         showsSenderImage = await spamFilter.allowsSenderImage(of: message, scoreLimit: scoreLimit)
         writeMailFile()
+        Log.endInterval(interval)
 
         if isUnread {
             do {

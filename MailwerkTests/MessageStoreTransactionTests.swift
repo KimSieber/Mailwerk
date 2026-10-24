@@ -131,13 +131,13 @@ struct MessageStoreTransactionTests {
         #expect(pragma("journal_mode", at: path) == "wal")
     }
 
-    /// Nach dem Öffnen steht die Schema-Version auf 6, auch nach erneutem Öffnen.
+    /// Nach dem Öffnen steht die Schema-Version auf der aktuellen Stufe (8), auch nach erneutem Öffnen.
     @Test func schemaVersionIsStored() {
         let path = temporaryPath()
         _ = MessageStore(path: path)
-        #expect(pragma("user_version", at: path) == "7")
+        #expect(pragma("user_version", at: path) == "8")
         _ = MessageStore(path: path)
-        #expect(pragma("user_version", at: path) == "7")
+        #expect(pragma("user_version", at: path) == "8")
     }
 
     /// Eingebettetes Bild: Content-ID und Kennzeichen „inline“ bleiben erhalten.
@@ -182,6 +182,6 @@ struct MessageStoreTransactionTests {
         #expect(!loaded.isInline)
         #expect(loaded.contentID == nil)
         #expect(loaded.data == Data([1, 2, 3]))
-        #expect(pragma("user_version", at: path) == "7")
+        #expect(pragma("user_version", at: path) == "8")
     }
 }

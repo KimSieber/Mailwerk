@@ -12,6 +12,10 @@
 //  (z. B. das sofortige Laden externer Inhalte), muss „unbekannt“ wie
 //  „nicht vertrauenswürdig“ behandeln.
 //
+//  Nebenläufigkeit: `nonisolated` und `Sendable` – reine Werte bzw. reine
+//  Logik ohne Bezug zur Oberfläche. So kann die Ablage (MessageStore) sie
+//  auch außerhalb des Hauptthreads nutzen (v0.2.3b).
+//
 //  Abgrenzung: Speichern und Lesen → MessageStore; Befüllen beim Abruf →
 //  MailFetchService; Listeneinträge ohne Inhalt → MessageListItem;
 //  Regeln für eingebettete Bilder → InlineImages.
@@ -24,7 +28,7 @@ import Foundation
 /// Adress-, Threading- und Spam-Kopfdaten einer Nachricht.
 /// Grundlage für Antworten, Allen antworten, Weiterleiten und für die
 /// Entscheidung, ob externe Inhalte sofort geladen werden.
-struct CachedMessageHeaders: Equatable {
+nonisolated struct CachedMessageHeaders: Equatable, Sendable {
     /// Empfänger (To) – je Eintrag eine formatierte Adresse, z. B. "Kim Sieber <kim@example.org>"
     var toList: [String] = []
     /// Kopie-Empfänger (Cc)
@@ -43,7 +47,7 @@ struct CachedMessageHeaders: Equatable {
 
 /// Lokal zwischengespeicherte Nachricht inkl. Body.
 /// Anhänge werden separat in CachedAttachment gehalten.
-struct CachedMessage: Identifiable {
+nonisolated struct CachedMessage: Identifiable, Sendable {
     /// Cache-Kennung "<accountUUID>-<folder>-<uid>" (siehe `makeID`).
     let id: String
     /// Postfach, zu dem die Nachricht gehört.
@@ -104,7 +108,7 @@ struct CachedMessage: Identifiable {
 /// Eingebettete Bilder (Inline-Teile, im HTML per `cid:` angesprochen)
 /// liegen in derselben Tabelle mit `isInline` und ihrer Content-ID; ob sie
 /// in der Anhangliste erscheinen, entscheidet `InlineImages`.
-struct CachedAttachment: Identifiable {
+nonisolated struct CachedAttachment: Identifiable, Sendable {
     /// Kennung "<messageID>-<partSection>".
     let id: String
     /// Fremdschlüssel auf `CachedMessage.id`.

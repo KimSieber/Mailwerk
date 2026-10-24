@@ -135,6 +135,38 @@ struct MessageStoreSearchIndexTests {
         #expect(hits("people : \"<chef@firma.de>\"", at: path) == 1)
     }
 
+    /// Nachgetragene Kopfdaten lassen Text und Anhangnamen im Index unverändert.
+    @Test func updatedHeadersKeepBodyAndAttachments() {
+        let path = temporaryPath()
+        let store = MessageStore(path: path)
+        let saved = message(uid: 1, text: "Kündigungsbestätigung")
+        let pdf = CachedAttachment(
+            id: "\(saved.id)-2", messageID: saved.id, filename: "Vertrag.pdf",
+            contentType: "application/pdf", sizeBytes: 1, data: nil
+        )
+        store.saveMessageWithAttachments(saved, attachments: [pdf])
+        var headers = CachedMessageHeaders()
+        headers.toList = ["Max Müller <max@example.org>"]
+        store.updateHeaders(messageID: saved.id, headers: headers)
+        #expect(hits("\"kündigung\"", at: path) == 1)
+        #expect(hits("attachments : \"vertrag\"", at: path) == 1)
+        #expect(hits("people : \"<max@example.org>\"", at: path) == 1)
+    }
+
+    /// Fehlt der Eintrag noch, schreiben nachgetragene Kopfdaten ihn vollständig.
+    @Test func updatedHeadersCreateMissingEntry() {
+        let path = temporaryPath()
+        let store = MessageStore(path: path)
+        let saved = message(uid: 1, text: "Rechnung")
+        store.saveMessage(saved)
+        exec(["DELETE FROM message_search"], at: path)
+        var headers = CachedMessageHeaders()
+        headers.ccList = ["chef@firma.de"]
+        store.updateHeaders(messageID: saved.id, headers: headers)
+        #expect(hits("\"rechnung\"", at: path) == 1)
+        #expect(hits("people : \"<chef@firma.de>\"", at: path) == 1)
+    }
+
     /// Namen echter Anhänge sind auffindbar, eingebettete Bilder nicht.
     @Test func attachmentNamesAreIndexed() {
         let path = temporaryPath()

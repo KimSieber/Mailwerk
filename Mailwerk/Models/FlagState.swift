@@ -8,10 +8,14 @@
 //  „Weitergeleitet“ ist kein Systemflag, sondern das Keyword `$Forwarded`
 //  (Apple Mail, Thunderbird u. a.); verglichen wird ohne Groß-/Kleinschreibung.
 //
+//  Vergleich mit dem Cache: `matches(_:)` sagt, ob der gespeicherte Stand
+//  einer Mail schon den Server-Flags entspricht – dann muss beim Abruf
+//  nichts geschrieben werden.
+//
 //  Abgrenzung: Abruf und Abgleich → MailFetchService; Markieren beim
 //  Versand → MailSendService.
 //
-//  Abhängigkeiten: SwiftMail (Flag).
+//  Abhängigkeiten: SwiftMail (Flag), CachedFlagState (Vergleich).
 //
 
 import Foundation
@@ -54,5 +58,18 @@ nonisolated struct FlagState: Equatable {
         isFlagged = flagged
         isAnswered = answered
         isForwarded = forwarded
+    }
+
+    /// Prüft, ob der gespeicherte Stand einer Mail diesen Flags entspricht.
+    ///
+    /// Verarbeitung: Vergleich in `CachedFlagState.matches` (dort getestet).
+    ///
+    /// - Parameter cached: Flags der Mail im Cache.
+    /// - Returns: `true`, wenn alle vier Flags übereinstimmen.
+    func matches(_ cached: CachedFlagState) -> Bool {
+        cached.matches(
+            isUnread: isUnread, isFlagged: isFlagged,
+            isAnswered: isAnswered, isForwarded: isForwarded
+        )
     }
 }

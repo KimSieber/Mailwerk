@@ -11,6 +11,10 @@
 //  3. gebräuchliche Namen, unabhängig von Groß-/Kleinschreibung
 //  4. nichts gefunden → Vorschlag zum Anlegen, den der Nutzer bestätigen muss
 //
+//  Abkürzung ohne Server: `knownFolder(in:configured:)` prüft nur, ob der
+//  gemerkte Ordner in einer (z. B. gecachten) Ordnerliste steht – dann
+//  braucht der Spamfilter keine frische Ordnerliste vom Server.
+//
 //  Reine Logik, deshalb `nonisolated` und ohne IMAP-Zugriff.
 //
 //  Abgrenzung: Ordnerliste vom Server und Anlegen → MailActionService;
@@ -80,6 +84,20 @@ nonisolated enum SpamFolderResolver {
     ///   - folders: Ordnerliste.
     ///   - configured: gemerkter Pfad.
     /// - Returns: Passender Ordner oder `nil`.
+    /// Der gemerkte Ordner, sofern er in der übergebenen Ordnerliste steht.
+    ///
+    /// Verarbeitung: Wie Schritt 1 von `resolve`, aber ohne die übrigen
+    /// Schritte – findet sich der gemerkte Ordner nicht, ist das Ergebnis
+    /// `nil` und der Aufrufer fragt die Ordnerliste beim Server ab.
+    ///
+    /// - Parameters:
+    ///   - folders: Ordnerliste (z. B. aus dem Cache).
+    ///   - configured: gemerkter Pfad.
+    /// - Returns: IMAP-Pfad des Ordners oder `nil`.
+    static func knownFolder(in folders: [MailFolder], configured: String?) -> String? {
+        configuredMatch(in: folders, configured: configured)?.id
+    }
+
     private static func configuredMatch(
         in folders: [MailFolder],
         configured: String?

@@ -5,10 +5,23 @@
 //  Zweck: Lokale SQLite-Ablage für Nachrichten, Anhänge und den Stand
 //  je Ordner (letzter Abruf mit Sync-Zustand, Zeitfenster, Ordnerliste).
 //
-//  Nutzt das auf jeder Apple-Plattform mitgelieferte System-SQLite.
-//  Die Verbindung arbeitet im WAL-Modus und wird mit
-//  `SQLITE_OPEN_FULLMUTEX` geöffnet; SQLite serialisiert die Zugriffe
-//  damit intern.
+//  Nutzt das auf jeder Apple-Plattform mitgelieferte System-SQLite im
+//  WAL-Modus.
+//
+//  Nebenläufigkeit (v0.2.3b): Die Ablage ist `nonisolated` und aus jedem
+//  Thread nutzbar. Sie hält zwei Verbindungen:
+//  - die Schreibverbindung auf einer eigenen seriellen Queue – alle
+//    Schreibvorgänge und zusammengehörigen Folgen (BEGIN … COMMIT) laufen
+//    dort ungeteilt nacheinander (`onWrite`);
+//  - eine nur lesende Zweitverbindung auf einer zweiten Queue für Abfragen
+//    (`onRead`). WAL erlaubt ihr, parallel zu einem laufenden Schreibvorgang
+//    einen festgeschriebenen Stand zu lesen – die Liste muss nicht warten,
+//    bis der Abruf ein Paket gespeichert hat.
+//  Verschachtelte Aufrufe (z. B. Speichern innerhalb von `batch`) laufen
+//  direkt im bereits aktiven Kontext und verklemmen nicht. Abfragen
+//  innerhalb einer Schreibfolge lesen über die Schreibverbindung und sehen
+//  so auch deren noch offene Änderungen. Arbeitet die Ablage im
+//  Arbeitsspeicher, gibt es nur die Schreibverbindung.
 //
 //  Speicherort: Unterordner `Cache` im Application-Support-Verzeichnis.
 //  Der Ordner ist vom Geräte-Backup ausgeschlossen – sein Inhalt lässt
@@ -43,10 +56,25 @@
 //
 //  Schreiben: Alle Schreibzugriffe laufen über `execute(_:context:bind:)`,
 //  das das Ergebnis von `sqlite3_step` prüft und bei einem Fehler wirft.
+//  Die vorbereiteten Anweisungen von `execute` werden je SQL-Text
+//  zwischengespeichert und wiederverwendet (`statementCache`), statt sie
+//  bei jedem Aufruf neu zu übersetzen.
 //  Mehrteilige Schreibvorgänge laufen in `transaction(_:)` und werden
-//  bei einem Fehler vollständig zurückgerollt. Die öffentlichen
-//  Schreibfunktionen werfen nicht; sie protokollieren Fehler und melden
-//  – wo der Aufrufer es braucht – Erfolg über den Rückgabewert.
+//  bei einem Fehler vollständig zurückgerollt. Transaktionen lassen sich
+//  verschachteln: Die äußerste beginnt mit BEGIN, jede innere ist ein
+//  SAVEPOINT. Scheitert eine innere, wird nur sie zurückgerollt. So kann
+//  der Abruf viele Mails in einem gemeinsamen Commit speichern
+//  (`batch(_:_:)`), ohne dass eine fehlerhafte Mail die übrigen mitreißt.
+//  Die öffentlichen Schreibfunktionen werfen nicht; sie protokollieren
+//  Fehler und melden – wo der Aufrufer es braucht – Erfolg über den
+//  Rückgabewert.
+//
+//  Einstellungen der Verbindung: WAL mit `synchronous = NORMAL` – ein
+//  Sync auf den Speicher nur beim Checkpoint statt bei jedem Commit. Ein
+//  Absturz der App verliert nichts; bei Stromausfall können die letzten
+//  Commits fehlen, die Datenbank bleibt aber unbeschädigt. Weil der Server
+//  führend ist, holt der nächste Abruf Fehlendes nach. Dazu Zwischen-
+//  ergebnisse im Arbeitsspeicher und ein Seiten-Cache von rund 8 MB.
 //
 //  Abgrenzung: Der Store kennt weder IMAP noch Oberfläche. Abruf und
 //  Darstellung liegen im MailFetchService bzw. in den ViewModels.
@@ -73,7 +101,7 @@ import os
 
 /// SQLite soll übergebene Texte/Blobs selbst kopieren (SQLITE_TRANSIENT = -1).
 /// Das C-Makro ist in Swift nicht verfügbar, daher hier nachgebildet.
-private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+nonisolated private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 /// Fehler beim Schreiben in die Ablage.
 nonisolated enum StoreError: Error, CustomStringConvertible {
@@ -127,7 +155,7 @@ nonisolated enum StoreStartupNotice: Equatable {
 }
 
 /// Lokale SQLite-Ablage für Nachrichten und Anhänge.
-final class MessageStore: @unchecked Sendable {
+nonisolated final class MessageStore: @unchecked Sendable {
     /// Gemeinsame Ablage der App.
     static let shared = MessageStore()
 
@@ -139,7 +167,7 @@ final class MessageStore: @unchecked Sendable {
 
     /// Schema-Version, die diese App-Version erwartet. Wird nach den
     /// Migrationen in `PRAGMA user_version` geschrieben.
-    private static let schemaVersion: Int32 = 7
+    private static let schemaVersion: Int32 = 8
 
     /// Explizite Spaltenliste – Reihenfolge entspricht den Indizes in readMessage().
     private static let messageColumns = """
@@ -168,11 +196,48 @@ final class MessageStore: @unchecked Sendable {
     /// Dateiname der Datenbank.
     static let databaseFileName = "Mailwerk.sqlite"
 
-    /// Handle der geöffneten Datenbank.
-    private var db: OpaquePointer?
+    /// Schreibverbindung. Alle Schreibvorgänge und Lesezugriffe innerhalb
+    /// einer Schreibfolge laufen über sie, serialisiert auf `writeQueue`.
+    private var writeHandle: OpaquePointer?
+
+    /// Nur lesende Zweitverbindung für Abfragen (WAL erlaubt Lesen parallel
+    /// zum Schreiben), serialisiert auf `readQueue`. `nil`, wenn die Ablage
+    /// im Arbeitsspeicher arbeitet – dann laufen Lesezugriffe über die
+    /// Schreibverbindung.
+    private var readHandle: OpaquePointer?
+
+    /// Serielle Queue der Schreibverbindung.
+    private let writeQueue = DispatchQueue(label: "de.sieber-bw.Mailwerk.store.write", qos: .userInitiated)
+    /// Serielle Queue der Leseverbindung.
+    private let readQueue = DispatchQueue(label: "de.sieber-bw.Mailwerk.store.read", qos: .userInitiated)
+    /// Kennzeichen „läuft gerade auf `writeQueue`“ (je Ablage eigenes Objekt).
+    private let writeQueueKey = DispatchSpecificKey<Bool>()
+    /// Kennzeichen „läuft gerade auf `readQueue`“ (je Ablage eigenes Objekt).
+    private let readQueueKey = DispatchSpecificKey<Bool>()
+
+    /// Verbindung für den aktuellen Ausführungskontext: auf `readQueue` die
+    /// Leseverbindung, sonst die Schreibverbindung (auch während `init`,
+    /// das vor jedem anderen Zugriff läuft).
+    private var db: OpaquePointer? {
+        if DispatchQueue.getSpecific(key: readQueueKey) == true, let readHandle {
+            return readHandle
+        }
+        return writeHandle
+    }
 
     /// Hinweis für die Oberfläche, solange er nicht abgeholt wurde.
     private var startupNotice: StoreStartupNotice?
+
+    /// Vorbereitete Schreibanweisungen je SQL-Text (siehe `execute`).
+    private var statementCache: [String: OpaquePointer] = [:]
+
+    /// Tiefe der laufenden Transaktionen: 0 = keine, 1 = BEGIN, ab 2 Savepoints.
+    private var transactionDepth = 0
+
+    /// Gemeinsamer Kodierer für Adresslisten (statt eines neuen je Aufruf).
+    private static let listEncoder = JSONEncoder()
+    /// Gemeinsamer Dekodierer für Adresslisten (statt eines neuen je Zeile).
+    private static let listDecoder = JSONDecoder()
 
     /// `true`, wenn die Tabelle des Suchindex besteht. Fehlt sie (SQLite
     /// ohne FTS5), wird nicht indiziert und die Suche findet nichts – das
@@ -219,45 +284,66 @@ final class MessageStore: @unchecked Sendable {
     ///   gelöscht und neu angelegt; Hinweis `rebuiltAfterCorruption`.
     /// - Anderer Fehler: Es wird nichts gelöscht; die Ablage arbeitet im
     ///   Arbeitsspeicher; Hinweis `unavailable`.
-    /// Danach werden WAL-Modus und Fremdschlüssel eingeschaltet, das
-    /// Basisschema angelegt und ausstehende Migrationen ausgeführt.
+    /// Danach werden WAL-Modus, Sync-Stufe, Cache-Größe und Fremdschlüssel
+    /// eingestellt, das Basisschema angelegt und ausstehende Migrationen
+    /// ausgeführt. Zuletzt wird bei einer Datei die nur lesende
+    /// Zweitverbindung geöffnet (`openReadOnly`); misslingt das, lesen die
+    /// Abfragen über die Schreibverbindung.
     /// Neben `shared` nutzen das die Tests mit eigenen Dateien.
     ///
     /// - Parameter path: Dateipfad der SQLite-Datenbank; `nil` = nur im
     ///   Arbeitsspeicher (Hinweis `unavailable`).
     init(path: String?) {
+        writeQueue.setSpecific(key: writeQueueKey, value: true)
+        readQueue.setSpecific(key: readQueueKey, value: true)
+
+        // Pfad der Datei, sofern die Ablage dateibasiert läuft (für die
+        // Leseverbindung); `nil` im Arbeitsspeicher.
+        var filePath: String?
         if let path {
             switch Self.open(path) {
             case .opened(let handle):
-                db = handle
+                writeHandle = handle
+                filePath = path
 
             case .corrupt(let code, let message):
                 Log.store.error("🗄️ Datenbank beschädigt (\(code): \(message, privacy: .public)) → wird gelöscht und neu angelegt")
                 Self.removeDatabaseFiles(at: path)
                 if case .opened(let handle) = Self.open(path) {
-                    db = handle
+                    writeHandle = handle
+                    filePath = path
                     startupNotice = .rebuiltAfterCorruption
                 } else {
                     Log.store.error("🗄️ Neuanlage fehlgeschlagen → Ablage im Arbeitsspeicher")
-                    db = Self.openInMemory()
+                    writeHandle = Self.openInMemory()
                     startupNotice = .unavailable
                 }
 
             case .failed(let code, let message):
                 Log.store.error("🗄️ Datenbank nicht zu öffnen (\(code): \(message, privacy: .public)) → Ablage im Arbeitsspeicher, nichts gelöscht")
-                db = Self.openInMemory()
+                writeHandle = Self.openInMemory()
                 startupNotice = .unavailable
             }
         } else {
-            db = Self.openInMemory()
+            writeHandle = Self.openInMemory()
             startupNotice = .unavailable
         }
 
         exec("PRAGMA journal_mode = WAL")
+        // Im WAL-Modus genügt NORMAL: Sync nur beim Checkpoint (siehe Kopf).
+        exec("PRAGMA synchronous = NORMAL")
+        exec("PRAGMA temp_store = MEMORY")
+        // Negativer Wert = Größe in KiB, also rund 8 MB Seiten-Cache.
+        exec("PRAGMA cache_size = -8000")
         exec("PRAGMA foreign_keys = ON")
         createTablesIfNeeded()
         migrateIfNeeded()
         hasSearchIndex = tableExists("message_search")
+
+        // Leseverbindung erst nach Schema und Migration öffnen.
+        if let filePath {
+            readHandle = Self.openReadOnly(filePath)
+        }
     }
 
     /// Liefert den Hinweis für die Oberfläche genau einmal.
@@ -267,8 +353,10 @@ final class MessageStore: @unchecked Sendable {
     ///
     /// - Returns: Der Hinweis oder `nil`, wenn das Öffnen normal verlief.
     func consumeStartupNotice() -> StoreStartupNotice? {
-        defer { startupNotice = nil }
-        return startupNotice
+        return onWrite {
+            defer { startupNotice = nil }
+            return startupNotice
+        }
     }
 
     // MARK: - Öffnen und Wiederherstellen
@@ -361,6 +449,27 @@ final class MessageStore: @unchecked Sendable {
         }
     }
 
+    /// Öffnet die nur lesende Zweitverbindung zu einer bestehenden Datei.
+    ///
+    /// Verarbeitung: `SQLITE_OPEN_READONLY`; die Einstellungen der Datei
+    /// (WAL) gelten auch hier. Misslingt das Öffnen, wird nur protokolliert –
+    /// die Ablage liest dann über die Schreibverbindung.
+    ///
+    /// - Parameter path: Dateipfad der Datenbank.
+    /// - Returns: Handle oder `nil`.
+    private static func openReadOnly(_ path: String) -> OpaquePointer? {
+        var handle: OpaquePointer?
+        let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX
+        guard sqlite3_open_v2(path, &handle, flags, nil) == SQLITE_OK, let handle else {
+            Log.store.error("🗄️ Leseverbindung nicht zu öffnen → Lesen über die Schreibverbindung")
+            sqlite3_close(handle)
+            return nil
+        }
+        sqlite3_exec(handle, "PRAGMA temp_store = MEMORY", nil, nil, nil)
+        sqlite3_exec(handle, "PRAGMA cache_size = -8000", nil, nil, nil)
+        return handle
+    }
+
     /// Öffnet eine Datenbank nur im Arbeitsspeicher.
     ///
     /// Verarbeitung: Rückfallebene, damit die App ohne Datei weiterläuft.
@@ -379,8 +488,53 @@ final class MessageStore: @unchecked Sendable {
         return handle
     }
 
-    /// Schließt die Datenbank.
-    deinit { sqlite3_close(db) }
+    /// Gibt die zwischengespeicherten Anweisungen frei und schließt beide
+    /// Verbindungen.
+    deinit {
+        for stmt in statementCache.values { sqlite3_finalize(stmt) }
+        sqlite3_close(readHandle)
+        sqlite3_close(writeHandle)
+    }
+
+    // MARK: - Ausführungskontext
+
+    /// Führt einen Block auf der Schreibverbindung aus.
+    ///
+    /// Verarbeitung: Läuft der Aufruf schon auf `writeQueue` (verschachtelt,
+    /// z. B. innerhalb von `batch`), wird der Block direkt ausgeführt –
+    /// sonst synchron auf `writeQueue`. So bleiben zusammengehörige Folgen
+    /// (BEGIN … COMMIT) ungeteilt und verschachtelte Aufrufe verklemmen nicht.
+    ///
+    /// - Parameter body: Arbeit auf der Datenbank.
+    /// - Returns: Ergebnis von `body`.
+    @discardableResult
+    private func onWrite<T>(_ body: () throws -> T) rethrows -> T {
+        if DispatchQueue.getSpecific(key: writeQueueKey) == true {
+            return try body()
+        }
+        return try writeQueue.sync(execute: body)
+    }
+
+    /// Führt eine Abfrage auf der Leseverbindung aus.
+    ///
+    /// Verarbeitung: Innerhalb einer Schreibfolge (auf `writeQueue`) läuft
+    /// die Abfrage direkt auf der Schreibverbindung – sie sieht dann auch
+    /// noch nicht festgeschriebene Änderungen dieser Folge. Ohne
+    /// Leseverbindung (Ablage im Arbeitsspeicher) geht sie über
+    /// `onWrite`. Sonst synchron auf `readQueue`; dort wählt `db` die
+    /// Leseverbindung.
+    ///
+    /// - Parameter body: Abfrage.
+    /// - Returns: Ergebnis von `body`.
+    @discardableResult
+    private func onRead<T>(_ body: () throws -> T) rethrows -> T {
+        if DispatchQueue.getSpecific(key: writeQueueKey) == true
+            || DispatchQueue.getSpecific(key: readQueueKey) == true {
+            return try body()
+        }
+        guard readHandle != nil else { return try onWrite(body) }
+        return try readQueue.sync(execute: body)
+    }
 
     /// Letzte Fehlermeldung der Datenbank.
     private var errMsg: String {
@@ -460,6 +614,9 @@ final class MessageStore: @unchecked Sendable {
         }
         if current < 7 {
             migrateToVersion7()
+        }
+        if current < 8 {
+            migrateToVersion8()
         }
 
         setUserVersion(Self.schemaVersion)
@@ -621,6 +778,15 @@ final class MessageStore: @unchecked Sendable {
         }
     }
 
+    /// Stufe 8: Index der Anhänge nach Nachricht.
+    ///
+    /// Verarbeitung: Ohne diesen Index durchsuchten das Lesen der Anhänge
+    /// einer Mail, die Anhangnamen im Suchindex und das Löschen einer Mail
+    /// (ON DELETE CASCADE) jedes Mal die ganze Anhang-Tabelle.
+    private func migrateToVersion8() {
+        exec("CREATE INDEX IF NOT EXISTS idx_attachment_message ON attachment(messageID)")
+    }
+
     /// Schreibt die Kennungen von "<account>-<uid>" auf "<account>-INBOX-<uid>" um.
     ///
     /// Verarbeitung: Die Anhänge zuerst, weil ihre Fremdschlüssel sonst
@@ -714,10 +880,12 @@ final class MessageStore: @unchecked Sendable {
     ///
     /// - Parameter m: Zu speichernde Nachricht.
     func saveMessage(_ m: CachedMessage) {
-        logged("saveMessage \(m.id)") {
-            try transaction {
-                try insertMessage(m)
-                try writeSearchEntry(messageID: m.id)
+        onWrite {
+            logged("saveMessage \(m.id)") {
+                try transaction {
+                    try insertMessage(m)
+                    try writeSearchEntry(messageID: m.id)
+                }
             }
         }
     }
@@ -735,13 +903,15 @@ final class MessageStore: @unchecked Sendable {
     /// - Returns: `true`, wenn alles gespeichert wurde; `false` nach Rollback.
     @discardableResult
     func saveMessageWithAttachments(_ message: CachedMessage, attachments: [CachedAttachment]) -> Bool {
-        logged("saveMessageWithAttachments \(message.id)") {
-            try transaction {
-                try insertMessage(message)
-                for attachment in attachments {
-                    try insertAttachment(attachment)
+        return onWrite {
+            logged("saveMessageWithAttachments \(message.id)") {
+                try transaction {
+                    try insertMessage(message)
+                    for attachment in attachments {
+                        try insertAttachment(attachment)
+                    }
+                    try writeSearchEntry(messageID: message.id)
                 }
-                try writeSearchEntry(messageID: message.id)
             }
         }
     }
@@ -816,7 +986,9 @@ final class MessageStore: @unchecked Sendable {
     ///   - messageID: Cache-ID der Nachricht.
     ///   - isUnread: `true` = ungelesen.
     func updateUnread(messageID: String, isUnread: Bool) {
-        updateIntColumn("isUnread", value: isUnread, messageID: messageID)
+        onWrite {
+            updateIntColumn("isUnread", value: isUnread, messageID: messageID)
+        }
     }
 
     /// Aktualisiert nur die Kennzeichnung (\Flagged) einer gecachten Nachricht.
@@ -825,7 +997,9 @@ final class MessageStore: @unchecked Sendable {
     ///   - messageID: Cache-ID der Nachricht.
     ///   - isFlagged: `true` = gekennzeichnet.
     func updateFlagged(messageID: String, isFlagged: Bool) {
-        updateIntColumn("isFlagged", value: isFlagged, messageID: messageID)
+        onWrite {
+            updateIntColumn("isFlagged", value: isFlagged, messageID: messageID)
+        }
     }
 
     /// Aktualisiert nur den Beantwortet-Status (\Answered) einer gecachten Nachricht.
@@ -834,7 +1008,9 @@ final class MessageStore: @unchecked Sendable {
     ///   - messageID: Cache-ID der Nachricht.
     ///   - isAnswered: `true` = beantwortet.
     func updateAnswered(messageID: String, isAnswered: Bool) {
-        updateIntColumn("isAnswered", value: isAnswered, messageID: messageID)
+        onWrite {
+            updateIntColumn("isAnswered", value: isAnswered, messageID: messageID)
+        }
     }
 
     /// Aktualisiert nur den Weitergeleitet-Status ($Forwarded) einer gecachten Nachricht.
@@ -843,7 +1019,9 @@ final class MessageStore: @unchecked Sendable {
     ///   - messageID: Cache-ID der Nachricht.
     ///   - isForwarded: `true` = weitergeleitet.
     func updateForwarded(messageID: String, isForwarded: Bool) {
-        updateIntColumn("isForwarded", value: isForwarded, messageID: messageID)
+        onWrite {
+            updateIntColumn("isForwarded", value: isForwarded, messageID: messageID)
+        }
     }
 
     /// Übernimmt alle Server-Flags einer Nachricht in einem Statement.
@@ -861,11 +1039,13 @@ final class MessageStore: @unchecked Sendable {
         isAnswered: Bool,
         isForwarded: Bool
     ) {
-        logged("updateServerFlags \(messageID)") {
-            try writeServerFlags(
-                messageID: messageID, isUnread: isUnread, isFlagged: isFlagged,
-                isAnswered: isAnswered, isForwarded: isForwarded
-            )
+        onWrite {
+            logged("updateServerFlags \(messageID)") {
+                try writeServerFlags(
+                    messageID: messageID, isUnread: isUnread, isFlagged: isFlagged,
+                    isAnswered: isAnswered, isForwarded: isForwarded
+                )
+            }
         }
     }
 
@@ -911,13 +1091,15 @@ final class MessageStore: @unchecked Sendable {
     ///   - since: Untergrenze für das Nachrichtendatum.
     /// - Returns: Flag-Zustände der gecachten Mails.
     func cachedFlagStates(accountID: UUID, folder: String, since: Date) -> [CachedFlagState] {
-        flagStates(
-            sql: """
-                SELECT id, uid, isUnread, isFlagged, isAnswered, isForwarded FROM message
-                WHERE accountID = ? AND folder = ? AND date >= ?
-                """,
-            accountID: accountID, folder: folder, date: since
-        )
+        return onRead {
+            flagStates(
+                sql: """
+                    SELECT id, uid, isUnread, isFlagged, isAnswered, isForwarded FROM message
+                    WHERE accountID = ? AND folder = ? AND date >= ?
+                    """,
+                accountID: accountID, folder: folder, date: since
+            )
+        }
     }
 
     /// Liest Flag-Zustände mit einer Abfrage, die Postfach, Ordner und
@@ -957,20 +1139,22 @@ final class MessageStore: @unchecked Sendable {
     ///
     /// - Parameter plan: Änderungsplan aus `ServerReconciliation`.
     func apply(_ plan: ServerReconciliation.Plan) {
-        guard !plan.isEmpty else { return }
-        logged("apply Abgleichsplan") {
-            try transaction {
-                for id in plan.removedIDs {
-                    try removeMessage(id: id)
-                }
-                for state in plan.flagUpdates {
-                    try writeServerFlags(
-                        messageID: state.id,
-                        isUnread: state.isUnread,
-                        isFlagged: state.isFlagged,
-                        isAnswered: state.isAnswered,
-                        isForwarded: state.isForwarded
-                    )
+        onWrite {
+            guard !plan.isEmpty else { return }
+            logged("apply Abgleichsplan") {
+                try transaction {
+                    for id in plan.removedIDs {
+                        try removeMessage(id: id)
+                    }
+                    for state in plan.flagUpdates {
+                        try writeServerFlags(
+                            messageID: state.id,
+                            isUnread: state.isUnread,
+                            isFlagged: state.isFlagged,
+                            isAnswered: state.isAnswered,
+                            isForwarded: state.isForwarded
+                        )
+                    }
                 }
             }
         }
@@ -985,47 +1169,56 @@ final class MessageStore: @unchecked Sendable {
     ///   - folder: IMAP-Ordner.
     /// - Returns: Cache-IDs mit `headersVersion` unter `currentHeadersVersion`.
     func messageIDsNeedingHeaders(forAccount accountID: UUID, folder: String) -> Set<String> {
-        let sql = """
-            SELECT id FROM message
-            WHERE accountID = ? AND folder = ? AND headersVersion < ?
-            """
-        guard let stmt = prepare(sql) else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        bind(stmt, 1, accountID.uuidString)
-        bind(stmt, 2, folder)
-        sqlite3_bind_int(stmt, 3, Int32(Self.currentHeadersVersion))
-        var ids = Set<String>()
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            ids.insert(str(stmt, 0))
+        return onRead {
+            let sql = """
+                SELECT id FROM message
+                WHERE accountID = ? AND folder = ? AND headersVersion < ?
+                """
+            guard let stmt = prepare(sql) else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, 1, accountID.uuidString)
+            bind(stmt, 2, folder)
+            sqlite3_bind_int(stmt, 3, Int32(Self.currentHeadersVersion))
+            var ids = Set<String>()
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                ids.insert(str(stmt, 0))
+            }
+            return ids
         }
-        return ids
     }
 
     /// Schreibt Adress-, Threading- und Spam-Kopfdaten und setzt die
     /// Header-Version.
     ///
+    /// Verarbeitung: Im Suchindex ändert sich dadurch nur die Spalte der
+    /// Personen (An, Cc); nur sie wird neu geschrieben
+    /// (`writeSearchPeople`). Text und Anhangnamen bleiben unverändert –
+    /// das erspart die Aufbereitung des Mailtextes.
+    ///
     /// - Parameters:
     ///   - messageID: Cache-ID der Nachricht.
     ///   - headers: Aufbereitete Header.
     func updateHeaders(messageID: String, headers: CachedMessageHeaders) {
-        let sql = """
-            UPDATE message SET
-                toJSON = ?, ccJSON = ?, replyToJSON = ?,
-                rfcMessageID = ?, rfcInReplyTo = ?, rfcReferences = ?,
-                spamFlag = ?, spamScore = ?,
-                headersVersion = ?
-            WHERE id = ?
-            """
-        logged("updateHeaders \(messageID)") {
-            try transaction {
-                try execute(sql, context: "updateHeaders \(messageID)") { stmt in
-                    bindHeaders(stmt, startingAt: 1, headers)                    // 1–6
-                    bindSpamVerdict(stmt, startingAt: 7, headers.spamVerdict)  // 7–8
-                    sqlite3_bind_int(stmt, 9, Int32(Self.currentHeadersVersion))
-                    bind(stmt, 10, messageID)
+        onWrite {
+            let sql = """
+                UPDATE message SET
+                    toJSON = ?, ccJSON = ?, replyToJSON = ?,
+                    rfcMessageID = ?, rfcInReplyTo = ?, rfcReferences = ?,
+                    spamFlag = ?, spamScore = ?,
+                    headersVersion = ?
+                WHERE id = ?
+                """
+            logged("updateHeaders \(messageID)") {
+                try transaction {
+                    try execute(sql, context: "updateHeaders \(messageID)") { stmt in
+                        bindHeaders(stmt, startingAt: 1, headers)                    // 1–6
+                        bindSpamVerdict(stmt, startingAt: 7, headers.spamVerdict)  // 7–8
+                        sqlite3_bind_int(stmt, 9, Int32(Self.currentHeadersVersion))
+                        bind(stmt, 10, messageID)
+                    }
+                    // An und Cc gehören zum Suchindex – nur die Personen neu.
+                    try writeSearchPeople(messageID: messageID)
                 }
-                // An und Cc gehören zum Suchindex.
-                try writeSearchEntry(messageID: messageID)
             }
         }
     }
@@ -1040,7 +1233,9 @@ final class MessageStore: @unchecked Sendable {
     ///
     /// - Parameter a: Zu speichernder Anhang.
     func saveAttachment(_ a: CachedAttachment) {
-        logged("saveAttachment \(a.id)") { try insertAttachment(a) }
+        onWrite {
+            logged("saveAttachment \(a.id)") { try insertAttachment(a) }
+        }
     }
 
     /// Schreibt einen Anhang per UPSERT.
@@ -1092,10 +1287,12 @@ final class MessageStore: @unchecked Sendable {
     ///
     /// - Parameter id: ID des Anhangs.
     func deleteAttachmentData(id: String) {
-        logged("deleteAttachmentData \(id)") {
-            try execute("UPDATE attachment SET data = NULL WHERE id = ?",
-                        context: "deleteAttachmentData \(id)") { stmt in
-                bind(stmt, 1, id)
+        onWrite {
+            logged("deleteAttachmentData \(id)") {
+                try execute("UPDATE attachment SET data = NULL WHERE id = ?",
+                            context: "deleteAttachmentData \(id)") { stmt in
+                    bind(stmt, 1, id)
+                }
             }
         }
     }
@@ -1107,12 +1304,14 @@ final class MessageStore: @unchecked Sendable {
     /// - Parameter id: Cache-ID der Nachricht.
     /// - Returns: Die Nachricht oder `nil`, wenn sie nicht im Cache liegt.
     func message(id: String) -> CachedMessage? {
-        let sql = "SELECT \(Self.messageColumns) FROM message WHERE id = ? LIMIT 1"
-        guard let stmt = prepare(sql) else { return nil }
-        defer { sqlite3_finalize(stmt) }
-        bind(stmt, 1, id)
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        return readMessage(stmt)
+        return onRead {
+            let sql = "SELECT \(Self.messageColumns) FROM message WHERE id = ? LIMIT 1"
+            guard let stmt = prepare(sql) else { return nil }
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, 1, id)
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+            return readMessage(stmt)
+        }
     }
 
     /// Listeneinträge mehrerer Postfächer in einem Ordner.
@@ -1122,21 +1321,23 @@ final class MessageStore: @unchecked Sendable {
     ///   - folder: IMAP-Ordner.
     /// - Returns: Listeneinträge ohne Mailinhalt, absteigend nach Datum.
     func allMessages(accountIDs: [UUID], folder: String) -> [MessageListItem] {
-        guard !accountIDs.isEmpty else { return [] }
-        let sql = """
-            SELECT \(Self.listColumns) FROM message
-            WHERE accountID IN (\(Self.placeholders(accountIDs.count))) AND folder = ?
-            ORDER BY date DESC
-            """
-        guard let stmt = prepare(sql) else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        let next = bind(stmt, accountIDs: accountIDs)
-        bind(stmt, next, folder)
-        var result: [MessageListItem] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            result.append(readListItem(stmt))
+        return onRead {
+            guard !accountIDs.isEmpty else { return [] }
+            let sql = """
+                SELECT \(Self.listColumns) FROM message
+                WHERE accountID IN (\(Self.placeholders(accountIDs.count))) AND folder = ?
+                ORDER BY date DESC
+                """
+            guard let stmt = prepare(sql) else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            let next = bind(stmt, accountIDs: accountIDs)
+            bind(stmt, next, folder)
+            var result: [MessageListItem] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                result.append(readListItem(stmt))
+            }
+            return result
         }
-        return result
     }
 
     /// Listeneinträge eines einzelnen Ordners eines Postfachs.
@@ -1157,20 +1358,22 @@ final class MessageStore: @unchecked Sendable {
     /// - Parameter folders: Ordner je Postfach.
     /// - Returns: Listeneinträge ohne Mailinhalt, absteigend nach Datum.
     func messages(in folders: [FolderKey]) -> [MessageListItem] {
-        guard !folders.isEmpty else { return [] }
-        let sql = """
-            SELECT \(Self.listColumns) FROM message
-            WHERE \(Self.folderCondition(folders.count))
-            ORDER BY date DESC
-            """
-        guard let stmt = prepare(sql) else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        _ = bind(stmt, folders: folders, from: 1)
-        var result: [MessageListItem] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            result.append(readListItem(stmt))
+        return onRead {
+            guard !folders.isEmpty else { return [] }
+            let sql = """
+                SELECT \(Self.listColumns) FROM message
+                WHERE \(Self.folderCondition(folders.count))
+                ORDER BY date DESC
+                """
+            guard let stmt = prepare(sql) else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            _ = bind(stmt, folders: folders, from: 1)
+            var result: [MessageListItem] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                result.append(readListItem(stmt))
+            }
+            return result
         }
-        return result
     }
 
     /// Ungelesene Listeneinträge aus den Posteingängen mehrerer Postfächer,
@@ -1186,27 +1389,29 @@ final class MessageStore: @unchecked Sendable {
     ///   - keeping: Cache-IDs, die unabhängig vom Gelesen-Status bleiben.
     /// - Returns: Listeneinträge ohne Mailinhalt, absteigend nach Datum.
     func unreadInboxMessages(accountIDs: [UUID], keeping: Set<String> = []) -> [MessageListItem] {
-        guard !accountIDs.isEmpty else { return [] }
-        let kept = Array(keeping)
-        let keepCondition = kept.isEmpty ? "" : " OR id IN (\(Self.placeholders(kept.count)))"
-        let sql = """
-            SELECT \(Self.listColumns) FROM message
-            WHERE accountID IN (\(Self.placeholders(accountIDs.count))) AND folder = ?
-            AND (isUnread = 1\(keepCondition))
-            ORDER BY date DESC
-            """
-        guard let stmt = prepare(sql) else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        let next = bind(stmt, accountIDs: accountIDs)
-        bind(stmt, next, MailFolder.inboxPath)
-        for (offset, id) in kept.enumerated() {
-            bind(stmt, next + 1 + Int32(offset), id)
+        return onRead {
+            guard !accountIDs.isEmpty else { return [] }
+            let kept = Array(keeping)
+            let keepCondition = kept.isEmpty ? "" : " OR id IN (\(Self.placeholders(kept.count)))"
+            let sql = """
+                SELECT \(Self.listColumns) FROM message
+                WHERE accountID IN (\(Self.placeholders(accountIDs.count))) AND folder = ?
+                AND (isUnread = 1\(keepCondition))
+                ORDER BY date DESC
+                """
+            guard let stmt = prepare(sql) else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            let next = bind(stmt, accountIDs: accountIDs)
+            bind(stmt, next, MailFolder.inboxPath)
+            for (offset, id) in kept.enumerated() {
+                bind(stmt, next + 1 + Int32(offset), id)
+            }
+            var result: [MessageListItem] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                result.append(readListItem(stmt))
+            }
+            return result
         }
-        var result: [MessageListItem] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            result.append(readListItem(stmt))
-        }
-        return result
     }
 
     /// Anzahl ungelesener Nachrichten in den Posteingängen.
@@ -1214,16 +1419,18 @@ final class MessageStore: @unchecked Sendable {
     /// - Parameter accountIDs: Postfächer.
     /// - Returns: Anzahl.
     func unreadInboxCount(accountIDs: [UUID]) -> Int {
-        guard !accountIDs.isEmpty else { return 0 }
-        let sql = """
-            SELECT COUNT(*) FROM message
-            WHERE accountID IN (\(Self.placeholders(accountIDs.count))) AND folder = ? AND isUnread = 1
-            """
-        guard let stmt = prepare(sql) else { return 0 }
-        defer { sqlite3_finalize(stmt) }
-        let next = bind(stmt, accountIDs: accountIDs)
-        bind(stmt, next, MailFolder.inboxPath)
-        return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int(stmt, 0)) : 0
+        return onRead {
+            guard !accountIDs.isEmpty else { return 0 }
+            let sql = """
+                SELECT COUNT(*) FROM message
+                WHERE accountID IN (\(Self.placeholders(accountIDs.count))) AND folder = ? AND isUnread = 1
+                """
+            guard let stmt = prepare(sql) else { return 0 }
+            defer { sqlite3_finalize(stmt) }
+            let next = bind(stmt, accountIDs: accountIDs)
+            bind(stmt, next, MailFolder.inboxPath)
+            return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int(stmt, 0)) : 0
+        }
     }
 
     // MARK: - Stand je Ordner
@@ -1240,25 +1447,27 @@ final class MessageStore: @unchecked Sendable {
     ///   - date: Zeitpunkt des Abrufs (Standard: jetzt).
     ///   - state: Sync-Zustand nach dem Abruf; `nil` = unverändert lassen.
     func recordSync(accountID: UUID, folder: String, at date: Date = Date(), state: FolderSyncState? = nil) {
-        let sql = """
-            INSERT INTO folder_sync (accountID, folder, lastSyncAt, uidValidity, uidNext)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(accountID, folder) DO UPDATE SET
-                lastSyncAt = excluded.lastSyncAt,
-                uidValidity = COALESCE(excluded.uidValidity, folder_sync.uidValidity),
-                uidNext = COALESCE(excluded.uidNext, folder_sync.uidNext)
-            """
-        logged("recordSync") {
-            try execute(sql, context: "recordSync") { stmt in
-                bind(stmt, 1, accountID.uuidString)
-                bind(stmt, 2, folder)
-                sqlite3_bind_double(stmt, 3, date.timeIntervalSince1970)
-                if let state {
-                    sqlite3_bind_int64(stmt, 4, Int64(state.uidValidity))
-                    sqlite3_bind_int64(stmt, 5, Int64(state.uidNext))
-                } else {
-                    sqlite3_bind_null(stmt, 4)
-                    sqlite3_bind_null(stmt, 5)
+        onWrite {
+            let sql = """
+                INSERT INTO folder_sync (accountID, folder, lastSyncAt, uidValidity, uidNext)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(accountID, folder) DO UPDATE SET
+                    lastSyncAt = excluded.lastSyncAt,
+                    uidValidity = COALESCE(excluded.uidValidity, folder_sync.uidValidity),
+                    uidNext = COALESCE(excluded.uidNext, folder_sync.uidNext)
+                """
+            logged("recordSync") {
+                try execute(sql, context: "recordSync") { stmt in
+                    bind(stmt, 1, accountID.uuidString)
+                    bind(stmt, 2, folder)
+                    sqlite3_bind_double(stmt, 3, date.timeIntervalSince1970)
+                    if let state {
+                        sqlite3_bind_int64(stmt, 4, Int64(state.uidValidity))
+                        sqlite3_bind_int64(stmt, 5, Int64(state.uidNext))
+                    } else {
+                        sqlite3_bind_null(stmt, 4)
+                        sqlite3_bind_null(stmt, 5)
+                    }
                 }
             }
         }
@@ -1271,18 +1480,20 @@ final class MessageStore: @unchecked Sendable {
     ///   - folder: IMAP-Ordner.
     /// - Returns: Der Zustand oder `nil`, wenn noch keiner gespeichert ist.
     func syncState(accountID: UUID, folder: String) -> FolderSyncState? {
-        let sql = "SELECT uidValidity, uidNext FROM folder_sync WHERE accountID = ? AND folder = ?"
-        guard let stmt = prepare(sql) else { return nil }
-        defer { sqlite3_finalize(stmt) }
-        bind(stmt, 1, accountID.uuidString)
-        bind(stmt, 2, folder)
-        guard sqlite3_step(stmt) == SQLITE_ROW,
-              sqlite3_column_type(stmt, 0) != SQLITE_NULL,
-              sqlite3_column_type(stmt, 1) != SQLITE_NULL else { return nil }
-        return FolderSyncState(
-            uidValidity: UInt32(truncatingIfNeeded: sqlite3_column_int64(stmt, 0)),
-            uidNext: UInt32(truncatingIfNeeded: sqlite3_column_int64(stmt, 1))
-        )
+        return onRead {
+            let sql = "SELECT uidValidity, uidNext FROM folder_sync WHERE accountID = ? AND folder = ?"
+            guard let stmt = prepare(sql) else { return nil }
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, 1, accountID.uuidString)
+            bind(stmt, 2, folder)
+            guard sqlite3_step(stmt) == SQLITE_ROW,
+                  sqlite3_column_type(stmt, 0) != SQLITE_NULL,
+                  sqlite3_column_type(stmt, 1) != SQLITE_NULL else { return nil }
+            return FolderSyncState(
+                uidValidity: UInt32(truncatingIfNeeded: sqlite3_column_int64(stmt, 0)),
+                uidNext: UInt32(truncatingIfNeeded: sqlite3_column_int64(stmt, 1))
+            )
+        }
     }
 
     /// Letzter erfolgreicher Abruf eines Ordners.
@@ -1292,13 +1503,15 @@ final class MessageStore: @unchecked Sendable {
     ///   - folder: IMAP-Ordner.
     /// - Returns: Zeitpunkt oder `nil`, wenn noch nie abgerufen.
     func lastSync(accountID: UUID, folder: String) -> Date? {
-        let sql = "SELECT lastSyncAt FROM folder_sync WHERE accountID = ? AND folder = ?"
-        guard let stmt = prepare(sql) else { return nil }
-        defer { sqlite3_finalize(stmt) }
-        bind(stmt, 1, accountID.uuidString)
-        bind(stmt, 2, folder)
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        return Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0))
+        return onRead {
+            let sql = "SELECT lastSyncAt FROM folder_sync WHERE accountID = ? AND folder = ?"
+            guard let stmt = prepare(sql) else { return nil }
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, 1, accountID.uuidString)
+            bind(stmt, 2, folder)
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+            return Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0))
+        }
     }
 
     // MARK: - Zeitfenster je Ordner
@@ -1310,13 +1523,15 @@ final class MessageStore: @unchecked Sendable {
     ///   - folder: IMAP-Ordner.
     /// - Returns: Fensterbeginn oder `nil` (= Standardfenster).
     func windowStart(accountID: UUID, folder: String) -> Date? {
-        let sql = "SELECT windowStart FROM folder_window WHERE accountID = ? AND folder = ?"
-        guard let stmt = prepare(sql) else { return nil }
-        defer { sqlite3_finalize(stmt) }
-        bind(stmt, 1, accountID.uuidString)
-        bind(stmt, 2, folder)
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        return Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0))
+        return onRead {
+            let sql = "SELECT windowStart FROM folder_window WHERE accountID = ? AND folder = ?"
+            guard let stmt = prepare(sql) else { return nil }
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, 1, accountID.uuidString)
+            bind(stmt, 2, folder)
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+            return Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0))
+        }
     }
 
     /// Speichert den Beginn des erweiterten Zeitfensters eines Ordners.
@@ -1326,15 +1541,17 @@ final class MessageStore: @unchecked Sendable {
     ///   - accountID: Postfach.
     ///   - folder: IMAP-Ordner.
     func setWindowStart(_ date: Date, accountID: UUID, folder: String) {
-        let sql = """
-            INSERT INTO folder_window (accountID, folder, windowStart) VALUES (?, ?, ?)
-            ON CONFLICT(accountID, folder) DO UPDATE SET windowStart = excluded.windowStart
-            """
-        logged("setWindowStart") {
-            try execute(sql, context: "setWindowStart") { stmt in
-                bind(stmt, 1, accountID.uuidString)
-                bind(stmt, 2, folder)
-                sqlite3_bind_double(stmt, 3, date.timeIntervalSince1970)
+        onWrite {
+            let sql = """
+                INSERT INTO folder_window (accountID, folder, windowStart) VALUES (?, ?, ?)
+                ON CONFLICT(accountID, folder) DO UPDATE SET windowStart = excluded.windowStart
+                """
+            logged("setWindowStart") {
+                try execute(sql, context: "setWindowStart") { stmt in
+                    bind(stmt, 1, accountID.uuidString)
+                    bind(stmt, 2, folder)
+                    sqlite3_bind_double(stmt, 3, date.timeIntervalSince1970)
+                }
             }
         }
     }
@@ -1344,21 +1561,23 @@ final class MessageStore: @unchecked Sendable {
     /// - Parameter accountIDs: Postfächer.
     /// - Returns: Listeneinträge ohne Mailinhalt, absteigend nach Datum.
     func flaggedInboxMessages(accountIDs: [UUID]) -> [MessageListItem] {
-        guard !accountIDs.isEmpty else { return [] }
-        let sql = """
-            SELECT \(Self.listColumns) FROM message
-            WHERE accountID IN (\(Self.placeholders(accountIDs.count))) AND folder = ? AND isFlagged = 1
-            ORDER BY date DESC
-            """
-        guard let stmt = prepare(sql) else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        let next = bind(stmt, accountIDs: accountIDs)
-        bind(stmt, next, MailFolder.inboxPath)
-        var result: [MessageListItem] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            result.append(readListItem(stmt))
+        return onRead {
+            guard !accountIDs.isEmpty else { return [] }
+            let sql = """
+                SELECT \(Self.listColumns) FROM message
+                WHERE accountID IN (\(Self.placeholders(accountIDs.count))) AND folder = ? AND isFlagged = 1
+                ORDER BY date DESC
+                """
+            guard let stmt = prepare(sql) else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            let next = bind(stmt, accountIDs: accountIDs)
+            bind(stmt, next, MailFolder.inboxPath)
+            var result: [MessageListItem] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                result.append(readListItem(stmt))
+            }
+            return result
         }
-        return result
     }
 
     /// Anzahl gekennzeichneter Nachrichten in den Posteingängen.
@@ -1366,16 +1585,18 @@ final class MessageStore: @unchecked Sendable {
     /// - Parameter accountIDs: Postfächer.
     /// - Returns: Anzahl.
     func flaggedInboxCount(accountIDs: [UUID]) -> Int {
-        guard !accountIDs.isEmpty else { return 0 }
-        let sql = """
-            SELECT COUNT(*) FROM message
-            WHERE accountID IN (\(Self.placeholders(accountIDs.count))) AND folder = ? AND isFlagged = 1
-            """
-        guard let stmt = prepare(sql) else { return 0 }
-        defer { sqlite3_finalize(stmt) }
-        let next = bind(stmt, accountIDs: accountIDs)
-        bind(stmt, next, MailFolder.inboxPath)
-        return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int(stmt, 0)) : 0
+        return onRead {
+            guard !accountIDs.isEmpty else { return 0 }
+            let sql = """
+                SELECT COUNT(*) FROM message
+                WHERE accountID IN (\(Self.placeholders(accountIDs.count))) AND folder = ? AND isFlagged = 1
+                """
+            guard let stmt = prepare(sql) else { return 0 }
+            defer { sqlite3_finalize(stmt) }
+            let next = bind(stmt, accountIDs: accountIDs)
+            bind(stmt, next, MailFolder.inboxPath)
+            return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int(stmt, 0)) : 0
+        }
     }
 
     /// Cache-IDs aller Nachrichten eines Ordners.
@@ -1385,16 +1606,18 @@ final class MessageStore: @unchecked Sendable {
     ///   - folder: IMAP-Ordner.
     /// - Returns: Menge der Cache-IDs.
     func cachedMessageIDs(forAccount accountID: UUID, folder: String) -> Set<String> {
-        let sql = "SELECT id FROM message WHERE accountID = ? AND folder = ?"
-        guard let stmt = prepare(sql) else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        bind(stmt, 1, accountID.uuidString)
-        bind(stmt, 2, folder)
-        var ids = Set<String>()
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            ids.insert(str(stmt, 0))
+        return onRead {
+            let sql = "SELECT id FROM message WHERE accountID = ? AND folder = ?"
+            guard let stmt = prepare(sql) else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, 1, accountID.uuidString)
+            bind(stmt, 2, folder)
+            var ids = Set<String>()
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                ids.insert(str(stmt, 0))
+            }
+            return ids
         }
-        return ids
     }
 
     /// UIDs aller gecachten Nachrichten eines Ordners.
@@ -1404,16 +1627,18 @@ final class MessageStore: @unchecked Sendable {
     ///   - folder: IMAP-Ordner.
     /// - Returns: Menge der UIDs.
     func cachedUIDs(accountID: UUID, folder: String) -> Set<UInt32> {
-        let sql = "SELECT uid FROM message WHERE accountID = ? AND folder = ?"
-        guard let stmt = prepare(sql) else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        bind(stmt, 1, accountID.uuidString)
-        bind(stmt, 2, folder)
-        var uids = Set<UInt32>()
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            uids.insert(UInt32(truncatingIfNeeded: sqlite3_column_int64(stmt, 0)))
+        return onRead {
+            let sql = "SELECT uid FROM message WHERE accountID = ? AND folder = ?"
+            guard let stmt = prepare(sql) else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, 1, accountID.uuidString)
+            bind(stmt, 2, folder)
+            var uids = Set<UInt32>()
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                uids.insert(UInt32(truncatingIfNeeded: sqlite3_column_int64(stmt, 0)))
+            }
+            return uids
         }
-        return uids
     }
 
     /// Anhänge einer Nachricht.
@@ -1421,15 +1646,17 @@ final class MessageStore: @unchecked Sendable {
     /// - Parameter messageID: Cache-ID der Nachricht.
     /// - Returns: Alle zugehörigen Anhänge.
     func attachments(forMessage messageID: String) -> [CachedAttachment] {
-        let sql = "SELECT \(Self.attachmentColumns) FROM attachment WHERE messageID = ?"
-        guard let stmt = prepare(sql) else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        bind(stmt, 1, messageID)
-        var result: [CachedAttachment] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            result.append(readAttachment(stmt))
+        return onRead {
+            let sql = "SELECT \(Self.attachmentColumns) FROM attachment WHERE messageID = ?"
+            guard let stmt = prepare(sql) else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, 1, messageID)
+            var result: [CachedAttachment] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                result.append(readAttachment(stmt))
+            }
+            return result
         }
-        return result
     }
 
     // MARK: - Ordnerliste
@@ -1440,17 +1667,19 @@ final class MessageStore: @unchecked Sendable {
     ///   - listing: Ordnerstruktur.
     ///   - accountID: Postfach.
     func saveFolderListing(_ listing: FolderListing, accountID: UUID) {
-        guard let data = try? JSONEncoder().encode(listing),
-              let json = String(data: data, encoding: .utf8) else { return }
-        let sql = """
-            INSERT INTO folder_listing (accountID, json, savedAt) VALUES (?, ?, ?)
-            ON CONFLICT(accountID) DO UPDATE SET json = excluded.json, savedAt = excluded.savedAt
-            """
-        logged("saveFolderListing") {
-            try execute(sql, context: "saveFolderListing") { stmt in
-                bind(stmt, 1, accountID.uuidString)
-                bind(stmt, 2, json)
-                sqlite3_bind_double(stmt, 3, Date().timeIntervalSince1970)
+        onWrite {
+            guard let data = try? JSONEncoder().encode(listing),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            let sql = """
+                INSERT INTO folder_listing (accountID, json, savedAt) VALUES (?, ?, ?)
+                ON CONFLICT(accountID) DO UPDATE SET json = excluded.json, savedAt = excluded.savedAt
+                """
+            logged("saveFolderListing") {
+                try execute(sql, context: "saveFolderListing") { stmt in
+                    bind(stmt, 1, accountID.uuidString)
+                    bind(stmt, 2, json)
+                    sqlite3_bind_double(stmt, 3, Date().timeIntervalSince1970)
+                }
             }
         }
     }
@@ -1461,11 +1690,13 @@ final class MessageStore: @unchecked Sendable {
     /// - Returns: Ordnerliste oder `nil`, wenn keine vorliegt oder sie
     ///   nicht mehr lesbar ist.
     func folderListing(accountID: UUID) -> FolderListing? {
-        guard let stmt = prepare("SELECT json FROM folder_listing WHERE accountID = ?") else { return nil }
-        defer { sqlite3_finalize(stmt) }
-        bind(stmt, 1, accountID.uuidString)
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        return try? JSONDecoder().decode(FolderListing.self, from: Data(str(stmt, 0).utf8))
+        return onRead {
+            guard let stmt = prepare("SELECT json FROM folder_listing WHERE accountID = ?") else { return nil }
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, 1, accountID.uuidString)
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+            return try? JSONDecoder().decode(FolderListing.self, from: Data(str(stmt, 0).utf8))
+        }
     }
 
     // MARK: - Absenderlogos
@@ -1475,21 +1706,23 @@ final class MessageStore: @unchecked Sendable {
     ///
     /// - Parameter record: Logo mit Prüfzeitpunkt; `imageData` `nil` = kein Logo.
     func saveSenderIcon(_ record: SenderIconRecord) {
-        let sql = """
-            INSERT INTO sender_icon (domain, image, checkedAt) VALUES (?, ?, ?)
-            ON CONFLICT(domain) DO UPDATE SET image = excluded.image, checkedAt = excluded.checkedAt
-            """
-        logged("saveSenderIcon") {
-            try execute(sql, context: "saveSenderIcon") { stmt in
-                bind(stmt, 1, record.domain)
-                if let data = record.imageData, !data.isEmpty {
-                    _ = data.withUnsafeBytes { ptr in
-                        sqlite3_bind_blob(stmt, 2, ptr.baseAddress, Int32(data.count), SQLITE_TRANSIENT)
+        onWrite {
+            let sql = """
+                INSERT INTO sender_icon (domain, image, checkedAt) VALUES (?, ?, ?)
+                ON CONFLICT(domain) DO UPDATE SET image = excluded.image, checkedAt = excluded.checkedAt
+                """
+            logged("saveSenderIcon") {
+                try execute(sql, context: "saveSenderIcon") { stmt in
+                    bind(stmt, 1, record.domain)
+                    if let data = record.imageData, !data.isEmpty {
+                        _ = data.withUnsafeBytes { ptr in
+                            sqlite3_bind_blob(stmt, 2, ptr.baseAddress, Int32(data.count), SQLITE_TRANSIENT)
+                        }
+                    } else {
+                        sqlite3_bind_null(stmt, 2)
                     }
-                } else {
-                    sqlite3_bind_null(stmt, 2)
+                    sqlite3_bind_double(stmt, 3, record.checkedAt.timeIntervalSince1970)
                 }
-                sqlite3_bind_double(stmt, 3, record.checkedAt.timeIntervalSince1970)
             }
         }
     }
@@ -1499,19 +1732,21 @@ final class MessageStore: @unchecked Sendable {
     /// - Parameter domain: Hauptdomain.
     /// - Returns: Eintrag oder `nil`, wenn die Domain noch nie geprüft wurde.
     func senderIcon(domain: String) -> SenderIconRecord? {
-        guard let stmt = prepare("SELECT image, checkedAt FROM sender_icon WHERE domain = ?") else { return nil }
-        defer { sqlite3_finalize(stmt) }
-        bind(stmt, 1, domain)
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        var data: Data?
-        if sqlite3_column_type(stmt, 0) != SQLITE_NULL, let bytes = sqlite3_column_blob(stmt, 0) {
-            data = Data(bytes: bytes, count: Int(sqlite3_column_bytes(stmt, 0)))
+        return onRead {
+            guard let stmt = prepare("SELECT image, checkedAt FROM sender_icon WHERE domain = ?") else { return nil }
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, 1, domain)
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+            var data: Data?
+            if sqlite3_column_type(stmt, 0) != SQLITE_NULL, let bytes = sqlite3_column_blob(stmt, 0) {
+                data = Data(bytes: bytes, count: Int(sqlite3_column_bytes(stmt, 0)))
+            }
+            return SenderIconRecord(
+                domain: domain,
+                imageData: data,
+                checkedAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 1))
+            )
         }
-        return SenderIconRecord(
-            domain: domain,
-            imageData: data,
-            checkedAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 1))
-        )
     }
 
     // MARK: - Löschen
@@ -1531,18 +1766,20 @@ final class MessageStore: @unchecked Sendable {
     /// - Returns: Anzahl der gelöschten Nachrichten; 0 bei einem Fehler.
     @discardableResult
     func deleteAccount(accountID: UUID) -> Int {
-        let removed = messageCount(accountID: accountID)
-        let ok = logged("deleteAccount") {
-            try transaction {
-                for table in ["message", "folder_sync", "folder_window", "folder_listing"] {
-                    try execute("DELETE FROM \(table) WHERE accountID = ?",
-                                context: "deleteAccount/\(table)") { stmt in
-                        bind(stmt, 1, accountID.uuidString)
+        return onWrite {
+            let removed = messageCount(accountID: accountID)
+            let ok = logged("deleteAccount") {
+                try transaction {
+                    for table in ["message", "folder_sync", "folder_window", "folder_listing"] {
+                        try execute("DELETE FROM \(table) WHERE accountID = ?",
+                                    context: "deleteAccount/\(table)") { stmt in
+                            bind(stmt, 1, accountID.uuidString)
+                        }
                     }
                 }
             }
+            return ok ? removed : 0
         }
-        return ok ? removed : 0
     }
 
     /// Anzahl der gecachten Nachrichten eines Postfachs.
@@ -1567,13 +1804,15 @@ final class MessageStore: @unchecked Sendable {
     ///   - accountID: Postfach.
     ///   - folder: IMAP-Ordner.
     func deleteFolder(accountID: UUID, folder: String) {
-        logged("deleteFolder") {
-            try transaction {
-                for table in ["message", "folder_sync", "folder_window"] {
-                    try execute("DELETE FROM \(table) WHERE accountID = ? AND folder = ?",
-                                context: "deleteFolder/\(table)") { stmt in
-                        bind(stmt, 1, accountID.uuidString)
-                        bind(stmt, 2, folder)
+        onWrite {
+            logged("deleteFolder") {
+                try transaction {
+                    for table in ["message", "folder_sync", "folder_window"] {
+                        try execute("DELETE FROM \(table) WHERE accountID = ? AND folder = ?",
+                                    context: "deleteFolder/\(table)") { stmt in
+                            bind(stmt, 1, accountID.uuidString)
+                            bind(stmt, 2, folder)
+                        }
                     }
                 }
             }
@@ -1587,7 +1826,9 @@ final class MessageStore: @unchecked Sendable {
     ///
     /// - Parameter id: Cache-ID der Nachricht.
     func deleteMessage(id: String) {
-        logged("deleteMessage \(id)") { try removeMessage(id: id) }
+        onWrite {
+            logged("deleteMessage \(id)") { try removeMessage(id: id) }
+        }
     }
 
     /// Löscht eine Nachricht.
@@ -1617,38 +1858,40 @@ final class MessageStore: @unchecked Sendable {
     ///   lag oder das Umschreiben fehlschlug.
     @discardableResult
     func relocateMessage(id: String, toFolder folder: String, newUID: UInt32) -> String? {
-        guard let existing = message(id: id) else { return nil }
-        let newID = CachedMessage.makeID(
-            accountID: existing.accountID, folder: folder, uid: newUID
-        )
-        guard newID != id else { return newID }
+        return onWrite {
+            guard let existing = message(id: id) else { return nil }
+            let newID = CachedMessage.makeID(
+                accountID: existing.accountID, folder: folder, uid: newUID
+            )
+            guard newID != id else { return newID }
 
-        let ok = withForeignKeysDisabled {
-            logged("relocateMessage \(id)") {
-                try transaction {
-                    // Anhänge zuerst: ihre Kennung beginnt mit der Nachrichten-Kennung.
-                    try execute("""
-                        UPDATE attachment
-                        SET id = ? || substr(id, length(messageID) + 1), messageID = ?
-                        WHERE messageID = ?
-                        """, context: "relocateMessage/attachment") { stmt in
-                        bind(stmt, 1, newID)
-                        bind(stmt, 2, newID)
-                        bind(stmt, 3, id)
-                    }
-                    try execute(
-                        "UPDATE message SET id = ?, folder = ?, uid = ? WHERE id = ?",
-                        context: "relocateMessage/message"
-                    ) { stmt in
-                        bind(stmt, 1, newID)
-                        bind(stmt, 2, folder)
-                        sqlite3_bind_int64(stmt, 3, Int64(newUID))
-                        bind(stmt, 4, id)
+            let ok = withForeignKeysDisabled {
+                logged("relocateMessage \(id)") {
+                    try transaction {
+                        // Anhänge zuerst: ihre Kennung beginnt mit der Nachrichten-Kennung.
+                        try execute("""
+                            UPDATE attachment
+                            SET id = ? || substr(id, length(messageID) + 1), messageID = ?
+                            WHERE messageID = ?
+                            """, context: "relocateMessage/attachment") { stmt in
+                            bind(stmt, 1, newID)
+                            bind(stmt, 2, newID)
+                            bind(stmt, 3, id)
+                        }
+                        try execute(
+                            "UPDATE message SET id = ?, folder = ?, uid = ? WHERE id = ?",
+                            context: "relocateMessage/message"
+                        ) { stmt in
+                            bind(stmt, 1, newID)
+                            bind(stmt, 2, folder)
+                            sqlite3_bind_int64(stmt, 3, Int64(newUID))
+                            bind(stmt, 4, id)
+                        }
                     }
                 }
             }
+            return ok ? newID : nil
         }
-        return ok ? newID : nil
     }
 
     // MARK: - Suchindex
@@ -1706,6 +1949,46 @@ final class MessageStore: @unchecked Sendable {
         }
     }
 
+    /// Schreibt nur die Personen (Von, An, Cc) im Suchindex neu.
+    ///
+    /// Verarbeitung: Liest Absender und Adresslisten der Nachricht und
+    /// aktualisiert die Spalte `people` ihres Eintrags. Hat die Nachricht
+    /// noch keinen Eintrag, wird er vollständig geschrieben
+    /// (`writeSearchEntry`). Fehlt die Nachricht, passiert nichts.
+    ///
+    /// - Parameter messageID: Cache-ID der Nachricht.
+    /// - Throws: `StoreError`, wenn Lesen oder Schreiben fehlschlägt.
+    private func writeSearchPeople(messageID: String) throws {
+        guard hasSearchIndex else { return }
+        guard let stmt = prepare("""
+            SELECT rowid, "from", toJSON, ccJSON FROM message WHERE id = ?
+            """) else {
+            throw StoreError.prepare(context: "writeSearchPeople \(messageID)", message: errMsg)
+        }
+        bind(stmt, 1, messageID)
+        guard sqlite3_step(stmt) == SQLITE_ROW else {
+            sqlite3_finalize(stmt)
+            return
+        }
+        let rowID = sqlite3_column_int64(stmt, 0)
+        let people = SearchText.people(
+            from: str(stmt, 1),
+            to: decodeList(optStr(stmt, 2)),
+            cc: decodeList(optStr(stmt, 3))
+        )
+        sqlite3_finalize(stmt)
+
+        try execute("UPDATE message_search SET people = ? WHERE rowid = ?",
+                    context: "writeSearchPeople \(messageID)") { s in
+            bind(s, 1, people)
+            sqlite3_bind_int64(s, 2, rowID)
+        }
+        if sqlite3_changes(db) == 0 {
+            // Noch kein Eintrag (z. B. vor dem Nachtragen): vollständig schreiben.
+            try writeSearchEntry(messageID: messageID)
+        }
+    }
+
     /// Trägt fehlende Einträge im Suchindex nach.
     ///
     /// Verarbeitung: Sucht bis zu `limit` Nachrichten ohne Eintrag (die
@@ -1718,29 +2001,31 @@ final class MessageStore: @unchecked Sendable {
     /// - Returns: Anzahl der nachgetragenen Nachrichten.
     @discardableResult
     func indexMissingSearchEntries(limit: Int) -> Int {
-        guard hasSearchIndex else { return 0 }
-        let sql = """
-            SELECT id FROM message
-            WHERE rowid NOT IN (SELECT rowid FROM message_search)
-            ORDER BY date DESC LIMIT ?
-            """
-        guard let stmt = prepare(sql) else { return 0 }
-        sqlite3_bind_int(stmt, 1, Int32(limit))
-        var ids: [String] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            ids.append(str(stmt, 0))
-        }
-        sqlite3_finalize(stmt)
-        guard !ids.isEmpty else { return 0 }
+        return onWrite {
+            guard hasSearchIndex else { return 0 }
+            let sql = """
+                SELECT id FROM message
+                WHERE rowid NOT IN (SELECT rowid FROM message_search)
+                ORDER BY date DESC LIMIT ?
+                """
+            guard let stmt = prepare(sql) else { return 0 }
+            sqlite3_bind_int(stmt, 1, Int32(limit))
+            var ids: [String] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                ids.append(str(stmt, 0))
+            }
+            sqlite3_finalize(stmt)
+            guard !ids.isEmpty else { return 0 }
 
-        let ok = logged("indexMissingSearchEntries") {
-            try transaction {
-                for id in ids {
-                    try writeSearchEntry(messageID: id)
+            let ok = logged("indexMissingSearchEntries") {
+                try transaction {
+                    for id in ids {
+                        try writeSearchEntry(messageID: id)
+                    }
                 }
             }
+            return ok ? ids.count : 0
         }
-        return ok ? ids.count : 0
     }
 
     // MARK: - Suche
@@ -1756,22 +2041,24 @@ final class MessageStore: @unchecked Sendable {
     ///   - match: FTS5-Ausdruck (`SearchText.matchExpression`).
     /// - Returns: Cache-IDs der Treffer.
     func searchMessageIDs(in scope: SearchScope, match: String) -> Set<String> {
-        guard hasSearchIndex, !scope.folders.isEmpty else { return [] }
-        let sql = """
-            SELECT id FROM message
-            WHERE \(Self.folderCondition(scope.folders.count))
-            \(scope.flaggedOnly ? "AND isFlagged = 1" : "")
-            AND rowid IN (SELECT rowid FROM message_search WHERE message_search MATCH ?)
-            """
-        guard let stmt = prepare(sql) else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        let next = bind(stmt, folders: scope.folders, from: 1)
-        bind(stmt, next, match)
-        var ids = Set<String>()
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            ids.insert(str(stmt, 0))
+        return onRead {
+            guard hasSearchIndex, !scope.folders.isEmpty else { return [] }
+            let sql = """
+                SELECT id FROM message
+                WHERE \(Self.folderCondition(scope.folders.count))
+                \(scope.flaggedOnly ? "AND isFlagged = 1" : "")
+                AND rowid IN (SELECT rowid FROM message_search WHERE message_search MATCH ?)
+                """
+            guard let stmt = prepare(sql) else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            let next = bind(stmt, folders: scope.folders, from: 1)
+            bind(stmt, next, match)
+            var ids = Set<String>()
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                ids.insert(str(stmt, 0))
+            }
+            return ids
         }
-        return ids
     }
 
     /// Alle Adressen (Von, An, Cc) der Mails im Suchbereich – Quelle der
@@ -1780,50 +2067,97 @@ final class MessageStore: @unchecked Sendable {
     /// - Parameter scope: Suchbereich.
     /// - Returns: Formatierte Adressen ohne Doppelte, ungeordnet.
     func participantAddresses(in scope: SearchScope) -> [String] {
-        guard !scope.folders.isEmpty else { return [] }
-        let sql = """
-            SELECT "from", toJSON, ccJSON FROM message
-            WHERE \(Self.folderCondition(scope.folders.count))
-            \(scope.flaggedOnly ? "AND isFlagged = 1" : "")
-            """
-        guard let stmt = prepare(sql) else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        _ = bind(stmt, folders: scope.folders, from: 1)
-        var addresses = Set<String>()
-        // Gleiche JSON-Listen kommen oft vor (z. B. immer „An: ich“) –
-        // jede nur einmal entschlüsseln.
-        var decoded = Set<String>()
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            addresses.insert(str(stmt, 0))
-            for json in [optStr(stmt, 1), optStr(stmt, 2)].compactMap({ $0 }) where decoded.insert(json).inserted {
-                addresses.formUnion(decodeList(json))
+        return onRead {
+            guard !scope.folders.isEmpty else { return [] }
+            let sql = """
+                SELECT "from", toJSON, ccJSON FROM message
+                WHERE \(Self.folderCondition(scope.folders.count))
+                \(scope.flaggedOnly ? "AND isFlagged = 1" : "")
+                """
+            guard let stmt = prepare(sql) else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            _ = bind(stmt, folders: scope.folders, from: 1)
+            var addresses = Set<String>()
+            // Gleiche JSON-Listen kommen oft vor (z. B. immer „An: ich“) –
+            // jede nur einmal entschlüsseln.
+            var decoded = Set<String>()
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                addresses.insert(str(stmt, 0))
+                for json in [optStr(stmt, 1), optStr(stmt, 2)].compactMap({ $0 }) where decoded.insert(json).inserted {
+                    addresses.formUnion(decodeList(json))
+                }
             }
+            return Array(addresses)
         }
-        return Array(addresses)
     }
 
     // MARK: - Transaktionen und Schreib-Helfer
 
-    /// Führt einen Block in einer Transaktion aus.
+    /// Führt einen Block in einer Transaktion aus; lässt sich verschachteln.
     ///
-    /// Verarbeitung: `BEGIN` vor dem Block, `COMMIT` danach. Wirft der
-    /// Block oder schlägt das COMMIT fehl, wird `ROLLBACK` ausgeführt und
-    /// der Fehler weitergegeben. Nicht verschachteln – SQLite kennt keine
-    /// verschachtelten Transaktionen.
+    /// Verarbeitung: Die äußerste Ebene beginnt mit `BEGIN` und endet mit
+    /// `COMMIT`; wirft der Block oder scheitert das COMMIT, folgt
+    /// `ROLLBACK`. Jede innere Ebene ist ein `SAVEPOINT`: Erfolg gibt ihn
+    /// frei (`RELEASE`), ein Fehler rollt nur bis zu ihm zurück
+    /// (`ROLLBACK TO`) und gibt ihn danach frei. Der Fehler wird in jedem
+    /// Fall weitergegeben – die umgebende Ebene entscheidet, ob sie ihn
+    /// abfängt.
     ///
     /// - Parameter body: Schreibschritte der Transaktion.
     /// - Returns: Ergebnis von `body`.
     /// - Throws: Fehler aus `body` oder `StoreError.exec`.
     @discardableResult
     private func transaction<T>(_ body: () throws -> T) throws -> T {
-        try execOrThrow("BEGIN TRANSACTION")
+        let depth = transactionDepth
+        let savepoint = "mw_sp\(depth)"
+        if depth == 0 {
+            try execOrThrow("BEGIN TRANSACTION")
+        } else {
+            try execOrThrow("SAVEPOINT \(savepoint)")
+        }
+        transactionDepth += 1
+        defer { transactionDepth -= 1 }
         do {
             let result = try body()
-            try execOrThrow("COMMIT")
+            if depth == 0 {
+                try execOrThrow("COMMIT")
+            } else {
+                try execOrThrow("RELEASE \(savepoint)")
+            }
             return result
         } catch {
-            exec("ROLLBACK")
+            if depth == 0 {
+                exec("ROLLBACK")
+            } else {
+                exec("ROLLBACK TO \(savepoint)")
+                exec("RELEASE \(savepoint)")
+            }
             throw error
+        }
+    }
+
+    /// Führt mehrere Schreibvorgänge in einem gemeinsamen Commit aus.
+    ///
+    /// Verarbeitung: Öffnet eine Transaktion, in der die öffentlichen
+    /// Schreibfunktionen des Blocks als Savepoints laufen. Scheitert ein
+    /// einzelner Schreibvorgang, rollt nur er zurück und meldet das wie
+    /// gewohnt über seinen Rückgabewert bzw. das Protokoll; die übrigen
+    /// bleiben erhalten. Am Ende steht ein einziges COMMIT statt eines je
+    /// Vorgang. Scheitert dieses COMMIT, ist nichts aus dem Block
+    /// gespeichert – das meldet der Rückgabewert.
+    /// Nicht für `relocateMessage` verwenden: Das Abschalten der
+    /// Fremdschlüssel wirkt innerhalb einer Transaktion nicht.
+    ///
+    /// - Parameters:
+    ///   - context: Kurzbeschreibung für das Protokoll.
+    ///   - body: Schreibvorgänge.
+    /// - Returns: `true`, wenn das gemeinsame COMMIT gelang.
+    @discardableResult
+    func batch(_ context: String, _ body: () -> Void) -> Bool {
+        return onWrite {
+            logged("batch \(context)") {
+                try transaction { body() }
+            }
         }
     }
 
@@ -1838,6 +2172,8 @@ final class MessageStore: @unchecked Sendable {
     /// - Returns: Ergebnis von `body`.
     @discardableResult
     private func withForeignKeysDisabled<T>(_ body: () -> T) -> T {
+        // Innerhalb einer Transaktion wäre das Umschalten wirkungslos.
+        assert(transactionDepth == 0, "withForeignKeysDisabled innerhalb einer Transaktion")
         exec("PRAGMA foreign_keys = OFF")
         defer { exec("PRAGMA foreign_keys = ON") }
         return body()
@@ -1863,10 +2199,13 @@ final class MessageStore: @unchecked Sendable {
         }
     }
 
-    /// Bereitet einen Schreibbefehl vor, bindet Parameter und führt ihn aus.
+    /// Führt einen Schreibbefehl mit Parametern aus.
     ///
-    /// Verarbeitung: Erwartet `SQLITE_DONE`. Jedes andere Ergebnis gilt
-    /// als Fehler. Das Statement wird in jedem Fall freigegeben.
+    /// Verarbeitung: Holt die vorbereitete Anweisung aus dem Cache oder
+    /// bereitet sie einmal vor (`cachedStatement`), bindet die Parameter und
+    /// erwartet `SQLITE_DONE`; jedes andere Ergebnis gilt als Fehler. Danach
+    /// wird die Anweisung in jedem Fall zurückgesetzt und ihre Bindungen
+    /// gelöscht – so hält sie keine Sperre und keine Werte fest.
     ///
     /// - Parameters:
     ///   - sql: SQL-Befehl mit Platzhaltern.
@@ -1878,16 +2217,38 @@ final class MessageStore: @unchecked Sendable {
         context: String,
         bind bindValues: (OpaquePointer?) -> Void = { _ in }
     ) throws {
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+        guard let stmt = cachedStatement(sql) else {
             throw StoreError.prepare(context: context, message: errMsg)
         }
-        defer { sqlite3_finalize(stmt) }
+        defer {
+            sqlite3_reset(stmt)
+            sqlite3_clear_bindings(stmt)
+        }
         bindValues(stmt)
         let code = sqlite3_step(stmt)
         guard code == SQLITE_DONE else {
             throw StoreError.step(context: context, code: code, message: errMsg)
         }
+    }
+
+    /// Vorbereitete Anweisung zu einem SQL-Text, bei Bedarf neu angelegt.
+    ///
+    /// Verarbeitung: Die Anzahl verschiedener Texte ist begrenzt (feste
+    /// Befehle, wenige Tabellen- bzw. Spaltennamen), der Cache wächst daher
+    /// nicht unbegrenzt. SQLite übersetzt eine Anweisung nach einer
+    /// Schemaänderung selbst neu (`sqlite3_prepare_v2`).
+    ///
+    /// - Parameter sql: SQL-Text.
+    /// - Returns: Anweisung oder `nil`, wenn sie sich nicht vorbereiten lässt.
+    private func cachedStatement(_ sql: String) -> OpaquePointer? {
+        if let stmt = statementCache[sql] { return stmt }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
+            sqlite3_finalize(stmt)
+            return nil
+        }
+        statementCache[sql] = stmt
+        return stmt
     }
 
     /// Führt einen Befehl ohne Parameter aus und wirft bei einem Fehler.
@@ -2063,7 +2424,7 @@ final class MessageStore: @unchecked Sendable {
     /// - Returns: JSON-Text oder `nil` bei leerer Liste.
     private func encodeList(_ list: [String]) -> String? {
         guard !list.isEmpty,
-              let data = try? JSONEncoder().encode(list) else { return nil }
+              let data = try? Self.listEncoder.encode(list) else { return nil }
         return String(data: data, encoding: .utf8)
     }
 
@@ -2074,7 +2435,7 @@ final class MessageStore: @unchecked Sendable {
     private func decodeList(_ json: String?) -> [String] {
         guard let json,
               let data = json.data(using: .utf8),
-              let list = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+              let list = try? Self.listDecoder.decode([String].self, from: data) else { return [] }
         return list
     }
 

@@ -24,6 +24,13 @@
 //  ein Debugger angehängt ist, sonst als „<private>“. Jede Zeichenkette
 //  wird ausdrücklich eingestuft, damit die Regel im Code sichtbar ist.
 //
+//  Messpunkte (Signposts): `beginInterval`/`endInterval` markieren Abschnitte
+//  für Instruments (Kategorie „Performance“), z. B. „Liste aus Cache“ oder
+//  „Abruf Postfach“. Sie erscheinen benannt in den Werkzeugen „Time
+//  Profiler“, „Hangs“ und „os_signpost“ und kosten ohne angeschlossenes
+//  Instruments praktisch nichts. Namen der Messpunkte stehen in
+//  `Log.Interval` gesammelt, damit sie an allen Stellen gleich heißen.
+//
 //  Abgrenzung: Meldungen an den Nutzer → Dialogs (`AlertItem`).
 //
 //  Abhängigkeiten: os.
@@ -53,4 +60,62 @@ nonisolated enum Log {
     static let auth = Logger(subsystem: subsystem, category: "Anmeldung")
     /// Austausch zwischen iPhone und Apple Watch.
     static let watch = Logger(subsystem: subsystem, category: "Watch")
+
+    // MARK: - Messpunkte (Signposts)
+
+    /// Erzeuger der Messpunkte für Instruments.
+    static let signposter = OSSignposter(subsystem: subsystem, category: "Performance")
+
+    /// Namen der gemessenen Abschnitte – einheitlich an allen Stellen.
+    nonisolated enum Interval {
+        /// Liste der aktuellen Ansicht aus dem Cache lesen (InboxViewModel).
+        static let listFromCache: StaticString = "Liste aus Cache"
+        /// Abruf aller eingeschalteten Posteingänge (InboxViewModel).
+        static let refreshAll: StaticString = "Abruf gesamt"
+        /// Abruf eines Postfachs: Spamfilter, Posteingang, Spam-Ordner.
+        static let refreshAccount: StaticString = "Abruf Postfach"
+        /// Abruf eines Ordners auf einer Verbindung (MailFetchService).
+        static let folderSync: StaticString = "Ordner-Sync"
+        /// Vorbereitung beim Öffnen einer Mail (MessageDetailView).
+        static let openMessage: StaticString = "Mail öffnen"
+        /// Mail aus dem Cache lesen, bevor sie angezeigt wird.
+        static let loadMessage: StaticString = "Mail aus Cache"
+        /// Ein Paket des nachgetragenen Suchindex (SearchIndexBuilder).
+        static let searchIndexBatch: StaticString = "Suchindex-Paket"
+        /// Aktion an einer oder mehreren Mails (MessageActions).
+        static let mailAction: StaticString = "Mail-Aktion"
+        /// Zusammenstellen des Stands für die Apple Watch (WatchBridge).
+        static let watchSnapshot: StaticString = "Watch-Stand"
+    }
+
+    /// Ein begonnener Messabschnitt; mit `endInterval` abschließen.
+    nonisolated struct MeasuredInterval {
+        /// Name des Abschnitts (aus `Interval`).
+        let name: StaticString
+        /// Zustand des Signposts.
+        let state: OSSignpostIntervalState
+    }
+
+    /// Beginnt einen Messabschnitt.
+    ///
+    /// Verarbeitung: Legt eine eigene Signpost-ID an, damit sich
+    /// gleichzeitig laufende Abschnitte gleichen Namens (z. B. mehrere
+    /// Ordner) in Instruments nicht vermischen.
+    ///
+    /// - Parameter name: Name des Abschnitts (aus `Interval`).
+    /// - Returns: Abschnitt zum Abschließen mit `endInterval`.
+    static func beginInterval(_ name: StaticString) -> MeasuredInterval {
+        let id = signposter.makeSignpostID()
+        return MeasuredInterval(name: name, state: signposter.beginInterval(name, id: id))
+    }
+
+    /// Schließt einen Messabschnitt ab.
+    ///
+    /// Verarbeitung: Üblich ist der Aufruf per `defer` direkt nach
+    /// `beginInterval`, damit der Abschnitt auf jedem Weg endet.
+    ///
+    /// - Parameter interval: Begonnener Abschnitt.
+    static func endInterval(_ interval: MeasuredInterval) {
+        signposter.endInterval(interval.name, interval.state)
+    }
 }

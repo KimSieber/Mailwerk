@@ -23,7 +23,11 @@
 //  → SpamFilterService; Anzeige und Rückfragen → InboxViewModel bzw.
 //  MessageDetailView.
 //
-//  Abhängigkeiten: MailActionService, MessageStore, AccountStore, FolderKey.
+//  Messung: Jede Aktion (einzeln und gesammelt) ist ein Messpunkt für
+//  Instruments („Mail-Aktion“, v0.2.3c) – Grundlage für die Entscheidung,
+//  ob die Aktionen ebenfalls vom Hauptthread gelöst werden müssen.
+//
+//  Abhängigkeiten: MailActionService, MessageStore, AccountStore, FolderKey, Log.
 //
 
 import Foundation
@@ -68,6 +72,8 @@ enum MessageActions {
     ///   - accountStore: Quelle für die Zugangsdaten.
     /// - Throws: `MailCredentialError` oder `MailActionService.ActionError`.
     static func apply(_ change: StateChange, to target: Target, accountStore: AccountStore) async throws {
+        let interval = Log.beginInterval(Log.Interval.mailAction)
+        defer { Log.endInterval(interval) }
         switch change {
         case .flagged(let value):
             try await setFlagged(value, for: target, accountStore: accountStore)
@@ -123,6 +129,8 @@ enum MessageActions {
     ///   - accountStore: Quelle für die Zugangsdaten.
     /// - Throws: `MailCredentialError` oder `MailActionService.ActionError`.
     static func delete(_ target: Target, accountStore: AccountStore) async throws {
+        let interval = Log.beginInterval(Log.Interval.mailAction)
+        defer { Log.endInterval(interval) }
         try await MailActionService.deleteMessage(
             uid: target.uid,
             accountID: target.accountID,
@@ -144,6 +152,8 @@ enum MessageActions {
     ///   - accountStore: Quelle für die Zugangsdaten.
     /// - Throws: `MailCredentialError` oder `MailActionService.ActionError`.
     static func move(_ target: Target, to path: String, accountStore: AccountStore) async throws {
+        let interval = Log.beginInterval(Log.Interval.mailAction)
+        defer { Log.endInterval(interval) }
         try await MailActionService.moveMessage(
             uid: target.uid,
             toFolder: path,
@@ -205,7 +215,9 @@ extension MessageActions {
     ///   - accountStore: Quelle für die Zugangsdaten.
     /// - Returns: Gelungene Mails und gescheiterte Gruppen.
     static func apply(_ change: StateChange, to targets: [Target], accountStore: AccountStore) async -> BatchOutcome {
-        await runGrouped(targets) { group, accountID, folder in
+        let interval = Log.beginInterval(Log.Interval.mailAction)
+        defer { Log.endInterval(interval) }
+        return await runGrouped(targets) { group, accountID, folder in
             let uids = group.map(\.uid)
             switch change {
             case .flagged(let value):
@@ -236,7 +248,9 @@ extension MessageActions {
     ///   - accountStore: Quelle für die Zugangsdaten.
     /// - Returns: Gelungene Mails und gescheiterte Gruppen.
     static func delete(_ targets: [Target], accountStore: AccountStore) async -> BatchOutcome {
-        await runGrouped(targets) { group, accountID, folder in
+        let interval = Log.beginInterval(Log.Interval.mailAction)
+        defer { Log.endInterval(interval) }
+        return await runGrouped(targets) { group, accountID, folder in
             try await MailActionService.deleteMessages(
                 uids: group.map(\.uid), accountID: accountID,
                 accountStore: accountStore, folder: folder
@@ -256,7 +270,9 @@ extension MessageActions {
     ///   - accountStore: Quelle für die Zugangsdaten.
     /// - Returns: Gelungene Mails und gescheiterte Gruppen.
     static func move(_ targets: [Target], to path: String, accountStore: AccountStore) async -> BatchOutcome {
-        await runGrouped(targets) { group, accountID, folder in
+        let interval = Log.beginInterval(Log.Interval.mailAction)
+        defer { Log.endInterval(interval) }
+        return await runGrouped(targets) { group, accountID, folder in
             try await MailActionService.moveMessages(
                 uids: group.map(\.uid), toFolder: path, accountID: accountID,
                 accountStore: accountStore, folder: folder

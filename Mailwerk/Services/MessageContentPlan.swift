@@ -44,6 +44,10 @@
 //  Weiterleiten über denselben Weg wie bei `cid:`-Bildern. Der Textteil ist
 //  in diesen Fällen alle Textteile, aneinandergehängt.
 //
+//  Nebenläufigkeit (v0.2.3b): `nonisolated` – reine Werte bzw. Logik ohne
+//  Bezug zur Oberfläche, damit der Abruf sie abseits des Hauptthreads
+//  nutzen kann.
+//
 //  Abgrenzung: Laden und Speichern → MailFetchService; Nachladen eines
 //  einzelnen Anhangs → AttachmentManager; Nachladen eingebetteter Bilder
 //  beim Öffnen → InlineImageLoader.
@@ -55,7 +59,7 @@ import Foundation
 import SwiftMail
 
 /// Plan, welche Teile einer Mail geladen werden.
-struct MessageContentPlan {
+nonisolated struct MessageContentPlan {
     /// Alle Teile der Mail laut Struktur, ohne Inhalt.
     let structure: [MessagePart]
     /// Text- und HTML-Teile der Mail selbst in Reihenfolge, zu laden.

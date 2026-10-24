@@ -20,6 +20,17 @@
 //  das Auffrischen eines vorhandenen Logos „kein Logo“, bleibt das alte
 //  Logo stehen, nur der Prüfzeitpunkt wird erneuert.
 //
+//  Mailliste (v0.2.3c, Prüfbericht P-09): Die Zeilen holen ihr Logo über
+//  `thumbnail(forAddress:)` asynchron – der Eintrag wird abseits des
+//  Hauptthreads gelesen und das Bild verkleinert auf Anzeigegröße im
+//  Hintergrund dekodiert (`DecodedImage.thumbnail`). Ein neues Logo meldet
+//  sich nur bei den Zeilen seiner Domain (`revision(forAddress:)`), nicht
+//  mehr über einen Zähler für alle – die Liste baut sich nicht bei jedem
+//  geladenen Logo vollständig neu auf. Gespeichert wird im Hintergrund,
+//  damit ein laufender Abruf das Speichern nicht blockiert.
+//  Die Mailansicht nutzt weiter `image(forAddress:)` (ein Bild, volle
+//  Auflösung) und den Zähler `revision`.
+//
 //  Protokoll: Domains privat, Anzahlen und Ergebnisse öffentlich.
 //
 //  Abgrenzung: Welche Domain → SenderDomain; Abruf und Aufbereitung →
@@ -46,9 +57,17 @@ final class SenderIconCache {
     /// Höchstzahl gleichzeitiger Abrufe.
     static let maxConcurrentFetches = 3
 
-    /// Wird erhöht, wenn ein neues Logo vorliegt. Zeilen lesen ihn über
-    /// `image(forAddress:)` mit und werden dadurch neu gezeichnet.
+    /// Wird erhöht, wenn ein neues Logo vorliegt. Die Mailansicht liest ihn
+    /// über `image(forAddress:)` mit und wird dadurch neu gezeichnet.
     private(set) var revision = 0
+    /// Stand je Domain; wird erhöht, wenn für die Domain ein neues Logo
+    /// vorliegt. Die Zeilen der Liste lesen ihn über `revision(forAddress:)`.
+    private(set) var domainRevisions: [String: Int] = [:]
+    /// Kantenlänge der verkleinerten Logos in Pixeln (40 pt bei 3-facher
+    /// Auflösung).
+    static let thumbnailPixelSize = 120
+    /// Verkleinerte Logos für die Liste je Domain.
+    @ObservationIgnored private var thumbnails: [String: Image] = [:]
     /// Gelesene Einträge je Domain.
     @ObservationIgnored private var records: [String: SenderIconRecord] = [:]
     /// Domains, für die der Cache schon gelesen wurde (auch ohne Eintrag).
@@ -90,6 +109,73 @@ final class SenderIconCache {
         images[domain] = image
         return image
     }
+
+    // MARK: - Liste (asynchron, verkleinert)
+
+    /// Stand des Logos zur Adresse – ändert sich, sobald für deren Domain
+    /// ein neues Logo vorliegt.
+    ///
+    /// - Parameter address: E-Mail-Adresse.
+    /// - Returns: Zähler der Domain (0 = noch keine Änderung).
+    func revision(forAddress address: String?) -> Int {
+        guard let address, let domain = SenderDomain.iconDomain(forAddress: address) else { return 0 }
+        return domainRevisions[domain] ?? 0
+    }
+
+    /// Schon verkleinertes Logo zur Adresse, ohne zu lesen oder zu dekodieren.
+    ///
+    /// Verarbeitung: Für das erste Zeichnen einer Zeile – liegt das Bild
+    /// schon im Speicher, erscheint es sofort.
+    ///
+    /// - Parameter address: E-Mail-Adresse.
+    /// - Returns: Logo oder `nil`.
+    func cachedThumbnail(forAddress address: String?) -> Image? {
+        guard let address, let domain = SenderDomain.iconDomain(forAddress: address) else { return nil }
+        return thumbnails[domain]
+    }
+
+    /// Verkleinertes Logo zur Adresse; stößt bei Bedarf das Laden an.
+    ///
+    /// Verarbeitung: Freemail und unbrauchbare Adressen ergeben `nil`. Der
+    /// Eintrag wird einmal je Domain abseits des Hauptthreads gelesen;
+    /// fehlt er oder ist er abgelaufen, wird die Domain vorgemerkt. Das
+    /// Bild wird im Hintergrund auf `thumbnailPixelSize` verkleinert
+    /// dekodiert und im Speicher gehalten.
+    ///
+    /// - Parameter address: E-Mail-Adresse.
+    /// - Returns: Logo oder `nil`, wenn (noch) keines vorliegt.
+    func thumbnail(forAddress address: String?) async -> Image? {
+        guard let address, let domain = SenderDomain.iconDomain(forAddress: address) else { return nil }
+        if let image = thumbnails[domain] { return image }
+        let record: SenderIconRecord?
+        if lookedUp.contains(domain) {
+            record = records[domain]
+        } else {
+            let loaded = await Self.loadRecord(domain)
+            lookedUp.insert(domain)
+            if let loaded, records[domain] == nil { records[domain] = loaded }
+            record = records[domain]
+        }
+        if record?.isDue() ?? true {
+            enqueue(domain)
+        }
+        guard let data = record?.imageData,
+              let image = await DecodedImage.thumbnail(from: data, maxPixelSize: Self.thumbnailPixelSize)
+        else { return nil }
+        thumbnails[domain] = image
+        return image
+    }
+
+    /// Liest den gespeicherten Eintrag einer Domain abseits des Hauptthreads.
+    ///
+    /// - Parameter domain: Hauptdomain.
+    /// - Returns: Eintrag oder `nil`.
+    @concurrent
+    nonisolated private static func loadRecord(_ domain: String) async -> SenderIconRecord? {
+        MessageStore.shared.senderIcon(domain: domain)
+    }
+
+    // MARK: - Eintrag lesen (synchron, Mailansicht)
 
     /// Gespeicherter Eintrag einer Domain; der Cache wird je Domain nur
     /// einmal gelesen.
@@ -157,13 +243,22 @@ final class SenderIconCache {
         startFetches()
     }
 
-    /// Speichert einen Eintrag und zeichnet die Liste neu.
+    /// Übernimmt einen Eintrag und meldet ihn den Zeilen seiner Domain.
+    ///
+    /// Verarbeitung: Gespeichert wird im Hintergrund – die Schreibverbindung
+    /// kann gerade durch einen Abruf belegt sein, die Oberfläche soll darauf
+    /// nicht warten. Im Speicher gilt der Eintrag sofort.
     ///
     /// - Parameter record: Neuer Eintrag der Domain.
     private func store(_ record: SenderIconRecord) {
-        MessageStore.shared.saveSenderIcon(record)
+        Task.detached(priority: .utility) {
+            MessageStore.shared.saveSenderIcon(record)
+        }
         records[record.domain] = record
+        lookedUp.insert(record.domain)
         images[record.domain] = nil
+        thumbnails[record.domain] = nil
+        domainRevisions[record.domain, default: 0] += 1
         revision += 1
     }
 }

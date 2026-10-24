@@ -17,6 +17,16 @@
 //  - Gesucht wird als Teilzeichenfolge ab drei Zeichen, Leerzeichen
 //    zählen mit, Groß-/Kleinschreibung zählt nicht (FTS5 „trigram“).
 //
+//  Leistung: Die regulären Ausdrücke werden einmalig kompiliert
+//  (`compiledPatterns`). Sehr lange HTML-Teile werden vor der Aufbereitung
+//  auf `maxHTMLLength` Zeichen begrenzt – indiziert werden ohnehin nur
+//  `maxBodyLength` Zeichen. Wird dabei ein Block (z. B. `<style>`)
+//  abgeschnitten, bleibt höchstens überflüssiger Text im Index.
+//
+//  Nebenläufigkeit: `nonisolated` und `Sendable` – reine Werte bzw. reine
+//  Logik ohne Bezug zur Oberfläche. So kann die Ablage (MessageStore) sie
+//  auch außerhalb des Hauptthreads nutzen (v0.2.3b).
+//
 //  Abgrenzung: Reine Aufbereitung ohne Datenbankzugriff; Speichern und
 //  Abfragen im MessageStore. Die HTML-Aufbereitung dient nur der Suche –
 //  sie ist fehlertolerant und muss keine gültige Darstellung liefern.
@@ -27,10 +37,10 @@
 import Foundation
 
 /// Aufbereitung von Nachrichten und Eingaben für die Suche.
-enum SearchText {
+nonisolated enum SearchText {
 
     /// Inhalt eines Eintrags im Suchindex.
-    struct Entry: Equatable {
+    struct Entry: Equatable, Sendable {
         /// Betreff.
         let subject: String
         /// Personen, eine Zeile je Adresse (`Name <adresse>`).
@@ -48,13 +58,43 @@ enum SearchText {
     /// des Index bei sehr langen Mails (z. B. Newsletter, Protokolle).
     static let maxBodyLength = 50_000
 
+    /// Höchstlänge des HTML-Teils in Zeichen, der aufbereitet wird. Ein
+    /// Vielfaches von `maxBodyLength`, weil Tags und Stilangaben wegfallen.
+    static let maxHTMLLength = 400_000
+
+    /// Feste Muster der HTML-Aufbereitung, in der Reihenfolge ihrer Anwendung.
+    private static let commentPattern = "<!--[\\s\\S]*?-->"
+    private static let headPattern = "<head[\\s>][\\s\\S]*?</head\\s*>"
+    private static let stylePattern = "<style[\\s>][\\s\\S]*?</style\\s*>"
+    private static let scriptPattern = "<script[\\s>][\\s\\S]*?</script\\s*>"
+    private static let blockEndPattern = "<(br|/p|/div|/td|/th|/tr|/li|/h[1-6])\\b[^>]*>"
+    private static let tagPattern = "<[^>]*>"
+    private static let whitespacePattern = "\\s+"
+    private static let entityPattern = "&(#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z]{2,8});"
+
+    /// Einmalig kompilierte reguläre Ausdrücke je Muster (ohne
+    /// Groß-/Kleinschreibung). Zuvor wurde jeder Ausdruck bei jedem Aufruf
+    /// neu kompiliert – beim Nachtragen des Suchindex tausendfach.
+    private static let compiledPatterns: [String: NSRegularExpression] = {
+        let patterns = [
+            commentPattern, headPattern, stylePattern, scriptPattern,
+            blockEndPattern, tagPattern, whitespacePattern, entityPattern,
+        ]
+        var result: [String: NSRegularExpression] = [:]
+        for pattern in patterns {
+            result[pattern] = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+        }
+        return result
+    }()
+
     // MARK: - Inhalt
 
     /// Text einer Nachricht für den Index.
     ///
     /// Verarbeitung: Der Textteil hat Vorrang, weil er den Inhalt ohne
-    /// Auszeichnung enthält; nur ohne ihn wird der HTML-Teil aufbereitet.
-    /// Das Ergebnis wird auf `maxBodyLength` Zeichen gekürzt.
+    /// Auszeichnung enthält; nur ohne ihn wird der HTML-Teil aufbereitet –
+    /// vorher auf `maxHTMLLength` Zeichen begrenzt. Das Ergebnis wird auf
+    /// `maxBodyLength` Zeichen gekürzt.
     ///
     /// - Parameters:
     ///   - text: Textteil der Nachricht.
@@ -65,7 +105,9 @@ enum SearchText {
         if let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             source = text
         } else if let html, !html.isEmpty {
-            source = plainText(fromHTML: html)
+            // Sehr lange HTML-Teile vorab kürzen (siehe Dateikopf).
+            let limited = html.utf16.count > maxHTMLLength ? String(html.prefix(maxHTMLLength)) : html
+            source = plainText(fromHTML: limited)
         } else {
             return ""
         }
@@ -130,18 +172,13 @@ enum SearchText {
     /// - Returns: Reiner Text.
     static func plainText(fromHTML html: String) -> String {
         var text = html
-        for pattern in [
-            "<!--[\\s\\S]*?-->",
-            "<head[\\s>][\\s\\S]*?</head\\s*>",
-            "<style[\\s>][\\s\\S]*?</style\\s*>",
-            "<script[\\s>][\\s\\S]*?</script\\s*>",
-        ] {
+        for pattern in [commentPattern, headPattern, stylePattern, scriptPattern] {
             text = replacing(pattern, in: text, with: " ")
         }
-        text = replacing("<(br|/p|/div|/td|/th|/tr|/li|/h[1-6])\\b[^>]*>", in: text, with: " ")
-        text = replacing("<[^>]*>", in: text, with: "")
+        text = replacing(blockEndPattern, in: text, with: " ")
+        text = replacing(tagPattern, in: text, with: "")
         text = decodeEntities(text)
-        text = replacing("\\s+", in: text, with: " ")
+        text = replacing(whitespacePattern, in: text, with: " ")
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -200,13 +237,17 @@ enum SearchText {
     /// Ersetzt alle Treffer eines regulären Ausdrucks (ohne
     /// Groß-/Kleinschreibung).
     ///
+    /// Verarbeitung: Feste Muster kommen vorkompiliert aus
+    /// `compiledPatterns`; andere werden bei Bedarf kompiliert.
+    ///
     /// - Parameters:
     ///   - pattern: Regulärer Ausdruck.
     ///   - text: Text.
     ///   - replacement: Ersatz.
     /// - Returns: Text mit Ersetzungen; unverändert bei ungültigem Ausdruck.
     private static func replacing(_ pattern: String, in text: String, with replacement: String) -> String {
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+        guard let regex = compiledPatterns[pattern]
+                ?? (try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])) else {
             return text
         }
         let range = NSRange(text.startIndex..., in: text)
@@ -232,9 +273,7 @@ enum SearchText {
     /// - Parameter text: Text mit Entitäten.
     /// - Returns: Text mit aufgelösten Entitäten.
     private static func decodeEntities(_ text: String) -> String {
-        guard text.contains("&"),
-              let regex = try? NSRegularExpression(pattern: "&(#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z]{2,8});")
-        else { return text }
+        guard text.contains("&"), let regex = compiledPatterns[entityPattern] else { return text }
         let nsText = text as NSString
         var result = ""
         var last = 0

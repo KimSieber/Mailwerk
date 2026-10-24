@@ -49,7 +49,7 @@ nonisolated enum SpamDecision: Equatable {
 /// gesucht, erst danach über seine Domain und deren übergeordnete Domains.
 /// In der Oberfläche und im Speicher
 /// bleiben es zwei Listen.
-nonisolated struct FilterLists: Equatable {
+nonisolated struct FilterLists: Equatable, Sendable {
     /// Exakte Adressen auf der Whitelist.
     var whiteAddresses: Set<String> = []
     /// Domains auf der Whitelist.

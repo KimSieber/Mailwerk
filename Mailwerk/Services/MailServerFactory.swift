@@ -12,6 +12,10 @@
 //
 //  Unverschlüsselte Verbindungen sind bewusst nicht möglich.
 //
+//  Nebenläufigkeit (v0.2.3b): `nonisolated` – reine Werte bzw. Logik ohne
+//  Bezug zur Oberfläche, damit der Abruf sie abseits des Hauptthreads
+//  nutzen kann.
+//
 //  Abgrenzung: Anmeldung und Ablauf einer Verbindung → MailSession.
 //
 //  Abhängigkeiten: Foundation, SwiftMail, MailAccount.
@@ -21,7 +25,7 @@ import Foundation
 import SwiftMail
 
 /// Erzeugt verschlüsselte IMAP- und SMTP-Verbindungen.
-enum MailServerFactory {
+nonisolated enum MailServerFactory {
 
     /// Ports, auf denen TLS von Beginn an gesprochen wird.
     private static let implicitTLSPorts: Set<Int> = [993, 465]

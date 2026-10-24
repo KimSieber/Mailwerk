@@ -65,6 +65,25 @@ struct SpamFolderResolverTests {
                 == .missing(proposal: "Junk"))
     }
 
+    // MARK: - Abkürzung über die gecachte Ordnerliste
+
+    /// Steht der gemerkte Ordner in der Liste, wird er geliefert (auch bei abweichender Schreibweise).
+    @Test("knownFolder liefert den gemerkten Ordner aus der Liste")
+    func knownFolderFindsConfigured() {
+        let folders = [folder("INBOX"), folder("INBOX.Spam")]
+        #expect(SpamFolderResolver.knownFolder(in: folders, configured: "INBOX.Spam") == "INBOX.Spam")
+        #expect(SpamFolderResolver.knownFolder(in: folders, configured: "inbox.spam") == "INBOX.Spam")
+    }
+
+    /// Fehlt der gemerkte Ordner oder ist keiner gemerkt, gibt es keine Abkürzung.
+    @Test("knownFolder liefert nil ohne Treffer oder ohne Merkwert")
+    func knownFolderWithoutMatch() {
+        let folders = [folder("Junk", specialUse: .junk)]
+        #expect(SpamFolderResolver.knownFolder(in: folders, configured: "Alt-Spam") == nil)
+        #expect(SpamFolderResolver.knownFolder(in: folders, configured: nil) == nil)
+        #expect(SpamFolderResolver.knownFolder(in: folders, configured: "") == nil)
+    }
+
     // MARK: - SPECIAL-USE
 
     /// SPECIAL-USE \\Junk gewinnt gegen einen namensgleichen Treffer.

@@ -82,7 +82,10 @@ struct MailwerkApp: App {
         // Temporäre Anhang-Dateien aus der letzten Sitzung entfernen.
         // Das System leert das tmp-Verzeichnis zwar selbst, aber nicht
         // zuverlässig bei jeder Sitzung.
-        AttachmentManager.cleanupTempFiles()
+        // Temp-Dateien abseits des Starts aufräumen (Prüfbericht P-18).
+        Task.detached(priority: .utility) {
+            AttachmentManager.cleanupTempFiles()
+        }
     }
 
     /// Hauptfenster mit der Wurzelansicht, dem einmaligen Starthinweis und

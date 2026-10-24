@@ -46,6 +46,13 @@
 //  die Liste schrittweise. Ohne Netz bleibt es beim Cache; der Zustand
 //  wird still im Titel angezeigt.
 //
+//  Laden aus dem Cache (v0.2.3b): `loadFromCache` liest im Hintergrund
+//  (InboxCacheReader) – Einträge, Stand, Zähler „Ungelesen“/„Mit
+//  Kennzeichnung“ und Fensterbeginn für „Ältere laden“ in einem Durchgang –
+//  und übernimmt das Ergebnis auf dem Main-Actor; ein überholtes Ergebnis
+//  wird verworfen. Zähler und Fensterbeginn sind gespeicherte Werte, die
+//  Ansicht fragt beim Neuzeichnen keine Datenbank mehr ab.
+//
 //  Erreichbarkeit je Postfach: Scheitert der Abruf eines Postfachs an der
 //  Verbindung, gilt nur dieses Postfach als „nicht erreichbar“
 //  (AccountFetchState) – bis zu seinem nächsten erfolgreichen Abruf. Die
@@ -78,7 +85,7 @@
 //  Abgrenzung: Darstellung in InboxView, Abruf im MailFetchService,
 //  Ablage im MessageStore.
 //
-//  Abhängigkeiten: AccountStore, SpamSettings, SpamFilterService,
+//  Abhängigkeiten: AccountStore, SpamSettings, SpamFilterService, InboxCacheReader,
 //  MailFetchService, MailSession (Zugangsdaten), MessageActions, UndoOffer,
 //  MessageActionDialogs, SpamMenuRequest, MessageSelection,
 //  MessageStore, MessageSort, NetworkMonitor, SyncWindow, FetchCoordinator,
@@ -107,7 +114,10 @@ final class InboxViewModel {
     /// Listeneinträge der aktuellen Ansicht (ohne Mailinhalt) in der
     /// gewählten Sortierung (`sort`).
     var messages: [MessageListItem] = [] {
-        didSet { updateVisibleMessages() }
+        didSet {
+            updateVisibleMessages()
+            rebuildRowModels()
+        }
     }
     /// Cache-IDs der Suchtreffer; `nil` = keine Suche, alle Mails sichtbar.
     var searchFilter: Set<String>? {
@@ -139,7 +149,9 @@ final class InboxViewModel {
     /// Setzt die Ansicht, die die Ordnerrolle kennt.
     var sortsByRecipients = false {
         didSet {
-            guard sortsByRecipients != oldValue, sort.field == .person else { return }
+            guard sortsByRecipients != oldValue else { return }
+            rebuildRowModels()
+            guard sort.field == .person else { return }
             messages = sorted(messages)
         }
     }
@@ -151,7 +163,36 @@ final class InboxViewModel {
     /// Filterlisten für die Entscheidung über Absenderbilder; `nil`,
     /// solange sie nicht gelesen sind oder sich nicht lesen ließen – dann
     /// zeigt die Liste vorsichtshalber keine Bilder.
-    private(set) var imageFilterLists: FilterLists?
+    private(set) var imageFilterLists: FilterLists? {
+        didSet {
+            listsRevision += 1
+            rebuildRowModels()
+        }
+    }
+
+    /// Zählt Änderungen der Filterlisten – billiger Vergleich, ob die
+    /// Zeilenmodelle noch zu den Listen passen (statt die Listen je Zeile
+    /// zu vergleichen).
+    @ObservationIgnored private var listsRevision = 0
+
+    /// Schlüssel, mit dem die Zeilenmodelle berechnet wurden: Ansicht,
+    /// Stand der Filterlisten, Score-Obergrenze.
+    private struct RowModelKey: Equatable {
+        let showsRecipients: Bool
+        let listsRevision: Int
+        let scoreLimit: Double
+    }
+
+    /// Vorberechnete Anzeige je Zeile (Cache-ID → Modell), im Hintergrund
+    /// gebildet (Prüfbericht P-08). Gilt nur für die Eingaben
+    /// `rowModelKey`; weichen die aktuellen ab, rechnet `rowModel(for:…)`
+    /// die Zeile direkt.
+    private(set) var rowModels: [String: MessageRowModel] = [:]
+    /// Schlüssel, mit dem `rowModels` berechnet wurde.
+    @ObservationIgnored private var rowModelKey: RowModelKey?
+    /// Zählt die Berechnungen der Zeilenmodelle; ein überholtes Ergebnis
+    /// wird verworfen.
+    @ObservationIgnored private var rowModelGeneration = 0
     /// Zählt Lesevorgänge der Filterlisten; ein überholtes Ergebnis wird
     /// verworfen, wenn inzwischen ein neueres Lesen begonnen hat.
     @ObservationIgnored private var filterListsGeneration = 0
@@ -204,14 +245,32 @@ final class InboxViewModel {
     )
 
     #if DEBUG
-    /// Messung: Anzahl der Aufrufe von `loadFromCache` in dieser Sitzung.
+    /// Messung: Anzahl der Ladevorgänge aus dem Cache in dieser Sitzung.
     /// Nicht beobachtet, damit das Zählen keine Neuzeichnung auslöst.
     @ObservationIgnored private var cacheLoadCount = 0
-    /// Messung: Datenbankabfragen, die die Ansicht über berechnete Werte
-    /// seit der letzten Liste ausgelöst hat. Nicht beobachtet, weil sie
-    /// während der Darstellung hochgezählt wird.
-    @ObservationIgnored private var viewQueryCount = 0
     #endif
+
+    /// Zählt die Ladevorgänge aus dem Cache; ein Ergebnis wird nur
+    /// übernommen, wenn seither kein neuerer begonnen hat.
+    @ObservationIgnored private var loadGeneration = 0
+
+    /// `true`, sobald die Liste einmal aus dem Cache geladen ist. Bis dahin
+    /// zeigt die Ansicht die Ladeanzeige statt „Keine Mails“.
+    private(set) var hasLoadedCache = false
+
+    /// Anzahl ungelesener Mails in den Posteingängen (für die Leiste).
+    /// Wird beim Laden aus dem Cache mitgelesen – die Ansicht fragt die
+    /// Datenbank nicht mehr bei jedem Neuzeichnen.
+    private(set) var unreadCount = 0
+
+    /// Anzahl gekennzeichneter Mails in den Posteingängen (für die Leiste),
+    /// mitgelesen wie `unreadCount`.
+    private(set) var flaggedCount = 0
+
+    /// Gespeicherter Fensterbeginn je Ordner der Ansicht (für „Ältere
+    /// laden“), mitgelesen beim Laden aus dem Cache. Fehlt ein Ordner, gilt
+    /// das Standardfenster.
+    private var windowStarts: [FolderKey: Date] = [:]
 
     /// Aktive Ansicht. Ändert sich durch die Seitenleiste.
     var selection: MailboxSelection = .allInboxes {
@@ -274,55 +333,111 @@ final class InboxViewModel {
 
     /// Lädt die Mails der aktuellen Ansicht aus dem lokalen Cache.
     ///
-    /// Verarbeitung: Ermittelt den Stand der Ansicht und liest je nach
-    /// Auswahl alle Posteingänge, die ungelesenen Mails (samt den bei
-    /// diesem Besuch schon gezeigten), die gekennzeichneten Mails, die
-    /// Spam-Ordner oder einen Ordner – als Listeneinträge ohne Mailinhalt –,
-    /// entfernt nicht mehr vorhandene Mails aus der Mehrfachauswahl und
-    /// liest die Filterlisten für die Absenderbilder neu. Eine abweichende
-    /// Sortierung wird angewandt. In Debug-Builds werden Laufzeit, Anzahl
-    /// und die zwischenzeitlichen Abfragen der Ansicht ausgegeben.
+    /// Verarbeitung: Beschreibt die Ansicht als Anfrage (`cacheRequest`)
+    /// und lässt `InboxCacheReader` sie im Hintergrund lesen – Einträge,
+    /// Abrufzeitpunkte, Zähler und Fensterbeginn in einem Durchgang. Das
+    /// Ergebnis übernimmt `apply(_:for:)` auf dem Main-Actor, aber nur,
+    /// wenn seither kein neuerer Ladevorgang begonnen hat (sonst wäre es
+    /// überholt, z. B. nach einem schnellen Ansichtswechsel). Die Funktion
+    /// kehrt sofort zurück; die Liste aktualisiert sich, sobald das
+    /// Ergebnis vorliegt. In Debug-Builds werden Laufzeit und Anzahl
+    /// ausgegeben. Messpunkt für Instruments: „Liste aus Cache“ (nur das
+    /// Lesen im Hintergrund).
     func loadFromCache() {
+        loadGeneration += 1
+        let generation = loadGeneration
+        let request = cacheRequest()
         #if DEBUG
         let started = Date()
         #endif
-        // Sammelsichten nur mit Postfächern, deren Abruf eingeschaltet ist.
+        Task {
+            let interval = Log.beginInterval(Log.Interval.listFromCache)
+            let snapshot = await InboxCacheReader.read(request)
+            Log.endInterval(interval)
+            guard generation == loadGeneration else { return }
+            apply(snapshot, for: request)
+            #if DEBUG
+            reportCacheLoad(startedAt: started)
+            #endif
+        }
+    }
+
+    /// Beschreibt die gezeigte Ansicht als Anfrage an den Cache.
+    ///
+    /// Verarbeitung: Sammelsichten nur mit Postfächern, deren Abruf
+    /// eingeschaltet ist. Die Standzeile richtet sich bei Sammelsichten nach
+    /// den Posteingängen bzw. Spam-Ordnern, bei einem Ordner nach diesem.
+    /// Die Sicht „Ungelesen“ nimmt die bei diesem Besuch schon gezeigten
+    /// Mails mit.
+    ///
+    /// - Returns: Anfrage für `InboxCacheReader`.
+    private func cacheRequest() -> InboxCacheReader.Request {
         let accountIDs = accountStore.fetchingAccounts.map(\.id)
-        syncState = currentSyncState()
+        let inboxes = accountIDs.map { FolderKey(accountID: $0, folder: MailFolder.inboxPath) }
+        let source: InboxCacheReader.Source
+        let syncFolders: [FolderKey]
         switch selection {
         case .allInboxes:
-            messages = MessageStore.shared.allMessages(
-                accountIDs: accountIDs, folder: MailFolder.inboxPath
-            )
+            source = .inboxes(accountIDs)
+            syncFolders = inboxes
         case .unread:
-            messages = MessageStore.shared.unreadInboxMessages(
-                accountIDs: accountIDs, keeping: keptUnreadIDs
-            )
-            keptUnreadIDs.formUnion(messages.map(\.id))
+            source = .unread(accountIDs, keeping: keptUnreadIDs)
+            syncFolders = inboxes
         case .flagged:
-            messages = MessageStore.shared.flaggedInboxMessages(
-                accountIDs: accountIDs
-            )
+            source = .flagged(accountIDs)
+            syncFolders = inboxes
         case .spam:
-            messages = MessageStore.shared.messages(in: spamFolders)
+            let folders = spamFolders
+            source = .folders(folders)
+            syncFolders = folders
         case .folder(let accountID, let path, _):
-            messages = MessageStore.shared.folderMessages(
-                accountID: accountID, folder: path
-            )
+            source = .folder(accountID: accountID, path: path)
+            syncFolders = [FolderKey(accountID: accountID, folder: path)]
         }
+        return InboxCacheReader.Request(
+            source: source,
+            syncFolders: syncFolders,
+            countAccountIDs: accountIDs,
+            windowFolders: olderTargets.map { FolderKey(accountID: $0.account.id, folder: $0.folder) }
+        )
+    }
+
+    /// Übernimmt eine Momentaufnahme aus dem Cache.
+    ///
+    /// Verarbeitung: Setzt den Stand der Ansicht, merkt in der Sicht
+    /// „Ungelesen“ die gezeigten Mails, sortiert bei abweichender
+    /// Sortierung und weist Liste, Zähler und Fensterbeginn nur bei
+    /// geändertem Inhalt zu – jede Zuweisung lässt die Ansicht neu
+    /// zeichnen. Danach fallen verschwundene Mails aus der Mehrfachauswahl,
+    /// die Filterlisten für die Absenderbilder werden neu gelesen, die Suche
+    /// erfährt vom neuen Stand (`cacheGeneration`) und die Apple Watch
+    /// ebenso (`onCacheReloaded`).
+    ///
+    /// - Parameters:
+    ///   - snapshot: Gelesene Daten.
+    ///   - request: Anfrage, aus der sie stammen.
+    private func apply(_ snapshot: InboxCacheReader.Snapshot, for request: InboxCacheReader.Request) {
+        let newSyncState: SyncState? = request.syncFolders.isEmpty ? nil : .oldest(snapshot.syncDates)
+        if newSyncState != syncState { syncState = newSyncState }
+        if case .unread = request.source {
+            keptUnreadIDs.formUnion(snapshot.items.map(\.id))
+        }
+        var loaded = snapshot.items
         if !sort.isStandard {
-            messages = sorted(messages)
+            loaded = sorted(loaded)
         }
+        if loaded != messages { messages = loaded }
+        if snapshot.unreadCount != unreadCount { unreadCount = snapshot.unreadCount }
+        if snapshot.flaggedCount != flaggedCount { flaggedCount = snapshot.flaggedCount }
+        if snapshot.windowStarts != windowStarts { windowStarts = snapshot.windowStarts }
         if !selectedIDs.isEmpty {
             // Verschwundene Mails fallen aus der Auswahl.
             selectedIDs.formIntersection(messages.map(\.id))
         }
+        if !hasLoadedCache { hasLoadedCache = true }
         reloadFilterLists()
         cacheGeneration += 1
         onCacheReloaded?()
-        #if DEBUG
-        reportCacheLoad(startedAt: started)
-        #endif
     }
 
     /// Sicht „Ungelesen“: lässt die bei diesem Besuch gelesenen Mails
@@ -399,41 +514,85 @@ final class InboxViewModel {
         }
     }
 
-    /// Entscheidet, ob die Zeile einer Mail ein Absenderbild zeigen darf.
+    /// Anzeige einer Zeile: Person, Erlaubnis für ein Absenderbild und
+    /// Spam-Hinweis.
     ///
-    /// Verarbeitung: Dieselbe Regel wie der Spamfilter – ein Bild nur,
-    /// wenn der Filter die Mail behalten würde. Ohne gelesene Listen
-    /// vorsichtshalber kein Bild.
+    /// Verarbeitung: Liefert das vorberechnete Modell, wenn es mit den
+    /// aktuellen Eingaben (Ansicht, Filterlisten, Score-Obergrenze)
+    /// entstanden ist; sonst – etwa im Augenblick zwischen einer Änderung
+    /// und dem Ende der Hintergrundberechnung – wird die Zeile direkt
+    /// berechnet. So zeigt die Liste nie einen veralteten Stand. Regeln wie
+    /// beim Spamfilter: ein Bild nur, wenn der Filter die Mail behalten
+    /// würde; ohne gelesene Listen weder Bild noch Hinweis.
     ///
-    /// - Parameter message: Listeneintrag.
-    /// - Returns: `true`, wenn ein Bild gezeigt werden darf.
-    func showsSenderImage(for message: MessageListItem) -> Bool {
-        guard let lists = imageFilterLists else { return false }
-        return SpamClassifier.allowsSenderImage(
-            sender: FilterAddress.sender(fromHeader: message.from),
-            verdict: message.spamVerdict,
-            lists: lists,
+    /// - Parameters:
+    ///   - message: Listeneintrag.
+    ///   - showsRecipients: `true` in Gesendet und Entwürfen.
+    /// - Returns: Modell der Zeile.
+    func rowModel(for message: MessageListItem, showsRecipients: Bool) -> MessageRowModel {
+        if currentRowModelKey(showsRecipients: showsRecipients) == rowModelKey,
+           let model = rowModels[message.id] {
+            return model
+        }
+        return MessageRowModel.make(for: message, inputs: currentRowModelInputs(showsRecipients: showsRecipients))
+    }
+
+    /// Aktueller Schlüssel der Zeilenmodelle.
+    ///
+    /// - Parameter showsRecipients: `true` in Gesendet und Entwürfen.
+    /// - Returns: Schlüssel aus Ansicht, Listenstand und Score-Obergrenze.
+    private func currentRowModelKey(showsRecipients: Bool) -> RowModelKey {
+        RowModelKey(
+            showsRecipients: showsRecipients,
+            listsRevision: listsRevision,
             scoreLimit: spamSettings.scoreLimit
         )
     }
 
-    /// Text zur Spam-Einschätzung einer Zeile: nur `[SPAM]`, ohne Score.
+    /// Aktuelle Eingaben der Zeilenmodelle.
     ///
-    /// Verarbeitung: Gesamtergebnis wie beim Spamfilter aus den Listen und
-    /// dem gespeicherten Befund (SpamMark, Darstellung `.list`). Solange
-    /// die Listen noch nicht gelesen sind, erscheint nichts.
-    ///
-    /// - Parameter message: Listeneintrag.
-    /// - Returns: Anzeigetext oder `nil`.
-    func spamMark(for message: MessageListItem) -> String? {
-        guard let lists = imageFilterLists else { return nil }
-        return SpamMark.text(
-            sender: FilterAddress.sender(fromHeader: message.from),
-            verdict: message.spamVerdict,
-            lists: lists,
-            scoreLimit: spamSettings.scoreLimit,
-            style: .list
+    /// - Parameter showsRecipients: `true` in Gesendet und Entwürfen.
+    /// - Returns: Eingaben aus Filterlisten und Score-Obergrenze.
+    private func currentRowModelInputs(showsRecipients: Bool) -> MessageRowModel.Inputs {
+        MessageRowModel.Inputs(
+            showsRecipients: showsRecipients,
+            lists: imageFilterLists,
+            scoreLimit: spamSettings.scoreLimit
         )
+    }
+
+    /// Berechnet die Zeilenmodelle der Liste im Hintergrund neu.
+    ///
+    /// Verarbeitung: Aufgerufen bei neuer Liste, geänderten Filterlisten und
+    /// beim Wechsel zwischen Absender- und Empfängeranzeige. Das Ergebnis
+    /// wird nur übernommen, wenn seither keine neuere Berechnung begonnen
+    /// hat. Bis dahin rechnet `rowModel(for:…)` sichtbare Zeilen direkt.
+    private func rebuildRowModels() {
+        rowModelGeneration += 1
+        let generation = rowModelGeneration
+        let items = messages
+        let inputs = currentRowModelInputs(showsRecipients: sortsByRecipients)
+        let key = currentRowModelKey(showsRecipients: sortsByRecipients)
+        Task {
+            let models = await Self.buildRowModels(for: items, inputs: inputs)
+            guard generation == rowModelGeneration else { return }
+            rowModelKey = key
+            rowModels = models
+        }
+    }
+
+    /// Berechnet Zeilenmodelle abseits des Hauptthreads.
+    ///
+    /// - Parameters:
+    ///   - items: Listeneinträge.
+    ///   - inputs: Gemeinsame Eingaben.
+    /// - Returns: Modelle je Cache-ID.
+    @concurrent
+    nonisolated private static func buildRowModels(
+        for items: [MessageListItem],
+        inputs: MessageRowModel.Inputs
+    ) async -> [String: MessageRowModel] {
+        MessageRowModel.makeAll(for: items, inputs: inputs)
     }
 
     #if DEBUG
@@ -445,37 +604,9 @@ final class InboxViewModel {
         cacheLoadCount += 1
         let loadNumber = cacheLoadCount
         let count = messages.count
-        let queries = viewQueryCount
-        Log.view.debug("⏱ Liste aus Cache #\(loadNumber): \(count) Mails, \(millis) ms, Ansichtsabfragen seither: \(queries)")
-        viewQueryCount = 0
+        Log.view.debug("⏱ Liste aus Cache #\(loadNumber): \(count) Mails, \(millis) ms bis zur Übernahme")
     }
     #endif
-
-    /// Stand der gewählten Ansicht.
-    ///
-    /// Verarbeitung: Sammelansichten sind so aktuell wie der älteste
-    /// beteiligte Posteingang bzw. Spam-Ordner; ausgeschaltete Postfächer
-    /// zählen nicht mit.
-    ///
-    /// - Returns: Stand oder `nil`, wenn kein (beteiligtes) Postfach eingerichtet ist.
-    private func currentSyncState() -> SyncState? {
-        switch selection {
-        case .allInboxes, .unread, .flagged:
-            let accounts = accountStore.fetchingAccounts
-            guard !accounts.isEmpty else { return nil }
-            return .oldest(accounts.map {
-                MessageStore.shared.lastSync(accountID: $0.id, folder: MailFolder.inboxPath)
-            })
-        case .spam:
-            let folders = spamFolders
-            guard !folders.isEmpty else { return nil }
-            return .oldest(folders.map {
-                MessageStore.shared.lastSync(accountID: $0.accountID, folder: $0.folder)
-            })
-        case .folder(let accountID, let path, _):
-            return .oldest([MessageStore.shared.lastSync(accountID: accountID, folder: path)])
-        }
-    }
 
     // MARK: - Ältere Nachrichten
 
@@ -515,15 +646,14 @@ final class InboxViewModel {
 
     /// Bis zu welchem Tag ein Tipp mindestens lädt – für die Beschriftung.
     /// Bei mehreren Postfächern der späteste der nächsten Zeiträume.
+    /// Liest den Fensterbeginn aus `windowStarts` (beim Laden aus dem Cache
+    /// mitgelesen) – ohne Datenbankabfrage beim Neuzeichnen.
     var nextOlderDate: Date? {
         let standard = SyncWindow.standardStart()
-        #if DEBUG
-        viewQueryCount += openOlderTargets.count
-        #endif
         return openOlderTargets
             .map { target -> Date in
-                let start = MessageStore.shared.windowStart(accountID: target.account.id, folder: target.folder)
-                    ?? standard
+                let key = FolderKey(accountID: target.account.id, folder: target.folder)
+                let start = windowStarts[key] ?? standard
                 return SyncWindow.nextBlock(before: start).since
             }
             .max()
@@ -568,7 +698,11 @@ final class InboxViewModel {
     @MainActor
     private func performLoadOlder(_ targets: [(account: MailAccount, folder: String)]) async {
         var errors: [String] = []
+        // Liste nach dem letzten Ordner schon neu geladen? Dann entfällt das
+        // abschließende Neuladen (bisher doppelt).
+        var isListCurrent = false
         for target in targets {
+            isListCurrent = false
             let key = FolderKey(accountID: target.account.id, folder: target.folder)
             do {
                 let credentials = try accountStore.credentials(for: target.account)
@@ -597,8 +731,11 @@ final class InboxViewModel {
                 if !network.isOnline { break }
             }
             loadFromCache()
+            isListCurrent = true
         }
-        loadFromCache()
+        if !isListCurrent {
+            loadFromCache()
+        }
         if !errors.isEmpty {
             alert = AlertItem(title: "Ältere Nachrichten", message: errors.joined(separator: "\n"))
         }
@@ -659,26 +796,6 @@ final class InboxViewModel {
         }
         guard network.isOnline, MailFetchService.isConnectionError(error) else { return }
         fetchState.setUnreachable(true, for: account.id, name: account.displayName)
-    }
-
-    /// Anzahl ungelesener Mails in den Posteingängen (für die Leiste).
-    var unreadCount: Int {
-        #if DEBUG
-        viewQueryCount += 1
-        #endif
-        return MessageStore.shared.unreadInboxCount(
-            accountIDs: accountStore.fetchingAccounts.map(\.id)
-        )
-    }
-
-    /// Anzahl gekennzeichneter Mails in den Posteingängen (für die Leiste).
-    var flaggedCount: Int {
-        #if DEBUG
-        viewQueryCount += 1
-        #endif
-        return MessageStore.shared.flaggedInboxCount(
-            accountIDs: accountStore.fetchingAccounts.map(\.id)
-        )
     }
 
     /// Legt den vorgeschlagenen Spam-Ordner an.
@@ -834,6 +951,7 @@ final class InboxViewModel {
     /// verloren, bricht die Runde ab, statt die übrigen Postfächer einzeln in
     /// Zeitüberschreitungen laufen zu lassen. Ein gewählter Ordner wird hier
     /// nicht abgerufen – das übernimmt `refreshFolder`.
+    /// Messpunkt für Instruments: „Abruf gesamt“.
     @MainActor
     private func performRefresh() async {
         // Ohne Netz gar nicht erst versuchen: Cache zeigen; die Titelzeile
@@ -846,6 +964,8 @@ final class InboxViewModel {
 
         isLoading = true
         defer { isLoading = false }
+        let interval = Log.beginInterval(Log.Interval.refreshAll)
+        defer { Log.endInterval(interval) }
 
         let accountCount = accountStore.fetchingAccounts.count
         let pausedCount = accountStore.accounts.count - accountCount
@@ -886,6 +1006,7 @@ final class InboxViewModel {
     /// Scheitert der Posteingang, entfällt der Spam-Ordner, denn dann liegt
     /// meist die Verbindung danieder. Scheitert nur der Spam-Ordner, wird
     /// er nach kurzer Pause einmal allein abgerufen (`retrySpamFolder`).
+    /// Messpunkt für Instruments: „Abruf Postfach“.
     ///
     /// Erreichbarkeit (`updateReachability`): Es zählt allein der
     /// Posteingang. Ein Verbindungsfehler des Spamfilters oder nur des
@@ -896,6 +1017,8 @@ final class InboxViewModel {
     ///   werden am Postfach vermerkt und erscheinen hier nicht).
     @MainActor
     private func refreshAccount(_ account: MailAccount) async -> [String] {
+        let interval = Log.beginInterval(Log.Interval.refreshAccount)
+        defer { Log.endInterval(interval) }
         Log.fetch.info("🔄 Starte Abruf: \(account.displayName, privacy: .private) (ID: \(account.id.uuidString, privacy: .public))")
         let credentials: MailCredentials
         do {

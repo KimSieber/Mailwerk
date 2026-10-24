@@ -51,7 +51,7 @@ enum AttachmentManager {
     }
 
     /// Name des Unterordners im tmp-Verzeichnis für Anhang-Dateien.
-    private static let tempSubdirectory = "Mailwerk-Attachments"
+    nonisolated private static let tempSubdirectory = "Mailwerk-Attachments"
 
     // MARK: - Temp-Verzeichnis
 
@@ -62,8 +62,9 @@ enum AttachmentManager {
     /// `writeTempFile` neu angelegt. Fehler werden still ignoriert, weil
     /// das System das tmp-Verzeichnis ohnehin regelmäßig leert.
     ///
-    /// Aufruf: Einmal beim App-Start (`MailwerkApp.init`).
-    static func cleanupTempFiles() {
+    /// Aufruf: Einmal beim App-Start (`MailwerkApp.init`), im Hintergrund –
+    /// deshalb `nonisolated`.
+    nonisolated static func cleanupTempFiles() {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(tempSubdirectory, isDirectory: true)
         try? FileManager.default.removeItem(at: tempDir)

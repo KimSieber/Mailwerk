@@ -64,6 +64,24 @@ nonisolated struct CachedFlagState: Equatable {
     var isAnswered: Bool
     /// true = weitergeleitet (`$Forwarded`).
     var isForwarded: Bool
+
+    /// Prüft, ob dieser Stand den übergebenen Flags entspricht.
+    ///
+    /// Verarbeitung: Grundlage für „Flags nur bei Änderung schreiben“ im
+    /// Abruf (`FlagState.matches`).
+    ///
+    /// - Parameters:
+    ///   - isUnread: Ungelesen laut Server.
+    ///   - isFlagged: Gekennzeichnet laut Server.
+    ///   - isAnswered: Beantwortet laut Server.
+    ///   - isForwarded: Weitergeleitet laut Server.
+    /// - Returns: `true`, wenn alle vier Flags übereinstimmen.
+    func matches(isUnread: Bool, isFlagged: Bool, isAnswered: Bool, isForwarded: Bool) -> Bool {
+        self.isUnread == isUnread
+            && self.isFlagged == isFlagged
+            && self.isAnswered == isAnswered
+            && self.isForwarded == isForwarded
+    }
 }
 
 nonisolated enum ServerReconciliation {

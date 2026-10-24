@@ -87,7 +87,7 @@ nonisolated enum MessageLanguage {
     /// - Parameter body: Reiner Text der Mail.
     /// - Returns: Bereinigter Text für die Erkennung.
     private static func textForDetection(_ body: String) -> String {
-        replacing("\\s+", in: withoutNoise(relevantText(in: body)), with: " ")
+        replacing(whitespacePattern, in: withoutNoise(relevantText(in: body)), with: " ")
             .trimmingCharacters(in: .whitespaces)
     }
 
@@ -105,15 +105,28 @@ nonisolated enum MessageLanguage {
     /// - Returns: Text ohne diese Bestandteile.
     private static func withoutNoise(_ text: String) -> String {
         var result = text
-        for pattern in [
-            "&(#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,30});",
-            "(https?://|www\\.)\\S+",
-            "\\S+@\\S+\\.\\S+",
-        ] {
+        for pattern in [entityPattern, linkPattern, addressPattern] {
             result = replacing(pattern, in: result, with: " ")
         }
-        return replacing("[\\u00AD\\u200B-\\u200D\\u2060\\uFEFF]", in: result, with: "")
+        return replacing(invisiblePattern, in: result, with: "")
     }
+
+    /// Feste Muster der Bereinigung.
+    private static let entityPattern = "&(#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,30});"
+    private static let linkPattern = "(https?://|www\\.)\\S+"
+    private static let addressPattern = "\\S+@\\S+\\.\\S+"
+    private static let invisiblePattern = "[\\u00AD\\u200B-\\u200D\\u2060\\uFEFF]"
+    private static let whitespacePattern = "\\s+"
+
+    /// Einmalig kompilierte reguläre Ausdrücke je Muster (ohne
+    /// Groß-/Kleinschreibung) – statt einer Neukompilierung bei jedem Aufruf.
+    private static let compiledPatterns: [String: NSRegularExpression] = {
+        var result: [String: NSRegularExpression] = [:]
+        for pattern in [entityPattern, linkPattern, addressPattern, invisiblePattern, whitespacePattern] {
+            result[pattern] = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+        }
+        return result
+    }()
 
     /// Ersetzt alle Treffer eines regulären Ausdrucks (ohne
     /// Groß-/Kleinschreibung).
@@ -124,7 +137,9 @@ nonisolated enum MessageLanguage {
     ///   - replacement: Ersatz.
     /// - Returns: Text mit Ersetzungen; unverändert bei ungültigem Ausdruck.
     private static func replacing(_ pattern: String, in text: String, with replacement: String) -> String {
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+        // Feste Muster vorkompiliert, andere bei Bedarf.
+        guard let regex = compiledPatterns[pattern]
+                ?? (try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])) else {
             return text
         }
         return regex.stringByReplacingMatches(

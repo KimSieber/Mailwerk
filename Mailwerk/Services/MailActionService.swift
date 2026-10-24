@@ -482,7 +482,7 @@ enum MailActionService {
     /// - Parameter server: Angemeldete IMAP-Verbindung.
     /// - Returns: Ordner ohne INBOX.
     /// - Throws: IMAP-Fehler.
-    static func mailboxes(on server: SwiftMail.IMAPServer) async throws -> [MailFolder] {
+    nonisolated static func mailboxes(on server: SwiftMail.IMAPServer) async throws -> [MailFolder] {
         try await fetchMailboxList(server)
     }
 
@@ -531,7 +531,7 @@ enum MailActionService {
     ///     wird sie ausgelassen (Verschiebeziele, Papierkorb-Suche).
     /// - Returns: Ordner des Postfachs.
     /// - Throws: IMAP-Fehler.
-    private static func fetchMailboxList(
+    nonisolated private static func fetchMailboxList(
         _ server: SwiftMail.IMAPServer,
         includeInbox: Bool = false
     ) async throws -> [MailFolder] {

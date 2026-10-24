@@ -295,6 +295,10 @@ final class WatchBridge {
         problems: [String] = []
     ) async -> WatchSnapshot {
         let lists = await objects.inbox.spamFilter.currentLists()
+        // Messpunkt (v0.2.3c): Entscheidung, ob der Watch-Stand vom
+        // Hauptthread gelöst werden muss.
+        let interval = Log.beginInterval(Log.Interval.watchSnapshot)
+        defer { Log.endInterval(interval) }
         return WatchSnapshotBuilder.snapshot(
             accounts: objects.accountStore.fetchingAccounts,
             spamFolders: objects.inbox.spamFolders,
@@ -403,7 +407,9 @@ final class WatchBridge {
         let missing = snapshot.mails.map(\.id).filter { !delivered.contains($0) }
         let missingSet = Set(missing)
         let keys = Array(Set(snapshot.mails.filter { missingSet.contains($0.id) }.compactMap(\.avatarKey)))
+        let interval = Log.beginInterval(Log.Interval.watchSnapshot)
         let content = WatchSnapshotBuilder.content(mailIDs: missing, imageKeys: keys)
+        Log.endInterval(interval)
         let packed = await Task.detached(priority: .utility) {
             try? WatchWire.pack(.package(snapshot, content))
         }.value

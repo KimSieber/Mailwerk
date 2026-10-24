@@ -1,5 +1,9 @@
 # Mailwerk – Hinweise für Claude
 
+## Antworten
+
+Antworten und Erklärungen zu den Ergebnissen sind kurz und prägnant zu halten. 
+
 ## Dokumentation (`Documentation/`)
 
 Das Repository ist **öffentlich**. Alles unter `Documentation/` (außer `Documentation/Intern/`) kann jeder lesen.

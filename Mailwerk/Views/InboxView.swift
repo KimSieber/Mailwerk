@@ -631,7 +631,10 @@ struct InboxView: View {
         // Modifier an einer Group wirken auf jedes Kind einzeln – bei
         // zwei Kindern erschiene z. B. die Toolbar doppelt.
         Group {
-            if viewModel.messages.isEmpty && viewModel.isLoading {
+            // Ladeanzeige auch, bis die Liste das erste Mal aus dem Cache
+            // gelesen ist (läuft im Hintergrund) – sonst blitzte kurz
+            // „Keine Mails“ auf.
+            if viewModel.messages.isEmpty && (viewModel.isLoading || !viewModel.hasLoadedCache) {
                 InitialLoadingView()
             } else if viewModel.messages.isEmpty && !search.isPresented {
                 EmptyMailboxView(
@@ -1648,22 +1651,19 @@ struct InboxView: View {
         colorHex: String?,
         showsRecipients: Bool
     ) -> some View {
-        let party = MessageRowParty.make(for: message, showsRecipients: showsRecipients)
-        let showsImage = viewModel.showsSenderImage(for: message)
-        // Nur erlaubte Zeilen fragen nach Bildern – Spam löst so keinen
-        // Logo-Abruf aus. Ein Kontaktbild hat Vorrang vor dem Logo.
-        let contactImage = showsImage ? ContactImageDirectory.shared.image(for: party.address) : nil
+        // Vorberechnet im ViewModel (Person, Bild-Erlaubnis, Spam-Hinweis).
+        let model = viewModel.rowModel(for: message, showsRecipients: showsRecipients)
+        // Bilder holt die Zeile selbst (nur bei Erlaubnis – Spam löst
+        // keinen Logo-Abruf aus).
         return MessageRow(
             message: message,
-            party: party,
-            showsImage: showsImage,
-            contactImage: contactImage,
-            logoImage: showsImage && contactImage == nil
-                ? SenderIconCache.shared.image(forAddress: party.address)
-                : nil,
+            party: model.party,
+            showsImage: model.showsImage,
             colorHex: colorHex,
-            spamMark: viewModel.spamMark(for: message)
+            spamMark: model.spamMark
         )
+        // Unveränderte Zeilen beim Neuzeichnen der Liste überspringen.
+        .equatable()
     }
 
     /// Zeile im Auswahlmodus.
@@ -2282,8 +2282,11 @@ private struct MessageDetailLoader: View {
     /// Verarbeitung: Läuft nur beim ersten Erscheinen; kehrt man aus einer
     /// Unteransicht zurück, bleibt die geladene Mail erhalten. In Debug-
     /// Builds wird die Ladezeit ausgegeben (`⏱ Mail geöffnet …`).
+    /// Messpunkt für Instruments: „Mail aus Cache“.
     private func load() {
         guard message == nil, !isMissing else { return }
+        let interval = Log.beginInterval(Log.Interval.loadMessage)
+        defer { Log.endInterval(interval) }
         #if DEBUG
         let started = Date()
         #endif

@@ -13,6 +13,10 @@
 //  versehentlich mit einem Listeneintrag statt der vollständigen Mail
 //  arbeitet – etwa eine Antwort ohne Zitat.
 //
+//  Nebenläufigkeit: `nonisolated` und `Sendable` – reine Werte bzw. reine
+//  Logik ohne Bezug zur Oberfläche. So kann die Ablage (MessageStore) sie
+//  auch außerhalb des Hauptthreads nutzen (v0.2.3b).
+//
 //  Abgrenzung: Vollständige Nachricht → CachedMessage; Speichern und
 //  Lesen → MessageStore.
 //
@@ -22,7 +26,7 @@
 import Foundation
 
 /// Ein Eintrag der Nachrichtenliste ohne Mailinhalt.
-struct MessageListItem: Identifiable, Equatable {
+nonisolated struct MessageListItem: Identifiable, Equatable, Sendable {
     /// Cache-ID der Nachricht (`CachedMessage.id`).
     let id: String
     /// Postfach der Nachricht.

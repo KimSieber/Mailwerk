@@ -15,6 +15,10 @@
 //
 //  `nonisolated`, weil der Filterlauf außerhalb des Main-Actors arbeitet.
 //
+//  Nebenläufigkeit: `nonisolated` und `Sendable` – reine Werte bzw. reine
+//  Logik ohne Bezug zur Oberfläche. So kann die Ablage (MessageStore) sie
+//  auch außerhalb des Hauptthreads nutzen (v0.2.3b).
+//
 //  Abgrenzung: Entscheidung aus Einstufung und Listen → SpamClassifier;
 //  Abruf der Header → SpamFilterService, MailFetchService.
 //
@@ -32,7 +36,7 @@ nonisolated struct SpamHeaderLine: Equatable {
 }
 
 /// Befund der Server-Header.
-nonisolated struct SpamHeaderVerdict: Equatable {
+nonisolated struct SpamHeaderVerdict: Equatable, Sendable {
     /// Irgendeine Zeile stuft die Mail als Spam ein.
     let isSpam: Bool
     /// Höchster lesbarer Score aller `X-Spam-Status`-Zeilen, sonst nil.

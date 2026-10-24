@@ -30,6 +30,10 @@
 //  Refresh-Token im Schlüsselbund, angemeldet wird mit XOAUTH2. Das Feld
 //  ist optional, damit gespeicherte Postfächer ohne es weiter lesbar sind.
 //
+//  Nebenläufigkeit (v0.2.3b): `nonisolated` – reine Werte bzw. Logik ohne
+//  Bezug zur Oberfläche, damit der Abruf sie abseits des Hauptthreads
+//  nutzen kann.
+//
 //  Abgrenzung: Speichern und Abgleich über iCloud → AccountStore.
 //
 //  Abhängigkeiten: Foundation, OAuthProvider.
@@ -43,7 +47,7 @@ import Foundation
 ///
 /// Verbindungen sind immer verschlüsselt (siehe MailServerFactory) –
 /// daher gibt es keine TLS-Schalter mehr.
-struct MailAccount: Identifiable, Codable, Equatable {
+nonisolated struct MailAccount: Identifiable, Codable, Equatable, Sendable {
     /// Kennung; verknüpft das Postfach mit Passwort und Cache.
     let id: UUID
 
@@ -179,9 +183,12 @@ struct MailAccount: Identifiable, Codable, Equatable {
     /// Bereinigt einen Namen: Leerraum an den Rändern entfällt, ein leerer
     /// Name wird zu `nil`.
     ///
+    /// Reine Funktion, deshalb `nonisolated` – auch `MailAddress` nutzt
+    /// sie außerhalb des Main-Actors.
+    ///
     /// - Parameter name: Eingegebener Name.
     /// - Returns: Bereinigter Name oder `nil`.
-    static func normalized(_ name: String?) -> String? {
+    nonisolated static func normalized(_ name: String?) -> String? {
         guard let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines),
               !trimmed.isEmpty else { return nil }
         return trimmed

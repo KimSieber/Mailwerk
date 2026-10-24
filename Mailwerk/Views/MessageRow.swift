@@ -17,27 +17,36 @@
 //  hellgrauen mit 8 pt. Der Platz von 8 pt ist immer reserviert, damit die
 //  Zeile beim Lesen nicht seitlich springt.
 //
+//  Neuzeichnen (v0.2.3c, Prüfbericht P-08): Die Zeile bekommt nur fertige
+//  Werte und ist `Equatable`; die Liste setzt sie mit `.equatable()` ein.
+//  Zeichnet sich die Liste neu – etwa weil sich die Auswahl oder die
+//  Sperre einer anderen Zeile ändert –, überspringt SwiftUI alle Zeilen,
+//  deren Werte gleich geblieben sind.
+//
+//  Bilder (v0.2.3c, Prüfbericht P-09): Den Kreis füllt `RowSenderAvatar`
+//  selbst. Er holt Kontaktbild bzw. Logo asynchron und verkleinert aus den
+//  Caches und lädt nur neu, wenn sich der Stand genau seiner Domain bzw.
+//  der Kontakte ändert. Die Liste fragt die Caches beim Neuzeichnen nicht
+//  mehr je Zeile ab. Bis das Bild vorliegt, stehen die Initialen.
+//
 //  Abgrenzung: Wer gezeigt wird → MessageRowParty; Datum → ListDateFormatter;
 //  Kreis → SenderAvatarView; Link, Wischaktionen → InboxView.
 //
 //  Abhängigkeiten: SwiftUI, MessageListItem, MessageRowParty,
-//  ListDateFormatter, SenderAvatarView, AccountColor (`Color(hex:)`).
+//  ListDateFormatter, SenderAvatarView, ContactImageDirectory,
+//  SenderIconCache, AccountColor (`Color(hex:)`).
 //
 
 import SwiftUI
 
 /// Zeile der Mailliste.
-struct MessageRow: View {
+struct MessageRow: View, Equatable {
     /// Darzustellender Listeneintrag.
     let message: MessageListItem
     /// Gezeigte Person (Absender bzw. Empfänger).
     let party: MessageRowParty
     /// `true`, wenn ein Bild bzw. Initialen gezeigt werden dürfen.
     let showsImage: Bool
-    /// Kontaktbild der gezeigten Person; `nil` = keines vorhanden.
-    let contactImage: Image?
-    /// Logo der Domain der gezeigten Person; `nil` = keines vorhanden.
-    let logoImage: Image?
     /// Farbe des Postfachs; `nil` = keine Farbe gewählt.
     let colorHex: String?
     /// Text zur Spam-Einschätzung (`[SPAM]`); `nil` = keiner.
@@ -52,7 +61,7 @@ struct MessageRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             stripe
-            SenderAvatarView(avatar: avatar)
+            RowSenderAvatar(party: party, showsImage: showsImage)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
                 statusLine
@@ -81,14 +90,6 @@ struct MessageRow: View {
         return message.isUnread ? Color.gray.opacity(0.35) : .clear
     }
 
-    /// Inhalt des Kreises: leer, wenn kein Bild erlaubt ist, sonst
-    /// Kontaktbild, Logo und ersatzweise die Initialen.
-    private var avatar: SenderAvatar {
-        guard showsImage else { return .empty }
-        if let contactImage { return .image(contactImage) }
-        if let logoImage { return .logo(logoImage) }
-        return .initials(party.initials, colorIndex: party.colorIndex)
-    }
 
     /// Zeile 1: Kennzeichen und Spam-Einschätzung links, Datum rechts.
     private var statusLine: some View {
@@ -148,6 +149,75 @@ struct MessageRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
+        }
+    }
+}
+
+/// Kreis einer Listenzeile mit asynchron geladenem Bild.
+///
+/// Reihenfolge wie bisher: leer, wenn kein Bild erlaubt ist (Spam), sonst
+/// Kontaktbild, dann Logo, ersatzweise die Initialen. Schon verkleinerte
+/// Bilder erscheinen sofort; sonst lädt `.task` sie im Hintergrund. Der
+/// Schlüssel der Aufgabe enthält den Stand der Kontakte und den Stand der
+/// Domain – nur deren Änderung lädt neu.
+private struct RowSenderAvatar: View {
+    /// Gezeigte Person.
+    let party: MessageRowParty
+    /// `true`, wenn ein Bild bzw. Initialen gezeigt werden dürfen.
+    let showsImage: Bool
+
+    /// Geladener Inhalt; `nil`, solange nichts geladen ist bzw. kein Bild vorliegt.
+    @State private var loaded: SenderAvatar?
+
+    /// Was die Ladeaufgabe neu startet.
+    private struct LoadKey: Equatable {
+        let address: String?
+        let showsImage: Bool
+        let contactsRevision: Int
+        let logoRevision: Int
+    }
+
+    /// Kreis mit Bild, Logo, Initialen oder leer.
+    var body: some View {
+        SenderAvatarView(avatar: avatar)
+            .task(id: loadKey) { await load() }
+    }
+
+    /// Schlüssel der Ladeaufgabe aus Adresse, Erlaubnis und den Ständen
+    /// von Kontakten und Domain.
+    private var loadKey: LoadKey {
+        LoadKey(
+            address: party.address,
+            showsImage: showsImage,
+            contactsRevision: ContactImageDirectory.shared.revision,
+            logoRevision: SenderIconCache.shared.revision(forAddress: party.address)
+        )
+    }
+
+    /// Aktueller Inhalt: geladen, sonst schon im Speicher, sonst Initialen.
+    private var avatar: SenderAvatar {
+        guard showsImage else { return .empty }
+        if let loaded { return loaded }
+        if let image = ContactImageDirectory.shared.cachedThumbnail(for: party.address) { return .image(image) }
+        if let logo = SenderIconCache.shared.cachedThumbnail(forAddress: party.address) { return .logo(logo) }
+        return .initials(party.initials, colorIndex: party.colorIndex)
+    }
+
+    /// Lädt Kontaktbild bzw. Logo verkleinert im Hintergrund.
+    ///
+    /// Verarbeitung: Ohne Erlaubnis nichts (Spam löst keinen Logo-Abruf
+    /// aus). Ein Kontaktbild hat Vorrang vor dem Logo.
+    private func load() async {
+        guard showsImage else {
+            loaded = nil
+            return
+        }
+        if let image = await ContactImageDirectory.shared.thumbnail(for: party.address) {
+            loaded = .image(image)
+        } else if let logo = await SenderIconCache.shared.thumbnail(forAddress: party.address) {
+            loaded = .logo(logo)
+        } else {
+            loaded = nil
         }
     }
 }

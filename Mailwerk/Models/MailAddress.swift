@@ -9,6 +9,10 @@
 //  Mail-Bibliothek auskommen; nur Zerlegen und Umwandeln für den Versand
 //  nutzen SwiftMail. Adressen werden ohne Groß-/Kleinschreibung verglichen.
 //
+//  Nebenläufigkeit: `nonisolated` und `Sendable` – reine Werte bzw. reine
+//  Logik ohne Bezug zur Oberfläche. So kann die Ablage (MessageStore) sie
+//  auch außerhalb des Hauptthreads nutzen (v0.2.3b).
+//
 //  Abgrenzung: Eingabe mehrerer Empfänger → RecipientInput; Adressen für
 //  die Filterlisten → FilterAddress.
 //
@@ -20,7 +24,7 @@ import Foundation
 import SwiftMail
 
 /// Eine E-Mail-Adresse mit optionalem Namen.
-struct MailAddress: Hashable, Identifiable {
+nonisolated struct MailAddress: Hashable, Identifiable, Sendable {
     /// Anzeigename; `nil`, wenn keiner angegeben ist.
     let name: String?
     /// Adresse ohne Leerraum an den Rändern.

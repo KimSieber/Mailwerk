@@ -16,6 +16,11 @@
 //  Ein Bereich besteht aus Paaren von Postfach und Ordner (`FolderKey`),
 //  weil der Spam-Ordner je Postfach anders heißen kann.
 //
+//  Nebenläufigkeit: `nonisolated` und `Sendable`, damit die Ablage den
+//  Bereich auch außerhalb des Hauptthreads nutzen kann (v0.2.3b). Nur
+//  `make(for:…)` bleibt am Main-Actor, weil es die Ansicht
+//  (`MailboxSelection`) auswertet.
+//
 //  Abgrenzung: Reine Beschreibung; gesucht wird im MessageStore (Cache)
 //  bzw. im MailFetchService (Server).
 //
@@ -25,7 +30,7 @@
 import Foundation
 
 /// Bereich einer Suche.
-struct SearchScope: Equatable {
+nonisolated struct SearchScope: Equatable, Sendable {
     /// Ordner je Postfach, in denen gesucht wird.
     let folders: [FolderKey]
     /// `true` = nur gekennzeichnete Mails.
@@ -71,6 +76,7 @@ struct SearchScope: Equatable {
     ///     die Sammelansichten).
     ///   - spamFolders: Spam-Ordner dieser Postfächer (für die Sicht „Spam“).
     /// - Returns: Der Suchbereich.
+    @MainActor
     static func make(
         for selection: MailboxSelection,
         fetchingAccountIDs: [UUID],

@@ -21,6 +21,10 @@
 //  Bilder werden erst bei Bedarf aus den Daten erzeugt und dann gemerkt,
 //  damit Kontakte ohne Mail in der Liste nichts kosten.
 //
+//  Mailliste (v0.2.3c, Prüfbericht P-09): Die Zeilen holen ihr Bild über
+//  `thumbnail(for:)` – verkleinert und im Hintergrund dekodiert
+//  (`DecodedImage.thumbnail`). Die Mailansicht nutzt weiter `image(for:)`.
+//
 //  Abgrenzung: Berechtigung anfragen → ContactSuggestionService (gemeinsam
 //  mit den Adressvorschlägen); ob ein Bild gezeigt werden darf →
 //  SpamClassifier.allowsSenderImage; Darstellung → SenderAvatarView.
@@ -48,6 +52,10 @@ final class ContactImageDirectory {
     @ObservationIgnored private var thumbnails: [String: Data] = [:]
     /// Bereits erzeugte Bilder je Adresse.
     @ObservationIgnored private var images: [String: Image] = [:]
+    /// Verkleinerte Bilder für die Mailliste je Adresse.
+    @ObservationIgnored private var listThumbnails: [String: Image] = [:]
+    /// Kantenlänge der verkleinerten Bilder in Pixeln (40 pt, 3-fach).
+    static let thumbnailPixelSize = 120
     /// `true`, sobald `start()` einmal lief.
     @ObservationIgnored private var started = false
     /// Laufender Aufbau der Zuordnung; ein neuer ersetzt ihn.
@@ -104,6 +112,7 @@ final class ContactImageDirectory {
     private func apply(_ loaded: [String: Data]) {
         thumbnails = loaded
         images = [:]
+        listThumbnails = [:]
         revision += 1
         Log.view.info("👤 Kontaktbilder: \(loaded.count, privacy: .public) Adressen")
     }
@@ -124,6 +133,43 @@ final class ContactImageDirectory {
         if let image = images[key] { return image }
         guard let data = thumbnails[key], let image = DecodedImage.image(from: data) else { return nil }
         images[key] = image
+        return image
+    }
+
+    /// Schon verkleinertes Bild zur Adresse, ohne zu dekodieren.
+    ///
+    /// - Parameter address: E-Mail-Adresse.
+    /// - Returns: Bild oder `nil`.
+    func cachedThumbnail(for address: String?) -> Image? {
+        guard let address else { return nil }
+        return listThumbnails[Self.normalized(address)]
+    }
+
+    /// `true`, wenn es zur Adresse ein Kontaktbild gibt (ohne zu dekodieren).
+    ///
+    /// - Parameter address: E-Mail-Adresse.
+    /// - Returns: `true` bei vorhandenem Bild.
+    func hasImage(for address: String?) -> Bool {
+        guard let address else { return false }
+        return thumbnails[Self.normalized(address)] != nil
+    }
+
+    /// Verkleinertes Kontaktbild zu einer Adresse für die Mailliste.
+    ///
+    /// Verarbeitung: Dekodiert einmal je Adresse im Hintergrund auf
+    /// `thumbnailPixelSize` und hält das Bild im Speicher. Neu gelesene
+    /// Kontakte leeren den Speicher (`apply`).
+    ///
+    /// - Parameter address: E-Mail-Adresse; `nil` ergibt kein Bild.
+    /// - Returns: Bild oder `nil`, wenn der Kontakt fehlt oder kein Bild hat.
+    func thumbnail(for address: String?) async -> Image? {
+        guard let address else { return nil }
+        let key = Self.normalized(address)
+        if let image = listThumbnails[key] { return image }
+        guard let data = thumbnails[key],
+              let image = await DecodedImage.thumbnail(from: data, maxPixelSize: Self.thumbnailPixelSize)
+        else { return nil }
+        listThumbnails[key] = image
         return image
     }
 

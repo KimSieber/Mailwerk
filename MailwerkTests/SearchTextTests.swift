@@ -79,4 +79,14 @@ struct SearchTextTests {
         #expect(SearchText.matchExpression(query: "Rechnung", address: "a@b.de")
                 == "people : \"<a@b.de>\" AND \"Rechnung\"")
     }
+
+    /// Sehr langes HTML wird vorab begrenzt; der Anfang bleibt auffindbar, das Ergebnis höchstens maxBodyLength Zeichen.
+    @Test func longHTMLIsLimited() {
+        let filler = String(repeating: "<p>Absatz mit Text</p>", count: 40_000)  // ca. 880.000 Zeichen
+        let html = "<p>Kündigungsbestätigung</p>" + filler + "<p>Ende-Marke</p>"
+        let body = SearchText.body(text: nil, html: html)
+        #expect(body.hasPrefix("Kündigungsbestätigung"))
+        #expect(body.count <= SearchText.maxBodyLength)
+        #expect(!body.contains("Ende-Marke"))
+    }
 }
