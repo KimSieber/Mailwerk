@@ -48,8 +48,36 @@
 //  Die Liste arbeitet mit Listeneinträgen ohne Mailinhalt
 //  (`MessageListItem`). Erst beim Öffnen einer Mail lädt
 //  `MessageDetailLoader` die vollständige Nachricht aus dem Cache. Im
-//  Ordner „Entwürfe“ öffnet ein Tipp den Entwurf zum Weiterbearbeiten
+//  Ordner „Entwürfe” öffnet ein Tipp den Entwurf zum Weiterbearbeiten
 //  (`DraftComposeLoader`).
+//
+//  iPad: Auf dem iPad (horizontalSizeClass == .regular) erscheint eine
+//  geteilte Ansicht. Ohne ausgewählte Mail füllt die Liste die volle
+//  (verbleibende) Breite. Mit ausgewählter Mail:
+//  - Querformat: 2 Spalten (Liste + Detail, Ordner per SideDrawer) oder
+//    3 Spalten (Ordnerleiste + Liste + Detail) – Einstellung je Gerät.
+//    Bei 3 Spalten steht die Ordnerleiste dauerhaft, auch ohne
+//    ausgewählte Mail; der Knopf für die einblendbare Leiste entfällt.
+//  - Hochformat: 2 Spalten (Liste + Detail).
+//  - In beiden Ausrichtungen schaltet ein Knopf in der Detailansicht
+//    auf Vollbild und zurück.
+//  Alle Zustände nutzen dasselbe Spaltengerüst; nur die Breiten ändern
+//  sich. Die Liste wird dabei nie neu angelegt (siehe `regularColumns`).
+//  Die geöffnete Mail ist in der Liste hinterlegt; Pfeile in der
+//  Mailansicht und die Pfeiltasten schalten zur vorigen bzw. nächsten
+//  Mail, nach Löschen oder Verschieben rückt die nächste nach
+//  (MessageStepping). Bei drei Spalten lassen sich Mails auf einen Ordner
+//  der festen Leiste ziehen. Auf dem iPhone und dem Mac bleibt die
+//  Navigation unverändert (Push per NavigationStack).
+//
+//  Beide Layouts verwenden dieselbe Liste, dieselbe Zeile und dieselbe
+//  Symbolleiste; sie unterscheiden sich nur darin, wie ein Tipp die Mail
+//  öffnet (`usesColumns`). Abruf, Beobachter und Blätter hängen gemeinsam
+//  am äußeren Element.
+//
+//  Menübefehle und Tastaturkürzel (iPhone/iPad mit Tastatur) stehen in
+//  InboxCommands; die Liste stellt dafür ihre Aktionen bereit
+//  (`commandActions`).
 //
 //  ViewModel und Ordnerkatalog legt die App einmal beim Start an und
 //  reicht sie herein. Würde die Ansicht sie selbst im `init` erzeugen,
@@ -58,6 +86,9 @@
 //
 //  Meldungen und Rückfragen laufen über je einen Kanal (`alertItem`,
 //  `confirmationRequest`, siehe Dialogs.swift).
+//
+//  „Auf iPhone fortfahren“ von der Apple Watch (Handoff, WatchHandoff)
+//  öffnet die dort offene Mail als Blatt über der Liste.
 //
 //  Jedes Blatt meldet sich als offenes Fenster (`countsAsOpenWindow`),
 //  damit ein mailto:-Link von außen erst danach eine neue Mail öffnet
@@ -72,10 +103,10 @@
 //  ContactImageDirectory, SenderIconCache, FilterListCloudEvents,
 //  MessageDetailView, MessageMenu, MessageActionDialogs, FolderMoveSheet,
 //  MessageSelection, SelectionActionBar, MessageSort, SearchIndexBuilder,
-//  SearchViewModel, SearchPerson, ServerMessageLoader,
+//  SearchViewModel, SearchPerson, ServerMessageLoader, MessageStepping,
 //  ComposeView, DraftComposeLoader, Dialogs, AppTheme, ListBottomBar,
 //  UndoOffer, OAuthSignInState, SignInRequiredBar, ExternalMailtoPresenter,
-//  Log.
+//  WatchHandoff, Log.
 //
 
 import SwiftUI
@@ -114,6 +145,8 @@ struct InboxView: View {
     @State private var viewWidth: CGFloat = 0
     /// Entwurf, der zum Weiterbearbeiten geöffnet wird.
     @State private var draftToEdit: DraftEditRequest?
+    /// Mail, die auf der Apple Watch offen war („Auf iPhone fortfahren“).
+    @State private var handoffMessage: HandoffMessageRequest?
     /// Mail, für die aus dem Kontextmenü ein Zielordner gewählt wird.
     @State private var moveItem: MessageListItem?
     /// Rückfrage aus dem Kontextmenü (Löschen, Spam); einziger
@@ -130,6 +163,27 @@ struct InboxView: View {
     /// Zustand der Suche. Bewusst als `@State`: Das Anlegen ist billig
     /// (kein Laden im `init`), SwiftUI behält das erste Objekt.
     @State private var search: SearchViewModel
+
+    // MARK: - iPad-Spaltenlayout
+
+    /// Größenklasse: `.regular` auf dem iPad (quer und hoch), `.compact`
+    /// auf dem iPhone. Auf dem Mac nicht gesetzt, dort bleibt alles beim
+    /// NavigationStack.
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #endif
+    /// Auf dem iPad im Querformat drei Spalten statt zwei. Einstellung je
+    /// Gerät, über das Einstellungsmenü umschaltbar.
+    @AppStorage("iPadLandscapeThreeColumns") private var usesThreeColumns = false
+    /// ID der im Spaltengerüst geöffneten Mail; `nil` = keine Mail offen →
+    /// Liste auf voller Breite. Auf dem iPhone und dem Mac immer `nil`.
+    @State private var selectedMessageID: String?
+    /// `true`, wenn die Detailansicht auf dem iPad den vollen Bildschirm
+    /// einnimmt; der Knopf links oben bzw. Esc schaltet zurück.
+    @State private var isDetailFullscreen = false
+    /// `true` im Querformat; wird über `onGeometryChange` aktualisiert,
+    /// damit kein veraltetes `UIScreen.main` nötig ist.
+    @State private var isLandscape = false
 
     /// Übernimmt die beim App-Start angelegten Objekte.
     ///
@@ -248,120 +302,95 @@ struct InboxView: View {
         return Color(hex: hex)
     }
 
-    /// Aufbau der Ansicht: Liste bzw. Lade- oder Leerzustand, Symbolleiste,
-    /// Dialoge, „Rückgängig“-Hinweis und Ordnerleiste.
+    /// Aufbau der Ansicht: auf dem iPhone und dem Mac der NavigationStack
+    /// mit Push (`listStack`), auf dem iPad das Spaltengerüst
+    /// (`regularColumns`). Beide zeigen dieselbe Liste; Abruf, Beobachter
+    /// und Blätter hängen für beide gemeinsam am äußeren Element.
     var body: some View {
-        NavigationStack {
-            // WICHTIG: Jeder Zweig dieser Group muss genau EIN View liefern.
-            // Modifier an einer Group wirken auf jedes Kind einzeln – bei
-            // zwei Kindern erschiene z. B. die Toolbar doppelt.
-            Group {
-                if viewModel.messages.isEmpty && viewModel.isLoading {
-                    InitialLoadingView()
-                } else if viewModel.messages.isEmpty && !search.isPresented {
-                    EmptyMailboxView(
-                        selection: viewModel.selection,
-                        hasAccounts: !accountStore.accounts.isEmpty
-                    ) {
-                        // Auch ein leerer Ordner kann ältere Mails haben
-                        // (z. B. ein Archiv ohne Eingänge im Standardfenster).
-                        if viewModel.showsOlderRow && !accountStore.accounts.isEmpty {
-                            olderRow
-                                .padding(.horizontal)
-                        }
-                    }
-                } else {
-                    messageList
-                }
-            }
-            // Getönte Fläche hinter Liste, Lade- und Leerzustand.
-            .appBackground()
-            #if os(iOS)
-            // iPhone/iPad: Aktualisieren durch Herunterziehen der Liste.
-            // Auf dem Mac gibt es dafür einen eigenen Knopf (refreshButton).
-            .refreshable {
-                await refreshCurrentView()
-            }
-            #endif
-            // Feine Linie als Abgrenzung unter der Überschrift, darunter
-            // ggf. die Hinweise „Anmeldung abgelaufen“.
-            .safeAreaInset(edge: .top, spacing: 0) {
-                VStack(spacing: 0) {
-                    Divider()
-                    ForEach(expiredAccounts) { account in
-                        SignInRequiredBar(
-                            accountName: account.displayName,
-                            isRenewing: renewingAccountID == account.id,
-                            onRenew: { Task { await renewSignIn(account) } }
-                        )
-                        Divider()
-                    }
-                }
-            }
-            .searchable(
-                text: $search.text,
-                tokens: $search.tokens,
-                isPresented: $search.isPresented,
-                placement: Self.searchPlacement,
-                prompt: "Suchen"
-            ) { person in
-                Label(person.title, systemImage: "person.fill")
-            }
-            .searchSuggestions {
-                ForEach(search.suggestions) { person in
-                    PersonSuggestionRow(person: person)
-                        .searchCompletion(person)
-                }
+        withSheets(withSelectionTracking(withListLifecycle(layout)))
+            // Einziger Meldungskanal der Liste – am äußeren Element,
+            // getrennt von der Rückfrage (`withSheets`).
+            .alertItem($viewModel.alert)
+            .sideDrawer(isPresented: $showingFolders) {
+                folderSidebar(onClose: { showingFolders = false })
             }
             #if os(iOS)
-            // Die obere Leiste (Ordner, Titel, Einstellungen bzw. „Alle
-            // auswählen“ und „Fertig“) bleibt während der Suche stehen –
-            // iOS blendet sie sonst aus.
-            .searchPresentationToolbarBehavior(.avoidHidingContent)
+            // Menübefehle und Tastaturkürzel (InboxCommands).
+            .focusedSceneValue(\.inboxCommands, commandActions)
             #endif
-            .onChange(of: search.matchingIDs) { _, ids in
-                viewModel.searchFilter = ids
-            }
-            .onChange(of: viewModel.cacheGeneration) {
-                // Cache neu geladen (Abruf, Aktion, geladener Treffer).
-                search.refreshLocal()
-            }
-            .onChange(of: viewModel.selection, initial: true) {
-                updateSearchScope()
-            }
-            .navigationTitle(viewModel.selection.title)
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { viewWidth = $0 }
-            .toolbar { listToolbar }
-            // „Rückgängig“ über der unteren Leiste: Als Überlagerung des
-            // Inhalts hält es den sicheren Bereich ein und verdeckt die
-            // Knöpfe nicht.
-            .overlay(alignment: .bottom) {
-                if let offer = viewModel.undoOffer {
-                    UndoBar(
-                        text: offer.text,
-                        systemImage: offer.systemImage,
-                        duration: UndoOffer.duration,
-                        onUndo: { Task { await viewModel.undo(offer) } },
-                        onDismiss: { viewModel.dismissUndo() }
-                    )
-                    // Neues Angebot = neuer Balken, der Lauf beginnt von vorn.
-                    .id(offer.id)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .padding(.bottom, 10)
-                    .padding(.horizontal, 12)
-                }
-            }
-            .animation(.snappy(duration: 0.25), value: viewModel.undoOffer?.id)
-            // Untere Leiste bzw. Befehlsleiste im Auswahlmodus – schwebt
-            // über der Liste am unteren Rand.
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                bottomInset
-            }
-            .animation(.snappy(duration: 0.25), value: viewModel.isSelecting)
-            .animation(.snappy(duration: 0.25), value: search.isPresented)
+    }
+
+    /// Grundaufbau je Größenklasse.
+    @ViewBuilder
+    private var layout: some View {
+        #if os(iOS)
+        if usesColumns {
+            regularColumns
+        } else {
+            listStack
+        }
+        #else
+        listStack
+        #endif
+    }
+
+    /// `true`, wenn die Liste im Spaltengerüst steht (iPad und breite
+    /// Fenster): Ein Tipp zeigt die Mail rechts daneben statt per Push.
+    private var usesColumns: Bool {
+        #if os(iOS)
+        return horizontalSizeClass == .regular
+        #else
+        return false
+        #endif
+    }
+
+    /// Ordnerleiste – als einblendbare Leiste (`sideDrawer`) und als feste
+    /// erste Spalte (drei Spalten) derselbe Inhalt.
+    ///
+    /// - Parameters:
+    ///   - acceptsDrops: `true`, wenn Mails auf Ordner gezogen werden
+    ///     können – nur in der festen Spalte; die einblendbare Leiste
+    ///     verdeckt die Liste.
+    ///   - onClose: Schließt die Leiste nach einer Auswahl.
+    /// - Returns: Die Ordnerleiste.
+    private func folderSidebar(acceptsDrops: Bool = false, onClose: @escaping () -> Void) -> some View {
+        let drop: ((MailAccount, FolderNode, [String]) -> Void)? = acceptsDrops
+            ? { account, node, ids in dropMessages(ids, on: node, in: account) }
+            : nil
+        return FolderSidebarView(
+            accounts: accountStore.accounts,
+            pausedAccountIDs: accountStore.pausedAccountIDs,
+            signInRequiredIDs: signInState.signInRequired,
+            catalog: folderCatalog,
+            expandedAccounts: $expandedFolderAccounts,
+            selection: $viewModel.selection,
+            unreadCount: viewModel.unreadCount,
+            flaggedCount: viewModel.flaggedCount,
+            onCreateFolder: { account, parentPath, name in
+                _ = try await MailActionService.createFolder(
+                    named: name,
+                    parentPath: parentPath,
+                    accountID: account.id,
+                    accountStore: accountStore
+                )
+            },
+            onDeleteFolder: { account, node in
+                try await deleteFolder(node, in: account)
+            },
+            onClose: onClose,
+            onDropMessages: drop
+        )
+    }
+
+    // MARK: - Abruf, Beobachter, Blätter
+
+    /// Erster Abruf und Beobachter für Postfächer, Netz, Anmeldung und
+    /// Suche – für beide Layouts gemeinsam.
+    ///
+    /// - Parameter content: Grundaufbau.
+    /// - Returns: Aufbau mit Abruf und Beobachtern.
+    private func withListLifecycle<Content: View>(_ content: Content) -> some View {
+        content
             .task {
                 guard !hasLoadedOnce else { return }
                 hasLoadedOnce = true
@@ -393,18 +422,6 @@ struct InboxView: View {
                 guard isOnline, !wasOnline else { return }
                 Task { await refreshCurrentView() }
             }
-            .onChange(of: viewModel.selection) { _, newSelection in
-                // Cache sofort zeigen (didSet in selection), dann im
-                // Hintergrund vom Server nachladen.
-                if case .folder(let accountID, let path, _) = newSelection {
-                    Task { await viewModel.refreshFolder(accountID: accountID, path: path) }
-                    // Ausgeschaltetes Postfach: Ordnerliste jetzt mit laden.
-                    if !accountStore.isFetchEnabled(accountID),
-                       let account = accountStore.accounts.first(where: { $0.id == accountID }) {
-                        Task { await folderCatalog.retry(account) }
-                    }
-                }
-            }
             .onChange(of: signInState.signInRequired) { oldExpired, newExpired in
                 // Wieder angemeldet (hier, unter „Postfach bearbeiten“ oder
                 // über die Ordnerleiste): gleich abrufen.
@@ -419,6 +436,75 @@ struct InboxView: View {
                 guard !oldPaused.isSubset(of: newPaused) else { return }
                 Task { await viewModel.refresh() }
             }
+            .onChange(of: search.matchingIDs) { _, ids in
+                viewModel.searchFilter = ids
+            }
+            .onChange(of: viewModel.cacheGeneration) {
+                // Cache neu geladen (Abruf, Aktion, geladener Treffer).
+                search.refreshLocal()
+            }
+            // Apple Watch: „Auf iPhone fortfahren“ öffnet die dort offene
+            // Mail als Blatt über der Liste.
+            .onContinueUserActivity(WatchHandoff.activityType) { activity in
+                guard let id = activity.userInfo?[WatchHandoff.messageIDKey] as? String else { return }
+                handoffMessage = HandoffMessageRequest(id: id)
+            }
+    }
+
+    /// Beobachter für die gewählte Ansicht und die geöffnete Mail.
+    ///
+    /// Verarbeitung: Ein Ordnerwechsel lädt den Ordner nach und schließt
+    /// die geöffnete Mail. Verschwindet die geöffnete Mail aus der Liste
+    /// (gelöscht, verschoben), rückt die nächste nach (MessageStepping).
+    /// Wird das Fenster schmal (Größenklasse kompakt), gilt wieder die
+    /// Push-Navigation – die Auswahl der Spaltenansicht entfällt.
+    ///
+    /// - Parameter content: Aufbau.
+    /// - Returns: Aufbau mit Beobachtern.
+    private func withSelectionTracking<Content: View>(_ content: Content) -> some View {
+        content
+            .onChange(of: viewModel.selection, initial: true) {
+                updateSearchScope()
+            }
+            .onChange(of: viewModel.selection) { _, newSelection in
+                closeSelectedMessage()
+                // Cache sofort zeigen (didSet in selection), dann im
+                // Hintergrund vom Server nachladen.
+                if case .folder(let accountID, let path, _) = newSelection {
+                    Task { await viewModel.refreshFolder(accountID: accountID, path: path) }
+                    // Ausgeschaltetes Postfach: Ordnerliste jetzt mit laden.
+                    if !accountStore.isFetchEnabled(accountID),
+                       let account = accountStore.accounts.first(where: { $0.id == accountID }) {
+                        Task { await folderCatalog.retry(account) }
+                    }
+                }
+            }
+            .onChange(of: viewModel.messages) { oldMessages, newMessages in
+                guard selectedMessageID != nil else { return }
+                let next = MessageStepping.replacement(
+                    for: selectedMessageID,
+                    oldIDs: oldMessages.map(\.id),
+                    newIDs: newMessages.map(\.id)
+                )
+                if next == nil {
+                    closeSelectedMessage()
+                } else {
+                    selectedMessageID = next
+                }
+            }
+            #if os(iOS)
+            .onChange(of: horizontalSizeClass) { _, sizeClass in
+                if sizeClass != .regular { closeSelectedMessage() }
+            }
+            #endif
+    }
+
+    /// Blätter und Rückfrage der Liste – für beide Layouts gemeinsam.
+    ///
+    /// - Parameter content: Aufbau.
+    /// - Returns: Aufbau mit Blättern.
+    private func withSheets<Content: View>(_ content: Content) -> some View {
+        content
             .sheet(isPresented: $showingAccounts) {
                 AccountListView(accountStore: accountStore)
                     .countsAsOpenWindow()
@@ -451,6 +537,23 @@ struct InboxView: View {
                 )
                 .countsAsOpenWindow()
             }
+            .sheet(item: $handoffMessage) { request in
+                NavigationStack {
+                    MessageDetailLoader(
+                        messageID: request.id,
+                        accountStore: accountStore,
+                        spamFilter: viewModel.spamFilter,
+                        scoreLimit: spamSettings.scoreLimit,
+                        onChange: { viewModel.loadFromCache() }
+                    )
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Fertig") { handoffMessage = nil }
+                        }
+                    }
+                }
+                .countsAsOpenWindow()
+            }
             .sheet(item: $draftToEdit) { request in
                 DraftComposeLoader(
                     messageID: request.id,
@@ -477,41 +580,356 @@ struct InboxView: View {
                 }
                 .countsAsOpenWindow()
             }
-        }
-        // Einziger Meldungskanal der Liste – am äußeren Element, getrennt
-        // von der Rückfrage am Inhalt.
-        .alertItem($viewModel.alert)
-        .sideDrawer(isPresented: $showingFolders) {
-            FolderSidebarView(
-                accounts: accountStore.accounts,
-                pausedAccountIDs: accountStore.pausedAccountIDs,
-                signInRequiredIDs: signInState.signInRequired,
-                catalog: folderCatalog,
-                expandedAccounts: $expandedFolderAccounts,
-                selection: $viewModel.selection,
-                unreadCount: viewModel.unreadCount,
-                flaggedCount: viewModel.flaggedCount,
-                onCreateFolder: { account, parentPath, name in
-                    _ = try await MailActionService.createFolder(
-                        named: name,
-                        parentPath: parentPath,
-                        accountID: account.id,
-                        accountStore: accountStore
-                    )
-                },
-                onDeleteFolder: { account, node in
-                    try await deleteFolder(node, in: account)
-                },
-                onClose: { showingFolders = false }
-            )
+    }
+
+    // MARK: - Liste
+
+    /// Liste im NavigationStack. Auf dem iPhone und dem Mac öffnet ein Tipp
+    /// die Mail per Push; im Spaltengerüst steht derselbe Stapel links.
+    private var listStack: some View {
+        NavigationStack {
+            listContent
         }
     }
+
+    /// Liste samt Lade- und Leerzustand, Suchfeld, Symbolleiste,
+    /// Rückgängig-Balken und unterer Leiste.
+    private var listContent: some View {
+        // WICHTIG: Jeder Zweig dieser Group muss genau EIN View liefern.
+        // Modifier an einer Group wirken auf jedes Kind einzeln – bei
+        // zwei Kindern erschiene z. B. die Toolbar doppelt.
+        Group {
+            if viewModel.messages.isEmpty && viewModel.isLoading {
+                InitialLoadingView()
+            } else if viewModel.messages.isEmpty && !search.isPresented {
+                EmptyMailboxView(
+                    selection: viewModel.selection,
+                    hasAccounts: !accountStore.accounts.isEmpty
+                ) {
+                    // Auch ein leerer Ordner kann ältere Mails haben
+                    // (z. B. ein Archiv ohne Eingänge im Standardfenster).
+                    if viewModel.showsOlderRow && !accountStore.accounts.isEmpty {
+                        olderRow
+                            .padding(.horizontal)
+                    }
+                }
+            } else {
+                messageList
+            }
+        }
+        // Getönte Fläche hinter Liste, Lade- und Leerzustand.
+        .appBackground()
+        #if os(iOS)
+        // iPhone/iPad: Aktualisieren durch Herunterziehen der Liste.
+        // Auf dem Mac gibt es dafür einen eigenen Knopf (refreshButton).
+        .refreshable {
+            await refreshCurrentView()
+        }
+        #endif
+        // Feine Linie als Abgrenzung unter der Überschrift, darunter
+        // ggf. die Hinweise „Anmeldung abgelaufen“.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                Divider()
+                ForEach(expiredAccounts) { account in
+                    SignInRequiredBar(
+                        accountName: account.displayName,
+                        isRenewing: renewingAccountID == account.id,
+                        onRenew: { Task { await renewSignIn(account) } }
+                    )
+                    Divider()
+                }
+            }
+        }
+        .searchable(
+            text: $search.text,
+            tokens: $search.tokens,
+            isPresented: $search.isPresented,
+            placement: Self.searchPlacement,
+            prompt: "Suchen"
+        ) { person in
+            Label(person.title, systemImage: "person.fill")
+        }
+        .searchSuggestions {
+            ForEach(search.suggestions) { person in
+                PersonSuggestionRow(person: person)
+                    .searchCompletion(person)
+            }
+        }
+        #if os(iOS)
+        // Die obere Leiste (Ordner, Titel, Einstellungen bzw. „Alle
+        // auswählen“ und „Fertig“) bleibt während der Suche stehen –
+        // iOS blendet sie sonst aus.
+        .searchPresentationToolbarBehavior(.avoidHidingContent)
+        #endif
+        .navigationTitle(viewModel.selection.title)
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { viewWidth = $0 }
+        .toolbar { listToolbar }
+        // „Rückgängig“ über der unteren Leiste: Als Überlagerung des
+        // Inhalts hält es den sicheren Bereich ein und verdeckt die
+        // Knöpfe nicht.
+        .overlay(alignment: .bottom) {
+            if let offer = viewModel.undoOffer {
+                UndoBar(
+                    text: offer.text,
+                    systemImage: offer.systemImage,
+                    duration: UndoOffer.duration,
+                    onUndo: { Task { await viewModel.undo(offer) } },
+                    onDismiss: { viewModel.dismissUndo() }
+                )
+                // Neues Angebot = neuer Balken, der Lauf beginnt von vorn.
+                .id(offer.id)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .padding(.bottom, 10)
+                .padding(.horizontal, 12)
+            }
+        }
+        .animation(.snappy(duration: 0.25), value: viewModel.undoOffer?.id)
+        // Untere Leiste bzw. Befehlsleiste im Auswahlmodus – schwebt
+        // über der Liste am unteren Rand.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            bottomInset
+        }
+        .animation(.snappy(duration: 0.25), value: viewModel.isSelecting)
+        .animation(.snappy(duration: 0.25), value: search.isPresented)
+    }
+
+    // MARK: - Spaltengerüst (iPad)
+
+    /// `true`, wenn die Ordnerleiste fest als erste Spalte steht.
+    ///
+    /// Verarbeitung: Im Spaltengerüst, im Querformat und mit der
+    /// Einstellung „Drei Spalten“ steht die Leiste dauerhaft – auch ohne
+    /// geöffnete Mail, damit sie beim Ordnerwechsel nicht verschwindet. Nur
+    /// im Vollbild der Detailansicht tritt sie zurück.
+    private var showsPermanentSidebar: Bool {
+        usesColumns && isLandscape && usesThreeColumns
+            && !(selectedMessageID != nil && isDetailFullscreen)
+    }
+
+    /// Schließt die geöffnete Mail; die Liste nimmt wieder die volle
+    /// Breite ein.
+    private func closeSelectedMessage() {
+        selectedMessageID = nil
+        isDetailFullscreen = false
+    }
+
+    /// Geöffnete Mail als Listeneintrag; `nil` = keine oder nicht mehr in
+    /// der Liste.
+    private var selectedMessageItem: MessageListItem? {
+        guard let id = selectedMessageID else { return nil }
+        return viewModel.visibleMessages.first { $0.id == id }
+    }
+
+    /// Öffnet die vorige bzw. nächste Mail der Liste.
+    ///
+    /// Verarbeitung: Nur im Spaltengerüst, nicht im Auswahlmodus und nicht
+    /// in Entwürfen (dort öffnet ein Tipp das Verfassen-Fenster). Ohne
+    /// geöffnete Mail beginnt es bei der ersten Zeile.
+    ///
+    /// - Parameter direction: Richtung.
+    private func stepMessage(_ direction: MessageStepping.Direction) {
+        guard let id = steppingTarget(direction) else { return }
+        selectedMessageID = id
+    }
+
+    /// Ziel beim Weiterschalten.
+    ///
+    /// - Parameter direction: Richtung.
+    /// - Returns: ID der Nachbarmail; `nil` = keine bzw. Weiterschalten
+    ///   gerade nicht möglich.
+    private func steppingTarget(_ direction: MessageStepping.Direction) -> String? {
+        guard usesColumns, !viewModel.isSelecting, !showsDrafts else { return nil }
+        return MessageStepping.neighbor(
+            of: selectedMessageID,
+            in: viewModel.visibleMessages.map(\.id),
+            direction: direction
+        )
+    }
+
+    /// Verschiebt auf einen Ordner gezogene Mails.
+    ///
+    /// Verarbeitung: Nur Mails aus der Liste, nur innerhalb des Postfachs
+    /// und nur in gültige Ordner (MessageSelection.dropTargets). Wird eine
+    /// Mail auf einen Ordner eines anderen Postfachs gezogen, erklärt eine
+    /// Meldung, warum nichts geschieht.
+    ///
+    /// - Parameters:
+    ///   - ids: Gezogene Kennungen.
+    ///   - node: Zielordner.
+    ///   - account: Postfach des Zielordners.
+    private func dropMessages(_ ids: [String], on node: FolderNode, in account: MailAccount) {
+        let items = MessageSelection.dropTargets(
+            ids: ids, in: viewModel.messages, accountID: account.id, folder: node
+        )
+        guard !items.isEmpty else {
+            let dragged = Set(ids)
+            if viewModel.messages.contains(where: { dragged.contains($0.id) && $0.accountID != account.id }) {
+                viewModel.alert = AlertItem(
+                    title: "Nicht verschoben",
+                    message: "Mails lassen sich nur in Ordner desselben Postfachs verschieben."
+                )
+            }
+            return
+        }
+        for item in items {
+            Task { await viewModel.move(item, to: node.id) }
+        }
+    }
+
+    #if os(iOS)
+    /// Spaltengerüst des iPad: optionale Ordnerleiste, Liste, Detail.
+    ///
+    /// Verarbeitung: Alle drei Zustände (Liste allein, Spalten, Vollbild)
+    /// verwenden denselben Aufbau; es ändern sich nur Rahmenbreiten und
+    /// eingeblendete Nachbarn. Die Liste behält damit ihre Identität –
+    /// NavigationStack, Suchfeld und Scrollposition werden beim Antippen
+    /// einer Mail nicht verworfen. Ein Austausch des ganzen Ansichtsbaums
+    /// mitten in der Berührung kann unter iOS einen Übergang hängen lassen,
+    /// danach nimmt die App keine Eingaben mehr an.
+    private var regularColumns: some View {
+        let hasMessage = selectedMessageID != nil
+        let showsList = !(hasMessage && isDetailFullscreen)
+        return HStack(spacing: 0) {
+            if showsPermanentSidebar {
+                folderSidebar(acceptsDrops: true, onClose: {})
+                    .frame(width: 280)
+                    .background(AppTheme.background)
+                Divider()
+            }
+            // Mailliste: ohne Mail volle Breite, sonst feste Breite,
+            // im Vollbild Breite null (bleibt aber bestehen).
+            listStack
+                // Ausblenden per Deckkraft statt `.clipped()`: Das
+                // Abschneiden träfe auch die getönte Fläche unter der
+                // Statusleiste, die dann weiß erschiene.
+                .frame(width: regularListWidth(hasMessage: hasMessage, showsList: showsList))
+                .frame(maxWidth: hasMessage ? nil : .infinity)
+                .opacity(showsList ? 1 : 0)
+                .allowsHitTesting(showsList)
+                .accessibilityHidden(!showsList)
+            if hasMessage {
+                if showsList {
+                    Divider()
+                }
+                NavigationStack {
+                    regularDetailView
+                }
+            }
+        }
+        // Getönte Fläche auch hinter Spaltengrenzen und Statusleiste.
+        .background(AppTheme.background.ignoresSafeArea())
+        // Ausrichtung aus der tatsächlichen Fenstergröße ableiten (auch
+        // korrekt bei Split View / Stage Manager).
+        .onGeometryChange(for: Bool.self) { proxy in
+            proxy.size.width > proxy.size.height
+        } action: { landscape in
+            isLandscape = landscape
+        }
+        // Wird die feste Ordnerleiste sichtbar, ist die einblendbare
+        // überflüssig – sonst lägen zwei gleiche Leisten übereinander.
+        .onChange(of: showsPermanentSidebar) { _, permanent in
+            if permanent { showingFolders = false }
+        }
+    }
+
+    /// Breite der Mailliste im Spaltengerüst.
+    ///
+    /// - Parameters:
+    ///   - hasMessage: `true`, wenn eine Mail geöffnet ist.
+    ///   - showsList: `false` im Vollbild der Detailansicht.
+    /// - Returns: Breite in Punkt; `nil` = volle Breite (keine Mail).
+    private func regularListWidth(hasMessage: Bool, showsList: Bool) -> CGFloat? {
+        guard hasMessage else { return nil }
+        guard showsList else { return 0 }
+        return isLandscape ? 380 : 320
+    }
+
+    /// Detailansicht im Spaltengerüst: die geöffnete Mail mit Knöpfen für
+    /// Vollbild sowie vorige und nächste Mail.
+    @ViewBuilder
+    private var regularDetailView: some View {
+        if let id = selectedMessageID {
+            MessageDetailLoader(
+                messageID: id,
+                accountStore: accountStore,
+                spamFilter: viewModel.spamFilter,
+                scoreLimit: spamSettings.scoreLimit,
+                onChange: { viewModel.loadFromCache() },
+                onSearchPerson: { startPersonSearch($0) },
+                showsRecipients: showsRecipients,
+                onToggleFullscreen: {
+                    withAnimation(.snappy(duration: 0.25)) {
+                        isDetailFullscreen.toggle()
+                    }
+                },
+                isFullscreen: isDetailFullscreen,
+                stepping: stepButtons
+            )
+            // Eigene Identität je Mail: Der Loader lädt nur einmal; ohne
+            // `.id` bliebe beim Antippen einer anderen Mail die alte stehen.
+            .id(id)
+        }
+    }
+
+    /// Pfeile „Vorige/Nächste E-Mail“ der Mailansicht; ohne Ziel (Anfang
+    /// bzw. Ende der Liste) ausgegraut.
+    private var stepButtons: MessageStepButtons {
+        let previous: (() -> Void)? = steppingTarget(.previous) == nil
+            ? nil
+            : { stepMessage(.previous) }
+        let next: (() -> Void)? = steppingTarget(.next) == nil
+            ? nil
+            : { stepMessage(.next) }
+        return MessageStepButtons(previous: previous, next: next)
+    }
+
+    /// Aktionen für Menübefehle und Tastaturkürzel (InboxCommands).
+    ///
+    /// Verarbeitung: Eine Aktion fehlt (`nil`), solange sie nicht möglich
+    /// ist – der Befehl ist dann samt Kürzel ausgegraut. Weiterschalten,
+    /// Löschen und Vollbild gibt es nur im Spaltengerüst. Steht der Cursor
+    /// im Suchfeld, behalten Pfeiltasten dort ihre Bedeutung beim Schreiben.
+    private var commandActions: InboxCommandActions {
+        InboxCommandActions(
+            newMail: InboxCommandActions.enabled(!accountStore.accounts.isEmpty) {
+                showingCompose = true
+            },
+            refresh: InboxCommandActions.enabled(!viewModel.isLoading && !accountStore.accounts.isEmpty) {
+                Task { await refreshCurrentView() }
+            },
+            search: {
+                search.isPresented = true
+            },
+            nextMail: InboxCommandActions.enabled(steppingTarget(.next) != nil) {
+                stepMessage(.next)
+            },
+            previousMail: InboxCommandActions.enabled(steppingTarget(.previous) != nil) {
+                stepMessage(.previous)
+            },
+            deleteMail: InboxCommandActions.enabled(usesColumns && selectedMessageItem != nil && !viewModel.isSelecting) {
+                if let item = selectedMessageItem {
+                    handleMenuAction(.delete, for: item)
+                }
+            },
+            exitFullscreen: InboxCommandActions.enabled(isDetailFullscreen && selectedMessageID != nil && !showingFolders) {
+                withAnimation(.snappy(duration: 0.25)) { isDetailFullscreen = false }
+            }
+        )
+    }
+    #endif
 
     // MARK: - Symbolleiste
 
     /// Symbolleiste: im Auswahlmodus „Alle auswählen“, Anzahl und „Fertig“,
     /// sonst oben Ordnerleiste, Titel und Einstellungen, unten Sortieren
     /// und Verfassen (Mac: alles oben, dazu Ladeanzeige und Aktualisieren).
+    /// Steht die Ordnerleiste fest als erste Spalte (iPad, drei Spalten),
+    /// entfällt der Knopf für die einblendbare Leiste; im Spaltengerüst
+    /// bieten die Einstellungen zusätzlich „Drei Spalten im Querformat“.
     @ToolbarContentBuilder
     private var listToolbar: some ToolbarContent {
         if viewModel.isSelecting {
@@ -530,11 +948,13 @@ struct InboxView: View {
                 }
             }
         } else {
-            ToolbarItem(placement: Self.leadingPlacement) {
-                Button {
-                    showingFolders = true
-                } label: {
-                    Label("Ordner", systemImage: "sidebar.left")
+            if !showsPermanentSidebar {
+                ToolbarItem(placement: Self.leadingPlacement) {
+                    Button {
+                        showingFolders = true
+                    } label: {
+                        Label("Ordner", systemImage: "sidebar.left")
+                    }
                 }
             }
             ToolbarItem(placement: .principal) {
@@ -560,8 +980,6 @@ struct InboxView: View {
             ToolbarItem {
                 refreshButton
             }
-            #endif
-            #if os(macOS)
             ToolbarItem {
                 sortMenu
             }
@@ -584,6 +1002,12 @@ struct InboxView: View {
                         showingSpamSettings = true
                     } label: {
                         Label("Spamfilter", systemImage: "shield")
+                    }
+                    if usesColumns {
+                        Divider()
+                        Toggle(isOn: $usesThreeColumns) {
+                            Label("Drei Spalten im Querformat", systemImage: "rectangle.split.3x1")
+                        }
                     }
                 } label: {
                     Label("Einstellungen", systemImage: "gearshape")
@@ -861,61 +1285,117 @@ struct InboxView: View {
     /// Während einer Suche nur die Treffer, darunter statt „Ältere“ der
     /// Abschnitt „Auf dem Server“.
     ///
+    /// Im Spaltengerüst ist die geöffnete Mail die Auswahl der Liste
+    /// (`columnSelection`): Ein Tipp wählt sie aus, und die Pfeiltasten
+    /// bewegen die Auswahl über die Tastaturnavigation des Systems – wie in
+    /// Apple Mail. Die Liste rollt mit, wenn die Mail per Pfeil-Knopf oder
+    /// nach dem Löschen wechselt. Ränder und Zeilenabstände sind dort fest
+    /// (`ColumnListMargins`), damit nichts springt, wenn die Liste von
+    /// voller Breite auf Spaltenbreite wechselt. Im Auswahlmodus und in
+    /// Entwürfen gilt die gewöhnliche Liste.
+    ///
     /// Eigene Eigenschaft statt Teil von `body`, damit der Compiler den
     /// Ausdruck in vertretbarer Zeit prüfen kann.
     private var messageList: some View {
+        ScrollViewReader { proxy in
+            Group {
+                if usesColumns && !viewModel.isSelecting && !showsDrafts {
+                    List(selection: columnSelection) {
+                        messageListRows
+                    }
+                } else {
+                    List(selection: listSelection) {
+                        messageListRows
+                    }
+                }
+            }
+            .modifier(ColumnListMargins(isActive: usesColumns))
+            #if os(iOS)
+            // Auswahlmodus: Kreise vor den Zeilen, Tipp wählt aus statt zu öffnen.
+            .environment(\.editMode, .constant(viewModel.isSelecting ? .active : .inactive))
+            #endif
+            .onChange(of: selectedMessageID) { _, id in
+                guard let id else { return }
+                withAnimation(.snappy(duration: 0.2)) { proxy.scrollTo(id) }
+            }
+        }
+    }
+
+    /// Zeilen der Liste – für beide Varianten der Liste dieselben.
+    @ViewBuilder
+    private var messageListRows: some View {
         let colors = accountColors
         let recipients = showsRecipients
         let drafts = showsDrafts
-        return List(selection: listSelection) {
-            ForEach(viewModel.visibleMessages) { message in
-                messageRow(
-                    for: message,
-                    colorHex: colors[message.accountID],
-                    showsRecipients: recipients,
-                    opensDraft: drafts
-                )
-                // Ausgewählte Zeilen tönt die Karte selbst – die eigene
-                // Zeilenfarbe ersetzt die Auswahlfarbe des Systems.
-                .cardRowBackground(
-                    isSelected: viewModel.isSelecting && viewModel.selectedIDs.contains(message.id)
-                )
-            }
-
-            // Letzte Zeile der Liste – gehört IN die List, damit
-            // der Zweig ein einzelnes View bleibt.
-            if search.isFiltering {
-                if viewModel.visibleMessages.isEmpty {
-                    Text("Keine Treffer auf diesem Gerät")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .cardRowBackground()
-                }
-                if search.offersServerSearch && !viewModel.isSelecting {
-                    serverSection(colors: colors, showsRecipients: recipients)
-                }
-            } else if viewModel.showsOlderRow && !viewModel.isSelecting {
-                Section {
-                    olderRow
-                }
-                .cardRowBackground()
-            } else if let note = completeListNote, !viewModel.isSelecting {
-                // Statt „Ältere laden“: Diese Sichten sind schon vollständig.
-                Section {
-                    Text(note)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                }
-                .cardRowBackground()
-            }
+        let columns = usesColumns
+        ForEach(viewModel.visibleMessages) { message in
+            messageRow(
+                for: message,
+                colorHex: colors[message.accountID],
+                showsRecipients: recipients,
+                opensDraft: drafts
+            )
+            // Ausgewählte (grau) bzw. geöffnete Zeilen (hellblau) tönt
+            // die Karte selbst – die eigene Zeilenfarbe ersetzt die
+            // Auswahlfarbe des Systems.
+            .cardRowBackground(
+                isSelected: viewModel.isSelecting && viewModel.selectedIDs.contains(message.id),
+                isOpened: !viewModel.isSelecting && message.id == selectedMessageID
+            )
+            .modifier(ColumnRowInsets(isActive: columns))
         }
-        #if os(iOS)
-        // Auswahlmodus: Kreise vor den Zeilen, Tipp wählt aus statt zu öffnen.
-        .environment(\.editMode, .constant(viewModel.isSelecting ? .active : .inactive))
-        #endif
+
+        // Letzte Zeile der Liste – gehört IN die List, damit
+        // der Zweig ein einzelnes View bleibt.
+        if search.isFiltering {
+            if viewModel.visibleMessages.isEmpty {
+                Text("Keine Treffer auf diesem Gerät")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .modifier(ColumnRowInsets(isActive: columns))
+                    .cardRowBackground()
+            }
+            if search.offersServerSearch && !viewModel.isSelecting {
+                serverSection(colors: colors, showsRecipients: recipients)
+                    .modifier(ColumnRowInsets(isActive: columns))
+            }
+        } else if viewModel.showsOlderRow && !viewModel.isSelecting {
+            Section {
+                olderRow
+                    .modifier(ColumnRowInsets(isActive: columns))
+            }
+            .cardRowBackground()
+        } else if let note = completeListNote, !viewModel.isSelecting {
+            // Statt „Ältere laden“: Diese Sichten sind schon vollständig.
+            Section {
+                Text(note)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .modifier(ColumnRowInsets(isActive: columns))
+            }
+            .cardRowBackground()
+        }
+    }
+
+    /// Auswahl der Liste im Spaltengerüst: die geöffnete Mail.
+    ///
+    /// Verarbeitung: Ein Tipp oder eine Pfeiltaste setzt die Auswahl und
+    /// öffnet damit die Mail rechts; hebt die Liste die Auswahl auf, schließt
+    /// sich die Mail.
+    private var columnSelection: Binding<String?> {
+        Binding(
+            get: { selectedMessageID },
+            set: { id in
+                if id == nil {
+                    closeSelectedMessage()
+                } else {
+                    selectedMessageID = id
+                }
+            }
+        )
     }
 
     /// Hinweis am Listenende der Sichten, die jeder Abruf unabhängig vom
@@ -984,13 +1464,17 @@ struct InboxView: View {
         return tree.node(withPath: path)?.role == .drafts
     }
 
-    /// Eine Zeile der Liste: Link zur Mail, Wischaktionen, Kontextmenü,
+    /// Eine Zeile der Liste: öffnet die Mail, Wischaktionen, Kontextmenü,
     /// Sperre während einer laufenden Aktion.
     ///
-    /// Verarbeitung: Der Link öffnet `MessageDetailLoader`, der die
-    /// vollständige Mail erst beim Öffnen aus dem Cache lädt. Im
+    /// Verarbeitung: Auf dem iPhone und dem Mac öffnet ein Link
+    /// `MessageDetailLoader` per Push; im Spaltengerüst des iPad zeigt ein
+    /// Tipp die Mail in der Detailspalte – die Liste wählt die Zeile aus
+    /// (`columnSelection`), auch per Pfeiltaste –, und die Zeile lässt sich
+    /// auf einen Ordner der festen Ordnerleiste ziehen. Im
     /// Entwürfe-Ordner öffnet ein Tipp stattdessen das Verfassen-Fenster
-    /// (`DraftComposeLoader`).
+    /// (`DraftComposeLoader`). Der Loader lädt die vollständige Mail erst
+    /// beim Öffnen aus dem Cache.
     ///
     /// - Parameters:
     ///   - message: Darzustellender Listeneintrag.
@@ -1018,6 +1502,26 @@ struct InboxView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+            } else if usesColumns {
+                // Kein eigener Knopf: Die Liste wählt die Zeile aus
+                // (`columnSelection`) – per Tipp wie per Pfeiltaste.
+                rowContent(for: message, colorHex: colorHex, showsRecipients: showsRecipients)
+                    .contentShape(Rectangle())
+                    #if os(iOS)
+                    // Normale Schriftfarben auch in der ausgewählten Zeile:
+                    // Das System stellt die Schrift sonst auf Weiß um,
+                    // passend zu seinem kräftigen Auswahlhintergrund –
+                    // unsere Karte hinterlegt aber hellblau
+                    // (`cardRowBackground`). Die Zeile färbt mit Stufen
+                    // (primär, sekundär); sie stehen hier fest auf den
+                    // Textfarben des Systems, statt sich von der Auswahl
+                    // abzuleiten.
+                    .foregroundStyle(
+                        Color(uiColor: .label),
+                        Color(uiColor: .secondaryLabel),
+                        Color(uiColor: .tertiaryLabel)
+                    )
+                    #endif
             } else {
                 NavigationLink {
                     MessageDetailLoader(
@@ -1065,6 +1569,12 @@ struct InboxView: View {
                 EmptyView()
             }
         }
+        // Ziehen auf einen Ordner nur, wo die feste Ordnerleiste daneben
+        // stehen kann, und nicht im Auswahlmodus.
+        .modifier(MessageDragSource(
+            messageID: message.id,
+            isEnabled: usesColumns && !viewModel.isSelecting
+        ))
         .disabled(viewModel.processingMessageIDs.contains(message.id))
     }
 
@@ -1530,6 +2040,12 @@ private struct DraftEditRequest: Identifiable {
     let id: String
 }
 
+/// Auf der Apple Watch geöffnete Mail: Cache-ID für das Sheet.
+private struct HandoffMessageRequest: Identifiable {
+    /// Cache-ID der Mail.
+    let id: String
+}
+
 /// Antwort bzw. Weiterleitung aus dem Kontextmenü: Art und vollständige
 /// Ursprungsmail für das Sheet.
 private struct ListComposeRequest: Identifiable {
@@ -1651,6 +2167,12 @@ private struct MessageDetailLoader: View {
     var onSearchPerson: ((SearchPerson) -> Void)? = nil
     /// `true` in Gesendet und Entwürfen (Kreis im Mailkopf zeigt den Empfänger).
     var showsRecipients = false
+    /// Schaltet zwischen Vollbild und Spaltenansicht (iPad).
+    var onToggleFullscreen: (() -> Void)? = nil
+    /// `true` im Vollbild; steuert das Symbol der Schaltfläche.
+    var isFullscreen = false
+    /// Vorige/nächste Mail der Liste (iPad); `nil` = keine Knöpfe.
+    var stepping: MessageStepButtons? = nil
 
     /// Geladene Mail; `nil`, solange sie lädt oder fehlt.
     @State private var message: CachedMessage?
@@ -1668,7 +2190,10 @@ private struct MessageDetailLoader: View {
                     scoreLimit: scoreLimit,
                     onChange: onChange,
                     onSearchPerson: onSearchPerson,
-                    showsRecipients: showsRecipients
+                    showsRecipients: showsRecipients,
+                    onToggleFullscreen: onToggleFullscreen,
+                    isFullscreen: isFullscreen,
+                    stepping: stepping
                 )
             } else if isMissing {
                 ContentUnavailableView(
@@ -1704,6 +2229,80 @@ private struct MessageDetailLoader: View {
             #endif
         } else {
             isMissing = true
+        }
+    }
+}
+
+// MARK: - Spaltengerüst: feste Abstände, Ziehen
+
+/// Fester waagerechter Innenabstand einer Listenzeile im Spaltengerüst.
+///
+/// Das System bemisst den Abstand nach der Breite der Liste; ohne feste
+/// Vorgabe spränge der Zeileninhalt, wenn die Liste von voller Breite auf
+/// Spaltenbreite wechselt. Senkrecht bleibt der Systemstandard, auf dem
+/// iPhone und dem Mac alles unverändert.
+private struct ColumnRowInsets: ViewModifier {
+    /// `true` im Spaltengerüst.
+    let isActive: Bool
+
+    /// Innenabstand links und rechts in Punkt.
+    private static let inset: CGFloat = 16
+
+    /// Zeile mit festem bzw. unverändertem Abstand.
+    ///
+    /// - Parameter content: Listenzeile.
+    /// - Returns: Zeile mit festem Abstand im Spaltengerüst.
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isActive {
+            content.listRowInsets(.horizontal, Self.inset)
+        } else {
+            content
+        }
+    }
+}
+
+/// Fester Seitenrand der Liste im Spaltengerüst – aus demselben Grund wie
+/// `ColumnRowInsets`, hier für die Karten selbst.
+private struct ColumnListMargins: ViewModifier {
+    /// `true` im Spaltengerüst.
+    let isActive: Bool
+
+    /// Seitenrand links und rechts in Punkt.
+    private static let margin: CGFloat = 16
+
+    /// Liste mit festem bzw. unverändertem Rand.
+    ///
+    /// - Parameter content: Liste.
+    /// - Returns: Liste mit festem Rand im Spaltengerüst.
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isActive {
+            content.contentMargins(.horizontal, Self.margin, for: .scrollContent)
+        } else {
+            content
+        }
+    }
+}
+
+/// Macht eine Listenzeile ziehbar – gezogen wird nur die Kennung der Mail.
+/// Was damit geschieht, prüft das Ziel (Ordnerzeile, MessageSelection).
+private struct MessageDragSource: ViewModifier {
+    /// Cache-ID der Mail.
+    let messageID: String
+    /// `true`, wenn die Zeile gezogen werden darf.
+    let isEnabled: Bool
+
+    /// Zeile mit bzw. ohne Ziehen.
+    ///
+    /// - Parameter content: Listenzeile.
+    /// - Returns: Ziehbare bzw. unveränderte Zeile.
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content.draggable(messageID)
+        } else {
+            content
         }
     }
 }

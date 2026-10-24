@@ -9,8 +9,9 @@
 //  übernehmen:
 //  - `appBackground()` blendet den Systemhintergrund von Listen,
 //    Formularen und Scrollbereichen aus und legt die Fläche darunter;
-//  - `cardRowBackground(isSelected:)` färbt die Zeilen einer Liste bzw.
-//    eines Formularabschnitts als Karte, ausgewählte Zeilen leicht getönt.
+//  - `cardRowBackground(isSelected:isOpened:)` färbt die Zeilen einer
+//    Liste bzw. eines Formularabschnitts als Karte, ausgewählte Zeilen
+//    leicht getönt, die geöffnete Mail hellblau.
 //
 //  Die Farbwerte stehen als reine Daten in `AppThemePalette` und lassen
 //  sich so ohne Oberfläche prüfen. Hell bleiben die Karten weiß (bester
@@ -122,17 +123,28 @@ nonisolated enum AppTheme {
 /// Hintergrund einer Listenzeile: Kartenfarbe, ausgewählt leicht getönt.
 ///
 /// Eine eigene Zeilenfarbe ersetzt die Auswahlfarbe des Systems; die
-/// Tönung für ausgewählte Zeilen übernimmt deshalb diese Ansicht.
+/// Tönung für ausgewählte Zeilen übernimmt deshalb diese Ansicht. Die
+/// geöffnete Mail (Spaltenlayout des iPad) ist hellblau hinterlegt – in
+/// der Akzentfarbe wie die gewählte Ansicht der Ordnerleiste daneben, nur
+/// etwas kräftiger, weil die Karte weiß ist.
 struct CardRowBackground: View {
     /// Die Zeile ist ausgewählt (Auswahlmodus).
     var isSelected = false
+    /// Die Zeile ist die geöffnete Mail (Spaltenlayout).
+    var isOpened = false
 
-    /// Kartenfarbe, bei Auswahl mit der Füllfarbe des Systems darüber.
+    /// Deckkraft der Akzentfarbe für die geöffnete Mail.
+    private static let openedOpacity = 0.16
+
+    /// Kartenfarbe, bei Auswahl mit der Füllfarbe des Systems, bei der
+    /// geöffneten Mail mit hellem Akzentblau darüber.
     var body: some View {
         AppTheme.card
             .overlay {
                 if isSelected {
                     Rectangle().fill(.fill)
+                } else if isOpened {
+                    Rectangle().fill(Color.accentColor.opacity(Self.openedOpacity))
                 }
             }
     }
@@ -153,9 +165,11 @@ extension View {
 
     /// Kartenfarbe für Listenzeilen bzw. alle Zeilen eines Abschnitts.
     ///
-    /// - Parameter isSelected: Zeile ist ausgewählt (leicht getönt).
+    /// - Parameters:
+    ///   - isSelected: Zeile ist ausgewählt (leicht getönt).
+    ///   - isOpened: Zeile ist die geöffnete Mail (hellblau).
     /// - Returns: Zeile(n) mit Kartenhintergrund.
-    func cardRowBackground(isSelected: Bool = false) -> some View {
-        listRowBackground(CardRowBackground(isSelected: isSelected))
+    func cardRowBackground(isSelected: Bool = false, isOpened: Bool = false) -> some View {
+        listRowBackground(CardRowBackground(isSelected: isSelected, isOpened: isOpened))
     }
 }

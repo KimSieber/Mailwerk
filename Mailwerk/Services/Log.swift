@@ -51,4 +51,6 @@ nonisolated enum Log {
     static let view = Logger(subsystem: subsystem, category: "Ansicht")
     /// Anmeldung per OAuth 2 (Abläufe, nie Tokens).
     static let auth = Logger(subsystem: subsystem, category: "Anmeldung")
+    /// Austausch zwischen iPhone und Apple Watch.
+    static let watch = Logger(subsystem: subsystem, category: "Watch")
 }

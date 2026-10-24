@@ -3,8 +3,9 @@
 //  MailwerkTests
 //
 //  Zweck: Tests für die Mehrfachauswahl – Regeln bei gemischter Auswahl,
-//  betroffene Mails, Sperre beim Verschieben über Postfächer hinweg
-//  (MessageSelection) und Gruppierung je Ordner (MessageActions.groups).
+//  betroffene Mails, Sperre beim Verschieben über Postfächer hinweg,
+//  Verschieben per Ziehen auf einen Ordner (MessageSelection) und
+//  Gruppierung je Ordner (MessageActions.groups).
 //
 
 import Foundation
@@ -71,6 +72,33 @@ struct MessageSelectionTests {
     @Test func commonFolderOnlyWhenUnique() {
         #expect(MessageSelection.commonFolder([item("a"), item("b")]) == "INBOX")
         #expect(MessageSelection.commonFolder([item("a"), item("b", folder: "Archiv")]) == nil)
+    }
+
+    /// Testhilfe: Ordner als Ziel beim Ziehen.
+    private func folder(_ path: String, selectable: Bool = true) -> FolderNode {
+        FolderNode(id: path, name: path, role: .regular, isSelectable: selectable, children: [])
+    }
+
+    /// Ziehen: nur Kennungen aus der Liste, fremde Texte bewirken nichts.
+    @Test func dropIgnoresUnknownIDs() {
+        let account = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let items = [item("a"), item("b")]
+        let targets = MessageSelection.dropTargets(
+            ids: ["b", "https://example.org"], in: items, accountID: account, folder: folder("Archiv")
+        )
+        #expect(targets.map(\.id) == ["b"])
+    }
+
+    /// Ziehen: nicht in ein anderes Postfach, nicht in den eigenen Ordner,
+    /// nicht in einen reinen Container.
+    @Test func dropRespectsMoveRules() {
+        let account = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let items = [item("a"), item("b", account: UUID())]
+        #expect(MessageSelection.dropTargets(ids: ["b"], in: items, accountID: account, folder: folder("Archiv")).isEmpty)
+        #expect(MessageSelection.dropTargets(ids: ["a"], in: items, accountID: account, folder: folder("INBOX")).isEmpty)
+        #expect(MessageSelection.dropTargets(
+            ids: ["a"], in: items, accountID: account, folder: folder("Ablage", selectable: false)
+        ).isEmpty)
     }
 
     /// Gruppen je Postfach und Ordner, in der Reihenfolge des ersten Auftretens.

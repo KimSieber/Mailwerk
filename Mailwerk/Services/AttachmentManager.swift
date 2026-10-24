@@ -19,7 +19,7 @@
 //
 //  Abhängigkeiten: SwiftMail (IMAP), MailSession (Verbindung und
 //  Zugangsdaten), AccountStore, MessageStore (Cache),
-//  MessageContentPlan (Einordnung der Teile).
+//  MessageContentPlan (Einordnung der Teile), AttachmentFilename (Endung).
 //
 
 import Foundation
@@ -76,9 +76,11 @@ enum AttachmentManager {
     /// Verarbeitung: Legt im tmp-Verzeichnis der App den Ordner
     /// `Mailwerk-Attachments` an und schreibt die Daten unter dem
     /// bereinigten Dateinamen dorthin; eine vorhandene Datei gleichen
-    /// Namens wird ersetzt. Die Bereinigung entfernt Pfadtrennzeichen
-    /// und Punkte am Anfang, damit der Name nicht aus dem Temp-Verzeichnis
-    /// ausbrechen kann.
+    /// Namens wird ersetzt. Fehlt dem Namen die Endung, wird die zum Typ
+    /// passende angehängt (AttachmentFilename) – sonst ließe sich die Datei
+    /// nicht öffnen. Die Bereinigung entfernt Pfadtrennzeichen und Punkte
+    /// am Anfang, damit der Name nicht aus dem Temp-Verzeichnis ausbrechen
+    /// kann.
     ///
     /// - Parameter attachment: Anhang mit geladenen Daten.
     /// - Returns: URL der geschriebenen Datei.
@@ -92,7 +94,8 @@ enum AttachmentManager {
             .appendingPathComponent(tempSubdirectory, isDirectory: true)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
-        let safe = Self.sanitizedFilename(attachment.filename)
+        // Mit passender Endung – Vorschau und Teilen erkennen den Typ daran.
+        let safe = Self.sanitizedFilename(attachment.completedFilename)
         let fileURL = tempDir.appendingPathComponent(safe)
 
         // Bestehende Datei überschreiben
