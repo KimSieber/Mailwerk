@@ -1,0 +1,196 @@
+//
+//  ServerReconciliationTests.swift
+//  MailwerkTests
+//
+//  Zweck: Tests für den Vergleich von Cache und Server-Stand
+//  (ServerReconciliation). Prüft Entfernungen und Flag-Änderungen.
+//
+
+import Foundation
+import Testing
+@testable import Mailwerk
+
+@MainActor
+struct ServerReconciliationTests {
+
+    // MARK: - Hilfen
+
+    /// Erzeugt einen gecachten Flag-Zustand mit frei wählbaren Flags.
+    private func cached(
+        _ uid: UInt32,
+        unread: Bool = false,
+        flagged: Bool = false,
+        answered: Bool = false,
+        forwarded: Bool = false
+    ) -> CachedFlagState {
+        CachedFlagState(
+            id: "msg-\(uid)", uid: uid,
+            isUnread: unread, isFlagged: flagged,
+            isAnswered: answered, isForwarded: forwarded
+        )
+    }
+
+    /// Erzeugt einen Server-Ordner-Stand mit frei wählbaren UID-Mengen.
+    private func server(
+        all: Set<UInt32>,
+        unseen: Set<UInt32> = [],
+        flagged: Set<UInt32> = [],
+        answered: Set<UInt32> = [],
+        forwarded: Set<UInt32>? = []
+    ) -> ServerFolderState {
+        ServerFolderState(all: all, unseen: unseen, flagged: flagged,
+                          answered: answered, forwarded: forwarded)
+    }
+
+    /// Berechnet den Abgleichsplan mit Standard-keepUIDsAbove.
+    private func plan(
+        _ cachedMessages: [CachedFlagState],
+        _ state: ServerFolderState
+    ) -> ServerReconciliation.Plan {
+        ServerReconciliation.plan(
+            cached: cachedMessages,
+            server: state,
+            keepUIDsAbove: ServerReconciliation.highestUID(in: state)
+        )
+    }
+
+    // MARK: - Nichts zu tun
+
+    /// Cache und Server identisch → keine Änderungen.
+    @Test func identicalStateChangesNothing() {
+        let result = plan(
+            [cached(1, unread: true), cached(2, flagged: true)],
+            server(all: [1, 2], unseen: [1], flagged: [2])
+        )
+        #expect(result.isEmpty)
+    }
+
+    /// Nur auf dem Server vorhandene Mails sind nicht Teil des Plans – die holt der Abruf.
+    @Test func newServerMessagesAreNotPartOfThePlan() {
+        let result = plan([cached(1)], server(all: [1, 2, 3]))
+        #expect(result.isEmpty)
+    }
+
+    // MARK: - Entfernte Mails
+
+    /// Mail nur noch auf dem Server → wird aus dem Cache entfernt.
+    @Test func messagesGoneFromServerAreRemoved() {
+        let result = plan(
+            [cached(1), cached(2), cached(3)],
+            server(all: [1, 3])
+        )
+        #expect(result.removedIDs == ["msg-2"])
+    }
+
+    /// Gekennzeichnete Mail, anderswo gelöscht → wird trotzdem entfernt.
+    @Test func flaggedMessageDeletedElsewhereIsAlsoRemoved() {
+        let result = plan([cached(7, flagged: true)], server(all: [8]))
+        #expect(result.removedIDs == ["msg-7"])
+        #expect(result.flagUpdates.isEmpty)
+    }
+
+    /// Leerer Ordner auf dem Server → Cache komplett leeren.
+    @Test func emptiedFolderClearsTheCache() {
+        let result = plan([cached(1), cached(2)], server(all: []))
+        #expect(result.removedIDs == ["msg-1", "msg-2"])
+    }
+
+    /// Ohne UIDNEXT: Mails mit UIDs oberhalb der Server-Antwort bleiben erhalten.
+    @Test func newerUIDsThanTheServerAnswerAreKept() {
+        let state = server(all: [1, 2])
+        let result = ServerReconciliation.plan(
+            cached: [cached(1), cached(2), cached(99)],
+            server: state,
+            keepUIDsAbove: ServerReconciliation.highestUID(in: state)
+        )
+        #expect(result.removedIDs.isEmpty)
+    }
+
+    /// Anderswo gelöschte neueste Mails werden entfernt (Grenze aus UIDNEXT).
+    @Test func deletedNewestMessagesAreRemoved() {
+        let state = server(all: [1, 2])
+        let result = ServerReconciliation.plan(
+            cached: [cached(1), cached(2), cached(3), cached(4)],
+            server: state,
+            keepUIDsAbove: ServerReconciliation.removalLimit(in: state, uidNext: 5)
+        )
+        #expect(result.removedIDs == ["msg-3", "msg-4"])
+    }
+
+    /// Nach der Auswahl eingetroffene Mails (UID ab UIDNEXT) bleiben erhalten.
+    @Test func arrivalsAfterSelectAreKept() {
+        let state = server(all: [1])
+        let result = ServerReconciliation.plan(
+            cached: [cached(1), cached(5), cached(6)],
+            server: state,
+            keepUIDsAbove: ServerReconciliation.removalLimit(in: state, uidNext: 5)
+        )
+        #expect(result.removedIDs.isEmpty)
+    }
+
+    /// removalLimit: UIDNEXT − 1; ohne UIDNEXT die höchste gemeldete UID.
+    @Test func removalLimitUsesUIDNext() {
+        #expect(ServerReconciliation.removalLimit(in: server(all: [2, 3]), uidNext: 10) == 9)
+        #expect(ServerReconciliation.removalLimit(in: server(all: [2, 3]), uidNext: 0) == 3)
+        #expect(ServerReconciliation.removalLimit(in: server(all: []), uidNext: 0) == .max)
+    }
+
+    /// highestUID: Maximum der Menge, bei leerem Ordner .max.
+    @Test func highestUIDIsMaxForEmptyFolder() {
+        #expect(ServerReconciliation.highestUID(in: server(all: [])) == .max)
+        #expect(ServerReconciliation.highestUID(in: server(all: [4, 9, 2])) == 9)
+    }
+
+    // MARK: - Flags
+
+    /// Im Webmail gelesen → wird auch lokal als gelesen markiert.
+    @Test func readElsewhereBecomesRead() {
+        let result = plan([cached(1, unread: true)], server(all: [1]))
+        #expect(result.flagUpdates.count == 1)
+        #expect(result.flagUpdates.first?.isUnread == false)
+    }
+
+    /// Im Webmail als ungelesen markiert → wird auch lokal ungelesen.
+    @Test func unreadAgainElsewhereBecomesUnread() {
+        let result = plan([cached(1)], server(all: [1], unseen: [1]))
+        #expect(result.flagUpdates.first?.isUnread == true)
+    }
+
+    /// Kennzeichnung im Webmail entfernt → wird auch lokal entfernt.
+    @Test func flagRemovedElsewhereIsRemovedLocally() {
+        let result = plan([cached(1, flagged: true)], server(all: [1]))
+        #expect(result.flagUpdates.first?.isFlagged == false)
+    }
+
+    /// Beantwortet und Weitergeleitet werden übernommen.
+    @Test func answeredAndForwardedAreTakenOver() {
+        let result = plan(
+            [cached(1)],
+            server(all: [1], answered: [1], forwarded: [1])
+        )
+        let updated = result.flagUpdates.first
+        #expect(updated?.isAnswered == true)
+        #expect(updated?.isForwarded == true)
+    }
+
+    /// Server meldet kein $Forwarded → bestehendes Kennzeichen bleibt.
+    @Test func forwardedIsKeptWhenServerDoesNotSupportIt() {
+        let result = plan(
+            [cached(1, forwarded: true)],
+            server(all: [1], forwarded: nil)
+        )
+        #expect(result.isEmpty)
+    }
+
+    /// Mehrere Änderungen gleichzeitig: Entfernung und Flag-Updates.
+    @Test func severalChangesAtOnce() {
+        let result = plan(
+            [cached(1, unread: true), cached(2, flagged: true), cached(3)],
+            server(all: [1, 3], unseen: [], flagged: [3])
+        )
+        #expect(result.removedIDs == ["msg-2"])
+        #expect(result.flagUpdates.map(\.id) == ["msg-1", "msg-3"])
+        #expect(result.flagUpdates.first?.isUnread == false)
+        #expect(result.flagUpdates.last?.isFlagged == true)
+    }
+}

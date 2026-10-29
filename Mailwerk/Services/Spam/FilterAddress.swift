@@ -1,0 +1,137 @@
+//
+//  FilterAddress.swift
+//  Mailwerk
+//
+//  Zweck: Normalisierte Absenderadresse für den Spamfilter: kleingeschrieben,
+//  ohne Anzeigename, mit exakter Domain. Bewusst toleranter als die
+//  Adressprüfung beim Versand – auch ungewöhnliche Absender
+//  (z. B. `bounce=123@…`) müssen sich blockieren lassen. Geprüft wird
+//  daher nur die Struktur, nicht die Zeichenauswahl des lokalen Teils.
+//
+//  `nonisolated`, weil der Filterlauf außerhalb des Main-Actors arbeitet.
+//
+//  Apple Watch: Dort gibt es SwiftMail nicht. Die Watch erhält die schon
+//  ermittelte Adresse vom iPhone und braucht nur `init(normalizing:)`;
+//  `sender(fromHeader:)` entfällt dort (`canImport(SwiftMail)`).
+//
+//  Abgrenzung: Empfängeradressen beim Verfassen → MailAddress; Prüfung der
+//  Listeneingabe → FilterListInput.
+//
+//  Abhängigkeiten: Foundation, SwiftMail (EmailAddress), RecipientInput –
+//  die beiden letzten nur für `sender(fromHeader:)`.
+//
+
+import Foundation
+#if canImport(SwiftMail)
+import SwiftMail
+#endif
+
+/// Normalisierte Adresse mit Domain für die Filterlisten.
+nonisolated struct FilterAddress: Hashable {
+
+    /// Vollständige Adresse, kleingeschrieben.
+    let address: String
+
+    /// Alles nach dem `@`, kleingeschrieben. Welche Domain-Einträge sie
+    /// trifft (auch übergeordnete Domains), regelt FilterDomain.
+    let domain: String
+
+    /// Zeichen, die im lokalen Teil nicht vorkommen dürfen. Alles andere
+    /// bleibt erlaubt, damit auch ungewöhnliche Absender filterbar sind.
+    private static let forbiddenInLocalPart: Set<Character> = ["<", ">", ",", ";", "\"", "\\", "@"]
+
+    /// Normalisiert eine einzelne Adresse (Listeneingabe, ohne Anzeigename).
+    ///
+    /// - Parameter raw: Eingabe.
+    /// - Returns: Adresse oder `nil` bei unbrauchbarer Eingabe.
+    init?(normalizing raw: String) {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty,
+              !trimmed.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.contains($0) })
+        else { return nil }
+
+        let parts = trimmed.split(separator: "@", omittingEmptySubsequences: false)
+        guard parts.count == 2 else { return nil }
+
+        let localPart = String(parts[0])
+        guard !localPart.isEmpty,
+              !localPart.contains(where: { Self.forbiddenInLocalPart.contains($0) }),
+              let domain = Self.normalizedDomain(String(parts[1]))
+        else { return nil }
+
+        self.address = "\(localPart)@\(domain)"
+        self.domain = domain
+    }
+
+    #if canImport(SwiftMail)
+    /// Ermittelt den Absender aus einem `From`-Header.
+    ///
+    /// Verarbeitung: Bei mehreren Adressen zählt die erste; Anzeigename und
+    /// Klammern entfernt der Adressparser von SwiftMail, scheitert er, zählt
+    /// der Abschnitt selbst.
+    ///
+    /// - Parameter raw: Wert des `From`-Headers.
+    /// - Returns: Absender oder `nil`, wenn keiner auswertbar ist.
+    static func sender(fromHeader raw: String) -> FilterAddress? {
+        // Der Header endet nicht mit einem Trennzeichen: Steht nur eine
+        // Adresse darin, liefert `tokens` sie als offenen Rest.
+        let parts = RecipientInput.tokens(raw)
+        let first = (parts.tokens.first ?? parts.remainder).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Anzeigenamen und Klammern entfernt der Adressparser von SwiftMail.
+        // Scheitert er (etwa bei `bounce=123@…`), zählt der Abschnitt selbst.
+        let candidate = SwiftMail.EmailAddress(first)?.address ?? first
+        return FilterAddress(normalizing: candidate)
+    }
+    #endif
+
+    /// Normalisiert eine Domain-Eingabe. Akzeptiert auch die Portal-Schreibweise
+    /// `*@firma.de` und einen abschließenden Punkt.
+    ///
+    /// Bewusst ohne `*firma.de` und `*.firma.de`: Diese Funktion prüft auch
+    /// die Domain eines Absenders, und ein gefälschtes `x@*firma.de` darf
+    /// nicht zu `firma.de` werden. Die Platzhalter der Listeneingabe
+    /// behandelt FilterDomain.
+    ///
+    /// - Parameter raw: Eingabe.
+    /// - Returns: Domain oder `nil` bei unbrauchbarer Eingabe.
+    static func normalizedDomain(_ raw: String) -> String? {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        if value.hasPrefix("*@") {
+            value.removeFirst(2)
+        } else if value.hasPrefix("@") {
+            value.removeFirst()
+        }
+
+        // Ein abschließender Punkt bezeichnet dieselbe Domain (absolute Schreibweise).
+        while value.hasSuffix(".") { value.removeLast() }
+
+        guard isValidDomain(value) else { return nil }
+        return value
+    }
+
+    /// Prüft die Form einer Domain: mindestens zwei Abschnitte aus
+    /// Buchstaben, Ziffern und Bindestrichen, der letzte nur aus Buchstaben.
+    ///
+    /// - Parameter value: Domain in Kleinschreibung.
+    /// - Returns: `true` bei gültiger Form.
+    private static func isValidDomain(_ value: String) -> Bool {
+        guard !value.isEmpty, value.count <= 253 else { return false }
+
+        let labels = value.split(separator: ".", omittingEmptySubsequences: false)
+        guard labels.count >= 2 else { return false }
+
+        for label in labels {
+            guard !label.isEmpty, label.count <= 63,
+                  label.first != "-", label.last != "-",
+                  label.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") })
+            else { return false }
+        }
+
+        guard let tld = labels.last, tld.count >= 2, tld.allSatisfy({ $0.isASCII && $0.isLetter }) else {
+            return false
+        }
+        return true
+    }
+}

@@ -1,0 +1,571 @@
+//
+//  MailSendService.swift
+//  Mailwerk
+//
+//  Zweck: Versendet eine verfasste Nachricht und erledigt die Nacharbeiten
+//  auf dem Server.
+//
+//  Ablauf in drei Schritten:
+//  1. SMTP-Versand (verschlüsselt über MailServerFactory). Schlägt dieser
+//     Schritt fehl, wird ein Fehler geworfen – die Nachricht ist NICHT raus.
+//  2. Kopie im Gesendet-Ordner ablegen (IMAP APPEND, inkl. Bcc-Header).
+//  3. Originalnachricht als beantwortet (\Answered) bzw. weitergeleitet
+//     ($Forwarded) markieren – auf dem Server und im lokalen Cache. Die
+//     Markierung erfolgt in dem Ordner, in dem die Originalnachricht liegt;
+//     UIDs sind nur innerhalb eines Ordners eindeutig.
+//
+//  Schritt 2 entfällt, wenn im Postfach „Kopie in Gesendet ablegen“
+//  ausgeschaltet ist (Anbieter legt selbst ab, z. B. Gmail).
+//
+//  Die Schritte 2 und 3 laufen erst nach erfolgreichem Versand. Scheitern sie,
+//  ist die Nachricht trotzdem gesendet – das Ergebnis enthält dann Warnungen
+//  statt eines Fehlers, damit der Nutzer nicht fälschlich erneut sendet.
+//  Versendete Nachricht und Gesendet-Kopie tragen dieselbe Message-ID.
+//
+//  Fehler und Protokoll: Der erreichte Schritt (Verbinden, Anmelden,
+//  Senden) wird protokolliert; eine gescheiterte Anmeldung erscheint als
+//  verständliche Meldung (SMTPLoginFailure) statt als NIO-Fehler. Ist die
+//  Anmeldung per OAuth 2 abgelaufen, kommt `OAuthError.signInRequired`
+//  unverändert beim Aufrufer an („Bitte in Mailwerk neu anmelden“).
+//
+//  Anmeldung: mit Passwort oder per OAuth 2 (XOAUTH2) – beides über
+//  `MailSession.authenticate`.
+//
+//  Zeilenenden: `makeEmail` bringt Text und HTML auf CRLF (MailLineEndings),
+//  damit Versand, Gesendet-Kopie und Entwurf kein einzelnes LF enthalten.
+//
+//  Abgrenzung: Zusammenstellen des Inhalts (Zitat, HTML, Anhänge) erledigt
+//  der ComposeViewModel; hier wird nur geprüft, versendet und nachgearbeitet.
+//  Entwürfe → DraftService (nutzt `makeEmail` und `addingBccHeader`).
+//
+//  Abhängigkeiten: SwiftMail (SMTP/IMAP), MailServerFactory (TLS-Vorgaben
+//  für SMTP), MailSession (IMAP-Verbindung, Zugangsdaten und Anmeldung),
+//  OAuthError, AccountStore,
+//  MessageStore (Cache-Markierung), FlagState (Keyword `$Forwarded`),
+//  MailLineEndings (Zeilenenden), SMTPLoginFailure (Meldung bei
+//  gescheiterter Anmeldung), Log.
+//
+
+import Foundation
+import SwiftMail
+import os
+
+/// Ein Anhang, der mitgesendet wird – oder, mit Content-ID, ein
+/// eingebettetes Bild, das das HTML per `cid:` anspricht.
+struct OutgoingAttachment: Equatable {
+    /// Dateiname, wie er beim Empfänger erscheint.
+    let filename: String
+    /// MIME-Typ, z. B. "application/pdf".
+    let mimeType: String
+    /// Inhalt des Anhangs.
+    let data: Data
+    /// Content-ID ohne spitze Klammern; gesetzt = eingebettetes Bild
+    /// (Inline-Teil), `nil` = gewöhnlicher Anhang.
+    var contentID: String? = nil
+}
+
+/// Eine versandfertige Nachricht.
+struct OutgoingMail {
+    /// Absende-Postfach.
+    var accountID: UUID
+    /// Empfänger (To).
+    var to: [MailAddress]
+    /// Kopie-Empfänger (Cc).
+    var cc: [MailAddress] = []
+    /// Blindkopie-Empfänger (Bcc); erscheinen nur in der eigenen Gesendet-Kopie.
+    var bcc: [MailAddress] = []
+    /// Betreff.
+    var subject: String
+    /// Vollständiger HTML-Body inkl. Zitat bzw. weitergeleitetem Inhalt.
+    var htmlBody: String
+    /// Nur-Text-Alternative desselben Inhalts.
+    var textBody: String
+    /// Mitzusendende Anhänge.
+    var attachments: [OutgoingAttachment] = []
+    /// Message-ID der beantworteten Nachricht (Header In-Reply-To).
+    var inReplyTo: String?
+    /// References-Kette für das Threading beim Empfänger.
+    var references: String?
+    /// Bezugsnachricht, die nach dem Versand markiert wird.
+    var origin: Origin?
+
+    /// Bezug auf die Originalnachricht einer Antwort oder Weiterleitung.
+    /// Enthält alles, um genau diese Nachricht auf dem Server und im Cache
+    /// wiederzufinden.
+    struct Origin: Equatable {
+        /// Art der Markierung nach dem Versand.
+        enum Kind: Equatable { case replied, forwarded }
+
+        /// Beantwortet oder weitergeleitet.
+        let kind: Kind
+        /// Kennung im lokalen Cache (`CachedMessage.id`).
+        let cachedMessageID: String
+        /// Postfach der Originalmail (kann vom Absende-Postfach abweichen).
+        let accountID: UUID
+        /// IMAP-Ordner der Originalmail. Pflicht, weil die UID nur
+        /// innerhalb dieses Ordners eindeutig ist.
+        let folder: String
+        /// UID der Originalmail im Ordner `folder`.
+        let uid: UInt32
+    }
+}
+
+extension OutgoingMail.Origin {
+    /// Bildet den Bezug auf die Originalnachricht aus der Art des Verfassens.
+    ///
+    /// Verarbeitung: Antworten und Allen antworten ergeben `.replied`,
+    /// Weiterleiten `.forwarded`. Postfach, Ordner und UID werden aus der
+    /// Originalnachricht übernommen. Eine neue Mail hat keinen Bezug.
+    ///
+    /// - Parameters:
+    ///   - composeKind: Art des Verfassens (neu, antworten, weiterleiten).
+    ///   - original: Originalnachricht aus dem Cache; `nil` bei neuer Mail.
+    /// - Returns: Der Bezug, oder `nil` bei neuer Mail bzw. ohne Original.
+    init?(composeKind: ComposeKind, original: CachedMessage?) {
+        guard let original else { return nil }
+        let kind: Kind
+        switch composeKind {
+        case .reply, .replyAll: kind = .replied
+        case .forward: kind = .forwarded
+        case .new: return nil
+        }
+        self.init(
+            kind: kind,
+            cachedMessageID: original.id,
+            accountID: original.accountID,
+            folder: original.folder,
+            uid: original.uid
+        )
+    }
+}
+
+/// Ergebnis eines erfolgreichen Versands.
+struct SendReport: Equatable {
+    /// Ordner, in dem die Gesendet-Kopie abgelegt wurde (nil = nicht abgelegt).
+    var sentCopyFolder: String?
+    /// Hinweise zu Nacharbeiten, die nach dem Versand nicht geklappt haben.
+    var warnings: [String] = []
+}
+
+/// Versand einer Nachricht samt Gesendet-Kopie und Markierung des Originals.
+enum MailSendService {
+
+    // MARK: - Fehler
+
+    /// Fehler, bei denen die Nachricht nicht (sicher) versendet wurde.
+    enum SendError: LocalizedError, Equatable {
+        /// Die Absenderadresse des Postfachs (`senderAddress`) ist ungültig.
+        case invalidSender(String)
+        /// Kein Empfänger angegeben.
+        case noRecipients
+        /// Eine Empfängeradresse ist ungültig.
+        case invalidRecipient(String)
+        /// Die Nachricht überschreitet das Größenlimit des Servers.
+        case messageTooLarge(size: Int, limit: Int)
+        /// Die Anmeldung am Versandserver ist gescheitert; Antwort des
+        /// Servers, falls bekannt (`nil`, wenn er die Verbindung beendet hat).
+        case loginRejected(String?)
+        /// Die Anmeldung per OAuth 2 am Versandserver ist gescheitert;
+        /// Antwort des Servers, falls bekannt.
+        case tokenRejected(String?)
+        /// Der Server hat die Nachricht endgültig abgelehnt.
+        case rejected(String)
+        /// Abbruch an einer Stelle, an der die Nachricht schon raus sein kann.
+        case uncertain(String)
+        /// Versand gescheitert; ein erneuter Versuch ist gefahrlos.
+        case failed(String)
+
+        /// Liefert die deutsche Meldung für den Nutzer.
+        ///
+        /// Verarbeitung: Ordnet jedem Fall einen verständlichen Text zu.
+        /// `uncertain` weist ausdrücklich darauf hin, vor einem erneuten
+        /// Versand zu prüfen, ob die Nachricht schon raus ist.
+        ///
+        /// - Returns: Meldungstext für die Anzeige.
+        var errorDescription: String? {
+            switch self {
+            case .invalidSender(let address):
+                return "Die Absenderadresse „\(address)“ ist ungültig. Bitte die E-Mail-Adresse des Postfachs prüfen."
+            case .noRecipients:
+                return "Bitte mindestens einen Empfänger angeben."
+            case .invalidRecipient(let address):
+                return "Die Empfängeradresse „\(address)“ ist ungültig."
+            case .messageTooLarge(let size, let limit):
+                return "Die Nachricht ist mit \(Self.megabytes(size)) zu groß. Der Server erlaubt höchstens \(Self.megabytes(limit))."
+            case .loginRejected(let reply):
+                return SMTPLoginFailure.message(serverReply: reply)
+            case .tokenRejected(let reply):
+                let detail = reply?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let suffix = detail.isEmpty ? "" : " (\(detail))"
+                return "Der Versandserver hat die Anmeldung nicht angenommen\(suffix). Bitte unter „Postfach bearbeiten“ erneut anmelden."
+            case .rejected(let detail):
+                return "Der Server hat die Nachricht abgelehnt: \(detail)"
+            case .uncertain(let detail):
+                return "Es ist unklar, ob die Nachricht versendet wurde (\(detail)). Bitte vor einem erneuten Versand im Gesendet-Ordner oder beim Empfänger prüfen."
+            case .failed(let detail):
+                return "Versand fehlgeschlagen: \(detail)"
+            }
+        }
+
+        /// Formatiert eine Bytezahl als lesbare Größe.
+        ///
+        /// - Parameter bytes: Größe in Bytes.
+        /// - Returns: Größe mit Einheit, z. B. "12,3 MB".
+        private static func megabytes(_ bytes: Int) -> String {
+            ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+        }
+    }
+
+    /// Fehler der Nacharbeiten nach dem Versand; werden zu Warnungen.
+    private enum PostSendError: LocalizedError {
+        /// Kein Gesendet-Ordner auf dem Server.
+        case sentFolderNotFound
+
+        /// Liefert die deutsche Meldung für den Nutzer.
+        ///
+        /// - Returns: Meldungstext für die Warnung.
+        var errorDescription: String? {
+            switch self {
+            case .sentFolderNotFound:
+                return "Auf dem Server wurde kein Gesendet-Ordner gefunden."
+            }
+        }
+    }
+
+    // MARK: - Versand
+
+    /// Versendet eine Nachricht und erledigt anschließend die Nacharbeiten.
+    ///
+    /// Verarbeitung: Prüft Absender und Empfänger, baut die Nachricht mit
+    /// eigener Message-ID, versendet sie per SMTP und legt danach die Kopie
+    /// im Gesendet-Ordner ab. Bei Antworten und Weiterleitungen wird zuletzt
+    /// die Originalnachricht markiert. Fehler der Nacharbeiten werden als
+    /// Warnungen im Ergebnis gemeldet, nicht geworfen.
+    ///
+    /// - Parameters:
+    ///   - mail: Versandfertige Nachricht.
+    ///   - accountStore: Quelle für Postfach und Zugang.
+    /// - Returns: Ablageort der Gesendet-Kopie und Warnungen.
+    /// - Throws: `MailCredentialError`, wenn Postfach oder Passwort fehlen,
+    ///   `OAuthError.signInRequired`, wenn die Anmeldung per OAuth 2
+    ///   abgelaufen ist, sonst `SendError`, wenn die Nachricht nicht oder
+    ///   nicht sicher versendet wurde.
+    static func send(_ mail: OutgoingMail, accountStore: AccountStore) async throws -> SendReport {
+        let credentials = try accountStore.credentials(for: mail.accountID)
+        let account = credentials.account
+
+        // Absender prüfen – E-Mail-Adresse des Postfachs, sonst Benutzername
+        let senderAddress = account.senderAddress
+        guard senderAddress.isValidEmail() else {
+            throw SendError.invalidSender(senderAddress)
+        }
+
+        // Empfänger prüfen
+        let allRecipients = mail.to + mail.cc + mail.bcc
+        guard !allRecipients.isEmpty else { throw SendError.noRecipients }
+        if let invalid = allRecipients.first(where: { !$0.isValid }) {
+            throw SendError.invalidRecipient(invalid.address)
+        }
+
+        let email = makeEmail(mail, account: account, senderAddress: senderAddress)
+        Log.send.info("✉️ [\(account.displayName, privacy: .private)] Versand beginnt über \(account.smtpHost, privacy: .public):\(account.smtpPort, privacy: .public)")
+
+        // 1. Versand – Fehler brechen hier ab
+        try await submit(email, credentials: credentials)
+        Log.send.info("✉️ [\(account.displayName, privacy: .private)] Nachricht versendet: \(email.messageID?.description ?? "-", privacy: .private)")
+
+        // 2. + 3. Nacharbeiten – Fehler werden zu Warnungen
+        var report = SendReport()
+        if account.savesSentCopy {
+            do {
+                report.sentCopyFolder = try await saveSentCopy(
+                    email, bcc: mail.bcc, credentials: credentials
+                )
+            } catch {
+                report.warnings.append(
+                    "Die Nachricht wurde gesendet, die Kopie konnte aber nicht im Gesendet-Ordner abgelegt werden: \(error.localizedDescription)"
+                )
+            }
+        } else {
+            Log.send.info("📤 [\(account.displayName, privacy: .private)] Keine eigene Gesendet-Kopie (im Postfach ausgeschaltet)")
+        }
+
+        if let origin = mail.origin {
+            do {
+                try await markOriginal(origin, accountStore: accountStore)
+            } catch {
+                let what = origin.kind == .replied ? "beantwortet" : "weitergeleitet"
+                report.warnings.append(
+                    "Die Nachricht wurde gesendet, die Originalnachricht konnte aber nicht als \(what) markiert werden: \(error.localizedDescription)"
+                )
+            }
+        }
+        return report
+    }
+
+    // MARK: - Nachricht aufbauen
+
+    /// Baut aus der verfassten Nachricht das SwiftMail-Objekt.
+    ///
+    /// Verarbeitung: Übernimmt Empfänger, Betreff, Text- und HTML-Teil sowie
+    /// Anhänge und eingebettete Bilder. Text und HTML bekommen einheitlich
+    /// CRLF als Zeilenende (`MailLineEndings`) – sonst sendet SwiftMail bei
+    /// 8BITMIME einzelne LF, die strenge Server ablehnen. Erzeugt eine
+    /// Message-ID aus der Absenderdomain, die für Versand und Gesendet-Kopie
+    /// gleich bleibt, und setzt die Threading-Header In-Reply-To und
+    /// References.
+    ///
+    /// - Parameters:
+    ///   - mail: Verfasste Nachricht.
+    ///   - account: Absende-Postfach (liefert den Absendernamen).
+    ///   - senderAddress: Geprüfte Absenderadresse.
+    /// - Returns: Versandfertiges `Email`-Objekt.
+    static func makeEmail(
+        _ mail: OutgoingMail,
+        account: MailAccount,
+        senderAddress: String
+    ) -> Email {
+        // Eingebettete Bilder als Inline-Teile mit ihrer Content-ID; SwiftMail
+        // fasst sie mit dem HTML in „multipart/related“ zusammen.
+        let attachments = mail.attachments.map {
+            SwiftMail.Attachment(
+                filename: $0.filename, mimeType: $0.mimeType, data: $0.data,
+                contentID: $0.contentID, isInline: $0.contentID != nil
+            )
+        }
+        var email = Email(
+            sender: SwiftMail.EmailAddress(name: account.senderName, address: senderAddress),
+            recipients: mail.to.map(\.emailAddress),
+            ccRecipients: mail.cc.map(\.emailAddress),
+            bccRecipients: mail.bcc.map(\.emailAddress),
+            subject: mail.subject,
+            textBody: MailLineEndings.crlf(mail.textBody),
+            htmlBody: MailLineEndings.crlf(mail.htmlBody),
+            attachments: attachments.isEmpty ? nil : attachments
+        )
+
+        // Eine Message-ID für Versand UND Gesendet-Kopie
+        let domain = senderAddress.split(separator: "@").last.map(String.init) ?? "localhost"
+        email.messageID = MessageID.generate(domain: domain)
+
+        var headers: [String: String] = [:]
+        if let inReplyTo = mail.inReplyTo { headers["In-Reply-To"] = inReplyTo }
+        if let references = mail.references { headers["References"] = references }
+        email.additionalHeaders = headers.isEmpty ? nil : headers
+        return email
+    }
+
+    // MARK: - 1. SMTP
+
+    /// Versendet die Nachricht per SMTP.
+    ///
+    /// Verarbeitung: Verbindet verschlüsselt, meldet sich an und prüft vorab
+    /// das Größenlimit des Servers, um eine verständliche Meldung geben zu
+    /// können. Danach wird versendet. Die Verbindung wird an genau einer
+    /// Stelle geschlossen – nach Erfolg wie nach Fehler. Der erreichte
+    /// Schritt (`SMTPStep`) wird mitgeführt: Er steht im Protokoll und
+    /// entscheidet in `sendError(for:step:)`, ob eine gescheiterte Anmeldung
+    /// gemeldet wird.
+    ///
+    /// Für die Größenprüfung baut SwiftMail die Nachricht einmal zusätzlich
+    /// zusammen. Das ist Absicht: Nur so stimmt die Größe genau (Kodierung,
+    /// Kopfzeilen, Trennlinien); eine Schätzung würde knapp unter dem Limit
+    /// falsch entscheiden. Geprüft wird nur, wenn der Server ein Limit meldet.
+    ///
+    /// Ist die Anmeldung per OAuth 2 abgelaufen (`OAuthError`), geht dieser
+    /// Fehler unverändert weiter – er ist keine Ablehnung durch den Server.
+    /// Lehnt der Server ein Token ab, wird daraus `tokenRejected` (statt
+    /// des Hinweises auf Benutzername und Passwort).
+    ///
+    /// - Parameters:
+    ///   - email: Versandfertige Nachricht.
+    ///   - credentials: Absende-Postfach (SMTP-Server, Benutzername) und
+    ///     Zugang.
+    /// - Throws: `SendError` bei jedem Fehlschlag, `OAuthError` bei der
+    ///   Anmeldung per OAuth 2.
+    private static func submit(_ email: Email, credentials: MailCredentials) async throws {
+        let account = credentials.account
+        let smtp = MailServerFactory.smtpServer(for: account)
+        var failure: Error?
+        var step = SMTPStep.connect
+        do {
+            try await smtp.connect()
+            step = .login
+            try await MailSession.authenticate(smtp, as: credentials)
+            step = .send
+
+            // Größenlimit des Servers vorab prüfen → verständliche Meldung
+            if let limit = await smtp.maximumMessageSizeOctets, limit > 0 {
+                let use8Bit = await smtp.supports8BitMIME
+                let size = email.constructContent(use8BitMIME: use8Bit).utf8.count
+                if size > limit {
+                    throw SendError.messageTooLarge(size: size, limit: limit)
+                }
+            }
+
+            _ = try await smtp.sendEmail(email)
+        } catch {
+            failure = error
+        }
+        try? await smtp.disconnect()
+        if let failure {
+            Log.send.error("❌ [\(account.displayName, privacy: .private)] Versand gescheitert beim Schritt \(step.rawValue, privacy: .public): \(failure.localizedDescription, privacy: .public)")
+            if let oauthError = failure as? OAuthError { throw oauthError }
+            if case .oauth = credentials.secret, step == .login {
+                var reply: String?
+                if case SMTPError.authenticationFailed(let text) = failure { reply = text }
+                throw SendError.tokenRejected(reply)
+            }
+            throw sendError(for: failure, step: step)
+        }
+    }
+
+    /// Übersetzt einen Fehler beim Versand in einen `SendError`.
+    ///
+    /// Verarbeitung: Eigene `SendError` bleiben unverändert. Scheitert der
+    /// Schritt „Anmelden“, wird daraus `loginRejected` – mit der Antwort des
+    /// Servers, wenn SwiftMail sie liefert; ohne, wenn der Server die
+    /// Verbindung beendet hat (dann meldet SwiftMail nur einen NIO-Fehler).
+    /// SMTP-Fehler beim Senden werden nach ihrer Wiederholbarkeit
+    /// eingeordnet: endgültig → `rejected`, unsicher → `uncertain`,
+    /// wiederholbar → `failed`. Alles andere (z. B. Verbindungsfehler) wird
+    /// zu `failed`.
+    ///
+    /// - Parameters:
+    ///   - error: Aufgetretener Fehler.
+    ///   - step: Schritt, in dem der Fehler auftrat.
+    /// - Returns: Fehler für den Aufrufer.
+    private static func sendError(for error: Error, step: SMTPStep) -> SendError {
+        if let sendError = error as? SendError { return sendError }
+        if step == .login {
+            if case SMTPError.authenticationFailed(let reply) = error {
+                return .loginRejected(reply)
+            }
+            return .loginRejected(nil)
+        }
+        guard let smtpError = error as? SMTPSendError else {
+            return .failed(error.localizedDescription)
+        }
+        switch smtpError.retryDisposition {
+        case .permanent:
+            let detail = smtpError.response.map { "\($0.code) \($0.message)" } ?? smtpError.localizedDescription
+            return .rejected(detail)
+        case .unsafeToRetry:
+            return .uncertain(smtpError.localizedDescription)
+        case .retryable:
+            return .failed(smtpError.localizedDescription)
+        }
+    }
+
+    // MARK: - 2. Gesendet-Kopie
+
+    /// Legt die versendete Nachricht im Gesendet-Ordner ab.
+    ///
+    /// Verarbeitung: Ergänzt einen Bcc-Header, damit die Bcc-Empfänger in
+    /// der eigenen Kopie sichtbar bleiben, sucht den Gesendet-Ordner und
+    /// legt die Kopie dort als gelesen ab (IMAP APPEND).
+    ///
+    /// - Parameters:
+    ///   - email: Versendete Nachricht.
+    ///   - bcc: Blindkopie-Empfänger für den Bcc-Header der Kopie.
+    ///   - credentials: Absende-Postfach und Zugang.
+    /// - Returns: Pfad des Gesendet-Ordners.
+    /// - Throws: Verbindungsfehler oder `PostSendError.sentFolderNotFound`.
+    private static func saveSentCopy(
+        _ email: Email,
+        bcc: [MailAddress],
+        credentials: MailCredentials
+    ) async throws -> String {
+        let copy = addingBccHeader(email, bcc: bcc)
+
+        return try await MailSession.withIMAP(credentials) { imap in
+            let folder = try await sentFolderPath(imap)
+            try await imap.append(email: copy, to: folder, flags: [SwiftMail.Flag.seen])
+            Log.send.info("📤 [\(credentials.account.displayName, privacy: .private)] Kopie abgelegt in \(folder, privacy: .public)")
+            return folder
+        }
+    }
+
+    /// Ergänzt einen Bcc-Header für eine eigene Kopie (Gesendet, Entwurf).
+    ///
+    /// Verarbeitung: Beim Versand bleiben Bcc-Empfänger unsichtbar; in der
+    /// eigenen Kopie sollen sie erkennbar sein.
+    ///
+    /// - Parameters:
+    ///   - email: Nachricht.
+    ///   - bcc: Blindkopie-Empfänger; leer = unverändert.
+    /// - Returns: Nachricht mit Bcc-Header.
+    static func addingBccHeader(_ email: Email, bcc: [MailAddress]) -> Email {
+        guard !bcc.isEmpty else { return email }
+        var copy = email
+        var headers = copy.additionalHeaders ?? [:]
+        headers["Bcc"] = bcc.map { $0.emailAddress.description }.joined(separator: ", ")
+        copy.additionalHeaders = headers
+        return copy
+    }
+
+    /// Ermittelt den Gesendet-Ordner des Postfachs.
+    ///
+    /// Verarbeitung: Bevorzugt den Ordner mit dem SPECIAL-USE-Attribut
+    /// `\Sent`. Fehlt es, wird über gängige deutsche und englische
+    /// Ordnernamen gesucht (letztes Segment des Pfads, ohne Groß-/Kleinschreibung).
+    ///
+    /// - Parameter imap: Angemeldete IMAP-Verbindung.
+    /// - Returns: Vollständiger Pfad des Gesendet-Ordners.
+    /// - Throws: Verbindungsfehler oder `PostSendError.sentFolderNotFound`.
+    private static func sentFolderPath(_ imap: IMAPServer) async throws -> String {
+        let mailboxes = try await imap.listMailboxes(wildcard: "*")
+
+        if let sent = mailboxes.first(where: { $0.attributes.contains(.sent) }) {
+            return sent.name
+        }
+
+        let knownNames: Set<String> = [
+            "sent", "sent items", "sent messages", "sent mail",
+            "gesendet", "gesendete objekte", "gesendete elemente", "gesendete nachrichten"
+        ]
+        let byName = mailboxes.first { mailbox in
+            let lastSegment = mailbox.hierarchyDelimiter
+                .flatMap { mailbox.name.components(separatedBy: $0).last } ?? mailbox.name
+            return knownNames.contains(lastSegment.lowercased())
+        }
+        guard let byName else { throw PostSendError.sentFolderNotFound }
+        return byName.name
+    }
+
+    // MARK: - 3. Original markieren
+
+    /// Markiert die Originalnachricht als beantwortet bzw. weitergeleitet.
+    ///
+    /// Verarbeitung: Meldet sich am Postfach der Originalnachricht an (es
+    /// kann vom Absende-Postfach abweichen), wählt **deren Ordner** und setzt
+    /// dort `\Answered` bzw. `$Forwarded` auf die UID. Danach wird der
+    /// lokale Cache entsprechend aktualisiert.
+    ///
+    /// - Parameters:
+    ///   - origin: Bezug auf die Originalnachricht (Postfach, Ordner, UID).
+    ///   - accountStore: Quelle für Postfach und Zugang.
+    /// - Throws: `MailCredentialError` oder Verbindungsfehler.
+    private static func markOriginal(
+        _ origin: OutgoingMail.Origin,
+        accountStore: AccountStore
+    ) async throws {
+        let credentials = try accountStore.credentials(for: origin.accountID)
+        let flag: SwiftMail.Flag = origin.kind == .replied
+            ? .answered
+            : .custom(FlagState.forwardedKeyword)
+
+        try await MailSession.withIMAP(credentials) { imap in
+            _ = try await imap.selectMailbox(origin.folder)
+            let uidSet = SwiftMail.UIDSet([SwiftMail.UID(origin.uid)])
+            try await imap.store(flags: [flag], on: uidSet, operation: .add)
+        }
+
+        switch origin.kind {
+        case .replied:
+            MessageStore.shared.updateAnswered(messageID: origin.cachedMessageID, isAnswered: true)
+        case .forwarded:
+            MessageStore.shared.updateForwarded(messageID: origin.cachedMessageID, isForwarded: true)
+        }
+    }
+}

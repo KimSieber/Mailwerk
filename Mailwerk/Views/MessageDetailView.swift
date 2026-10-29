@@ -1,0 +1,1129 @@
+//
+//  MessageDetailView.swift
+//  Mailwerk
+//
+//  Zweck: Ansicht einer einzelnen Mail – Kopfdaten, Inhalt (HTML oder
+//  Text), Anhänge mit Vorschau, Teilen und Nachladen sowie das
+//  Aktionsmenü (gemeinsamer Baustein `MessageMenuItems`, ergänzt um
+//  Teilen, Drucken und Anlagen lokal löschen) und die Ausführung seiner
+//  Aktionen.
+//
+//  Eine ungelesene Mail wird beim Öffnen als gelesen markiert.
+//
+//  Kopf und Anhänge liegen auf der getönten Fläche der App, der Inhalt
+//  der Mail ungetönt auf einer Karte über die volle Breite (AppTheme).
+//
+//  Aktionen an der Mail laufen über `MessageActions` (Server und Cache
+//  gemeinsam). Meldungen und Rückfragen haben je einen Kanal
+//  (`activeAlert`, `activeConfirmation`, siehe Dialogs.swift).
+//
+//  Abgrenzung: Kopfbereich und Hinweise auf externe Inhalte und auf eine
+//  Übersetzung → MessageDetailHeader; Anhangliste → MessageAttachmentList;
+//  Menüeinträge → MessageMenu; Rückfragen und Meldungen zu den Aktionen →
+//  MessageActionDialogs; Laden der Mail aus dem Cache → MessageDetailLoader;
+//  HTML-Darstellung → HTMLMailView; Verfassen → ComposeView; Ordnerwahl →
+//  FolderMoveSheet; Anhang-Zeile → AttachmentRow; Druck → MailPrinter;
+//  HTML für Druck und Teilen → MailPrintFormatter; Regeln für externe
+//  Inhalte → RemoteContentPolicy; Originalquelle → RawSourceView;
+//  Spracherkennung und Prüfung der Übersetzbarkeit → MessageLanguage.
+//
+//  Übersetzung (v0.2.2a, Apples on-device-Übersetzung): Erkennt
+//  MessageLanguage beim Öffnen eine fremde, übersetzbare Sprache im Text
+//  der Mail, erscheint ein Hinweis mit Knopf „<Sprache> übersetzen“ unter
+//  einem eventuellen Hinweis auf externe Inhalte. Ein Tipp übersetzt
+//  Betreff und Text über eine `TranslationSession` (`.translationTask`,
+//  ausgelöst durch `translationConfiguration`); der Text erscheint dabei
+//  als reiner Text, nicht als HTML – Formatierung ist hier zweitrangig.
+//  Die Übersetzung dient nur der Anzeige: nichts wird im Cache verändert,
+//  ein Mailwechsel verwirft sie. „Original anzeigen“ schaltet zurück,
+//  ohne erneut zu übersetzen (das Ergebnis bleibt für diese Anzeige
+//  erhalten). Schlägt die Übersetzung fehl, bietet der Hinweis „Erneut
+//  versuchen“. Kennt Apple das Sprachpaar nicht, erscheint von vornherein
+//  kein Hinweis.
+//
+//  Spam-Einschätzung: Beim Öffnen wird der Text (z. B. `[SPAM score=7.2]`,
+//  `[NoSpam score=2.1]`, `[NoSpam]`)
+//  aus Listen und gespeichertem Befund gebildet (SpamFilterService.spamMark)
+//  und rechts in der Datumszeile des Kopfs gezeigt.
+//
+//  Externe Inhalte (Bilder, Stylesheets von fremden Servern) sind
+//  gesperrt. Ausnahme: Ist der Absender vertrauenswürdig (Whitelist, kein
+//  gelieferter Score ab der Obergrenze, siehe SpamClassifier.trustsSender),
+//  werden sie sofort geladen. Sonst erscheint über dem Text ein schmaler Hinweis
+//  mit dem Knopf „Laden“. Die Freigabe per Knopf gilt nur für diese
+//  Anzeige der Mail; beim nächsten Öffnen ist wieder alles gesperrt.
+//  Entschieden wird, bevor der HTML-Inhalt zum ersten Mal erscheint – so
+//  wird nichts doppelt geladen. Drucken und Teilen folgen dem Zustand der
+//  Anzeige.
+//
+//  Teilen läuft über `ShareLink` im Menü – auf iPhone/iPad das
+//  Teilen-Blatt, auf dem Mac das Teilen-Untermenü des Systems. Die Dateien
+//  (Mail als HTML, geladene Anhänge) werden kurz nach dem Öffnen im
+//  Hintergrund geschrieben; bis dahin ist „Teilen“ ausgegraut.
+//
+//  Öffnen ohne Hänger (v0.2.3d, Prüfbericht P-11): Anhänge lesen, Bilder
+//  einsetzen, externe Verweise suchen, Sprache erkennen und die Dateien
+//  zum Teilen schreiben laufen im Hintergrund (MessageOpenPreparation).
+//  Die Ansicht übernimmt nur noch die fertigen Ergebnisse.
+//
+//  Eingebettete Bilder (`cid:`) erscheinen im Text: Das HTML wird mit den
+//  Bildern aus dem Cache aufgelöst (InlineImages), auch wenn externe
+//  Inhalte gesperrt sind – sie gehören zur Mail. Fehlen Bilder, lädt die
+//  Ansicht sie beim Öffnen im Hintergrund nach (InlineImageLoader); ohne
+//  Netz bleiben sie still leer. Die Anhangliste zeigt nur echte Anhänge und
+//  nicht angesprochene Inline-Bilder; „Anlagen lokal löschen“ lässt die
+//  Bilder im Text stehen. Drucken und Teilen folgen der Anzeige.
+//
+//  Personen im Mailkopf (MessageDetailHeader) haben ein Menü: „Neue E-Mail
+//  an …“ öffnet das Verfassen-Fenster wie ein mailto-Link (Absender ist das
+//  Postfach dieser Mail), „Kontaktkarte anzeigen“ die Apple-Kontaktkarte
+//  (ContactCardView), „Suchen nach …“ schließt die Mail und sucht in der
+//  Liste (`onSearchPerson`).
+//
+//  Neben den Kopfdaten steht der Kreis aus der Liste (Kontaktbild, Logo,
+//  Initialen; in Gesendet/Entwürfen der erste Empfänger). Ob ein Bild
+//  erlaubt ist, entscheidet beim Öffnen dieselbe Regel wie in der Liste
+//  (SpamFilterService.allowsSenderImage).
+//
+//  Im Spaltenlayout des iPad stehen links oben der Knopf für Vollbild und
+//  Spaltenansicht sowie die Pfeile zur vorigen und nächsten Mail der Liste
+//  (`MessageStepButtons`). Auf dem iPhone und in Blättern fehlen sie.
+//
+//  Mac: Statt Einträgen der System-Symbolleiste steht oben eine
+//  eigene Kopfleiste (MacDetailHeaderBar): mittig das Postfach, rechts
+//  Antworten, Allen antworten, Weiterleiten und das Aktionsmenü, in der einspaltigen Darstellung links
+//  ein Zurück-Knopf (`onBack`). Vollbild-Knopf und Pfeile entfallen dort.
+//
+//  Ganz unten im Menü, abgesetzt, steht „Originalquelle“ (RawSourceView):
+//  die Mail als reiner Text mit allen Kopfzeilen, für Analysen. Mit
+//  Tastatur auch per ⌥⌘U, wie in Apple Mail.
+//
+//  Abhängigkeiten: SwiftUI, QuickLook, WebKit, Translation, MessageActions,
+//  MessageMenu, MessageActionDialogs, MessageDetailHeader,
+//  MessageAttachmentList, SpamFilterService,
+//  AttachmentManager, MessageStore, MessageOpenPreparation, RemoteContentPolicy,
+//  RawSourceView, InlineImages, InlineImageLoader, NetworkMonitor, Dialogs,
+//  AppTheme, HeaderPerson, ContactCardView, MailtoLink, SearchPerson,
+//  ExternalMailtoPresenter (Blätter melden sich als offene Fenster),
+//  MacDetailHeaderBar (nur Mac),
+//  MessageRowParty, SenderAvatarView, ContactImageDirectory,
+//  SenderIconCache, MessageLanguage, SearchText, Log.
+//
+
+import SwiftUI
+import QuickLook
+import WebKit
+import Translation
+import os
+
+/// Ansicht einer einzelnen Mail.
+struct MessageDetailView: View {
+    /// Angezeigte Mail.
+    let message: CachedMessage
+    /// Quelle für Postfächer und Zugangsdaten.
+    let accountStore: AccountStore
+    /// Spamfilter für Blockieren und Vertrauen sowie für die Prüfung
+    /// vertrauenswürdiger Absender.
+    let spamFilter: SpamFilterService
+    /// Score-Obergrenze für vertrauenswürdige Absender.
+    let scoreLimit: Double
+    /// Wird nach jeder Änderung aufgerufen (Liste neu laden).
+    let onChange: (() -> Void)?
+    /// Startet in der Liste die Suche nach einer Person („Suchen nach …“
+    /// im Menü einer Person des Mailkopfs); `nil` = ohne Liste, der
+    /// Eintrag entfällt.
+    let onSearchPerson: ((SearchPerson) -> Void)?
+    /// `true` in Gesendet und Entwürfen – der Kreis im Kopf zeigt dann wie
+    /// in der Liste den ersten Empfänger statt des Absenders.
+    let showsRecipients: Bool
+    /// Schaltet die Detailansicht auf dem iPad zwischen Spalte und Vollbild
+    /// um; `nil` = kein iPad-Spaltenlayout → kein Knopf.
+    let onToggleFullscreen: (() -> Void)?
+    /// `true`, wenn die Detailansicht den vollen Bildschirm einnimmt
+    /// (iPad); sonst teilt sie sich den Platz mit der Mailliste.
+    let isFullscreen: Bool
+    /// Vorige/nächste Mail der Liste (iPad-Spaltenlayout); `nil` = keine
+    /// Knöpfe.
+    let stepping: MessageStepButtons?
+    /// Schließt die Mail in der einspaltigen Darstellung des Mac
+    /// (Zurück-Knopf der Kopfleiste); `nil` = kein Knopf.
+    let onBack: (() -> Void)?
+
+    @Environment(\.dismiss) private var dismiss
+
+    /// Gemessene Höhe des HTML-Inhalts.
+    @State private var webViewHeight: CGFloat = 100
+    /// Text zur Spam-Einschätzung im Kopf; `nil` = keiner.
+    @State private var spamMark: String?
+    /// `true`, wenn der Kreis im Kopf ein Bild bzw. Initialen zeigen darf
+    /// (wie in der Liste); bis zur Prüfung bleibt er leer.
+    @State private var showsSenderImage = false
+    /// `true`, wenn die Mail externe Inhalte enthält (Hinweis anzeigen).
+    @State private var hasRemoteContent = false
+    /// `true`, wenn externe Inhalte für diese Anzeige freigegeben sind.
+    @State private var allowsRemoteContent = false
+    /// `true`, sobald über externe Inhalte entschieden ist; vorher wird
+    /// der HTML-Inhalt nicht angezeigt.
+    @State private var isRemoteContentDecided = false
+    /// Alle Anhänge der Mail aus dem Cache, einschließlich eingebetteter
+    /// Bilder.
+    @State private var attachments: [CachedAttachment] = []
+    /// Anhänge für Liste, Teilen, Drucken und lokales Löschen: echte
+    /// Anhänge und nicht angesprochene Inline-Bilder. Einmal je Änderung
+    /// der Anhänge im Hintergrund bestimmt (MessageOpenPreparation), nicht
+    /// bei jeder Neuzeichnung.
+    @State private var visibleAttachments: [CachedAttachment] = []
+    /// HTML der Mail mit eingesetzten eingebetteten Bildern; `nil`, solange
+    /// die Anhänge nicht gelesen sind. Wird nur bei geänderten Anhängen neu
+    /// gebildet, weil das Einsetzen großer Bilder Zeit kostet.
+    @State private var resolvedHTML: String?
+    /// Vorberechnet: `true`, wenn die Mail eigene Farben hat; `nil`, bis
+    /// die Vorbereitung durch ist (dann ermittelt die Web-Ansicht selbst).
+    @State private var usesOwnColors: Bool?
+    /// Datei für die QuickLook-Vorschau; `nil` = keine Vorschau offen.
+    @State private var previewURL: URL?
+    /// Temporäre Dateien der geladenen Anhänge zum Teilen, je Anhang-ID.
+    @State private var shareURLs: [String: URL] = [:]
+    /// Die Mail als temporäre HTML-Datei zum Teilen; `nil`, solange sie
+    /// nicht geschrieben ist.
+    @State private var mailFileURL: URL?
+    /// Zähler der Schreibvorgänge für das Teilen; nur das Ergebnis des
+    /// jüngsten wird übernommen (ältere, überholte verworfen).
+    @State private var shareFilesGeneration = 0
+    /// Anhänge, die gerade nachgeladen werden.
+    @State private var downloadingIDs: Set<String> = []
+    /// Gelesen-Zustand (lokal nachgeführt).
+    @State private var isUnread: Bool
+    /// Kennzeichnung (lokal nachgeführt).
+    @State private var isFlagged: Bool
+    /// `true`, solange eine Aktion an der Mail läuft.
+    @State private var isProcessingAction = false
+    /// Ordnerwahl zum Verschieben sichtbar.
+    @State private var showFolderPicker = false
+    /// Blatt „Originalquelle“ sichtbar.
+    @State private var showRawSource = false
+    /// Zu verfassende Antwort bzw. Weiterleitung.
+    @State private var composeRequest: ComposeRequest?
+    /// Getippter mailto:-Link aus der Mail bzw. „Neue E-Mail an …“ aus dem
+    /// Mailkopf → neue Mail in Mailwerk.
+    @State private var mailtoRequest: MailtoLink?
+    /// Person, deren Kontaktkarte gezeigt wird.
+    @State private var contactPerson: HeaderPerson?
+    /// Einziger Meldungskanal der Ansicht.
+    @State private var activeAlert: AlertItem?
+    /// Einziger Rückfragekanal der Ansicht.
+    @State private var activeConfirmation: ConfirmationRequest?
+
+    // MARK: - Übersetzung
+
+    /// Erkannte fremde Sprache der Mail; `nil` = Deutsch, nicht erkannt
+    /// oder nicht übersetzbar (dann auch kein Hinweis).
+    @State private var detectedLanguage: Locale.Language?
+    /// `true`, sobald die Spracherkennung gelaufen ist (läuft nur einmal
+    /// je Anzeige, analog `isRemoteContentDecided`).
+    @State private var isLanguageDecided = false
+    /// Zustand des Übersetzungs-Hinweises; `nil` = kein Hinweis.
+    @State private var translationNoticeState: TranslationNoticeState?
+    /// `true`, solange die übersetzte Fassung angezeigt wird.
+    @State private var showsTranslation = false
+    /// Übersetzter Betreff; bleibt auch nach „Original anzeigen“ erhalten,
+    /// damit erneutes Umschalten keinen neuen Übersetzungsversuch braucht.
+    @State private var translatedSubject: String?
+    /// Übersetzter Text (reiner Text, unabhängig von einer HTML-Mail).
+    @State private var translatedBody: String?
+    /// Löst `.translationTask` aus; eine neue Instanz startet einen neuen
+    /// Übersetzungsversuch (auch bei „Erneut versuchen“).
+    @State private var translationConfiguration: TranslationSession.Configuration?
+
+    /// Kapselt die Art der zu verfassenden Nachricht für das Sheet.
+    private struct ComposeRequest: Identifiable {
+        /// Kennung für SwiftUI.
+        let id = UUID()
+        /// Antworten, Allen antworten oder Weiterleiten.
+        let kind: ComposeKind
+    }
+
+    /// Übernimmt die Mail und die Abhängigkeiten.
+    ///
+    /// - Parameters:
+    ///   - message: Angezeigte Mail.
+    ///   - accountStore: Quelle für Postfächer und Zugangsdaten.
+    ///   - spamFilter: Spamfilter für Blockieren und Vertrauen.
+    ///   - scoreLimit: Score-Obergrenze für vertrauenswürdige Absender.
+    ///   - onChange: Wird nach jeder Änderung aufgerufen.
+    ///   - onSearchPerson: Suche nach einer Person in der Liste; `nil` =
+    ///     ohne Liste.
+    ///   - showsRecipients: `true` in Gesendet und Entwürfen.
+    ///   - onToggleFullscreen: Umschaltung Spalte/Vollbild (iPad); `nil` =
+    ///     kein Knopf.
+    ///   - isFullscreen: `true`, wenn die Detailansicht im Vollbild steht.
+    ///   - stepping: Vorige/nächste Mail (iPad); `nil` = keine Knöpfe.
+    ///   - onBack: Zurück-Knopf der Mac-Kopfleiste (eine Spalte); `nil` =
+    ///     kein Knopf.
+    init(
+        message: CachedMessage,
+        accountStore: AccountStore,
+        spamFilter: SpamFilterService,
+        scoreLimit: Double,
+        onChange: (() -> Void)? = nil,
+        onSearchPerson: ((SearchPerson) -> Void)? = nil,
+        showsRecipients: Bool = false,
+        onToggleFullscreen: (() -> Void)? = nil,
+        isFullscreen: Bool = false,
+        stepping: MessageStepButtons? = nil,
+        onBack: (() -> Void)? = nil
+    ) {
+        self.message = message
+        self.accountStore = accountStore
+        self.spamFilter = spamFilter
+        self.scoreLimit = scoreLimit
+        self.onChange = onChange
+        self.onSearchPerson = onSearchPerson
+        self.showsRecipients = showsRecipients
+        self.onToggleFullscreen = onToggleFullscreen
+        self.isFullscreen = isFullscreen
+        self.stepping = stepping
+        self.onBack = onBack
+        _isUnread = State(initialValue: message.isUnread)
+        _isFlagged = State(initialValue: message.isFlagged)
+    }
+
+    /// Ziel der Aktionen an dieser Mail.
+    private var target: MessageActions.Target { MessageActions.Target(message) }
+
+    /// Aufbau: Kopfdaten, Inhalt, Anhänge; Symbolleiste (Mac: eigene
+    /// Kopfleiste) mit Antworten und Menü; Sheets, Vorschau, Meldung und
+    /// Rückfrage.
+    var body: some View {
+        content
+            .navigationTitle(message.accountDisplayName)
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            #if os(macOS)
+            // Eigene Kopfleiste statt System-Symbolleiste (kein Flackern).
+            .safeAreaInset(edge: .top, spacing: 0) { macHeaderBar }
+            #else
+            .toolbar { toolbarContent }
+            #endif
+            .sheet(item: $mailtoRequest) { link in
+                // Neue Mail aus einem Link: Absender ist das Postfach dieser Mail.
+                ComposeView(
+                    accountStore: accountStore,
+                    kind: .new,
+                    mailto: link,
+                    senderAccountID: message.accountID,
+                    onSent: { onChange?() }
+                )
+                .countsAsOpenWindow()
+            }
+            .sheet(item: $composeRequest) { request in
+                ComposeView(
+                    accountStore: accountStore,
+                    kind: request.kind,
+                    original: message,
+                    onSent: { onChange?() }
+                )
+                .countsAsOpenWindow()
+            }
+            .sheet(isPresented: $showFolderPicker) {
+                Group {
+                    if let account = accountStore.accounts.first(where: { $0.id == message.accountID }) {
+                        FolderMoveSheet(
+                            account: account,
+                            currentFolder: message.folder,
+                            accountStore: accountStore
+                        ) { path in
+                            Task { await moveMessage(to: path) }
+                        }
+                    }
+                }
+                .countsAsOpenWindow()
+            }
+            .sheet(isPresented: $showRawSource) {
+                RawSourceView(message: message, accountStore: accountStore)
+                    .countsAsOpenWindow()
+            }
+            .sheet(item: $contactPerson) { person in
+                ContactCardView(person: person)
+                    .countsAsOpenWindow()
+            }
+            .background { rawSourceShortcut }
+            .quickLookPreview($previewURL)
+            .confirmationRequest($activeConfirmation)
+            .task { await prepareOnOpen() }
+            .translationTask(translationConfiguration) { session in
+                await performTranslation(session: session)
+            }
+    }
+
+    /// Unsichtbarer Knopf für ⌥⌘U (Originalquelle).
+    ///
+    /// Verarbeitung: Die Einträge eines Menüs in der Symbolleiste entstehen
+    /// erst beim Öffnen; ein Tastenkürzel daran wirkte nur bei offenem
+    /// Menü. Deshalb trägt ein eigener, unsichtbarer Knopf das Kürzel.
+    private var rawSourceShortcut: some View {
+        Button("Originalquelle") {
+            showRawSource = true
+        }
+        .keyboardShortcut("u", modifiers: [.command, .option])
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
+    }
+
+    // MARK: - Inhalt
+
+    /// Kopfdaten, Inhalt und Anhänge in einem Scrollbereich. Trägt den
+    /// Meldungskanal – getrennt vom Rückfragekanal am äußeren Element.
+    ///
+    /// Verarbeitung: Kopf und Anhänge liegen auf der getönten Fläche, der
+    /// Inhalt der Mail auf einer Karte über die volle Breite – so bleibt
+    /// die Mail ungetönt, und ihre Breite ist dieselbe wie ohne Karte.
+    private var content: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                MessageDetailHeader(
+                    message: message,
+                    isFlagged: isFlagged,
+                    onNewMail: { person in
+                        // Wie ein mailto-Link: Absender ist das Postfach dieser Mail.
+                        mailtoRequest = Self.mailto(to: person.address)
+                    },
+                    onContactCard: { contactPerson = $0 },
+                    onSearch: onSearchPerson == nil ? nil : { person in
+                        // Erst die Mail schließen, dann sucht die Liste.
+                        dismiss()
+                        onSearchPerson?(person.searchPerson)
+                    },
+                    spamMark: spamMark,
+                    avatar: headerAvatar,
+                    translatedSubject: showsTranslation ? translatedSubject : nil
+                )
+                .padding()
+                messageBody
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AppTheme.card)
+                if !visibleAttachments.isEmpty {
+                    MessageAttachmentList(
+                        attachments: visibleAttachments,
+                        downloadingIDs: downloadingIDs,
+                        shareURLs: shareURLs,
+                        onTap: { handleTap($0) }
+                    )
+                    .padding()
+                }
+            }
+        }
+        .appBackground()
+        .alertItem($activeAlert)
+    }
+
+    /// Inhalt der Mail samt Hinweisen auf externe Inhalte und Übersetzung.
+    /// Bis über externe Inhalte entschieden ist, bleibt nur der Platz
+    /// frei (Spracherkennung läuft parallel, bremst den Inhalt nicht).
+    @ViewBuilder
+    private var messageBody: some View {
+        if message.htmlBody != nil && !isRemoteContentDecided {
+            Color.clear.frame(height: 100)
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                // Externe Inhalte zuerst (Sicherheitsthema); eine
+                // übersetzte Anzeige hat kein HTML und damit auch keine
+                // externen Inhalte mehr, der Hinweis entfällt dann.
+                if hasRemoteContent && !allowsRemoteContent && !showsTranslation {
+                    RemoteContentNotice(onLoad: allowRemoteContent)
+                }
+                if let translationNoticeState {
+                    TranslationNotice(
+                        state: translationNoticeState,
+                        onTranslate: translate,
+                        onShowOriginal: showOriginal
+                    )
+                }
+                translatableContent
+            }
+        }
+    }
+
+    /// Übersetzte Fassung (reiner Text) oder die gewöhnliche Anzeige:
+    /// HTML bevorzugt, sonst Text.
+    @ViewBuilder
+    private var translatableContent: some View {
+        if showsTranslation, let translatedBody {
+            Text(translatedBody)
+        } else if let html = message.htmlBody {
+            HTMLMailView(
+                html: resolvedHTML ?? html,
+                contentHeight: $webViewHeight,
+                allowsRemoteContent: allowsRemoteContent,
+                onMailto: { mailtoRequest = $0 },
+                usesOwnColors: usesOwnColors,
+                onLoaded: { [messageID = message.id] in
+                    MessageOpenTimer.shared.finish(messageID: messageID)
+                }
+            )
+            .frame(height: max(100, webViewHeight))
+        } else if let text = message.textBody {
+            Text(text)
+        } else {
+            Text("Kein Inhalt verfügbar").foregroundStyle(.secondary)
+        }
+    }
+
+    /// mailto-Link an eine einzelne Adresse.
+    ///
+    /// - Parameter address: Empfänger.
+    /// - Returns: Link für das Verfassen-Fenster; `nil`, wenn sich die
+    ///   Adresse nicht als Link darstellen lässt.
+    private static func mailto(to address: String) -> MailtoLink? {
+        guard let encoded = address.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "mailto:\(encoded)") else { return nil }
+        return MailtoLink(url: url)
+    }
+
+    // MARK: - Symbolleiste und Menü
+
+    #if os(macOS)
+    /// Kopfleiste des Mac: Postfach mittig, Antworten, Allen antworten,
+    /// Weiterleiten und Aktionsmenü rechts, in der einspaltigen Darstellung der Zurück-Knopf links.
+    private var macHeaderBar: some View {
+        MacDetailHeaderBar(
+            accountName: message.accountDisplayName,
+            accountColor: accountColor,
+            onBack: onBack,
+            isEnabled: true,
+            isProcessing: isProcessingAction,
+            onReply: { composeRequest = ComposeRequest(kind: .reply) },
+            onReplyAll: { composeRequest = ComposeRequest(kind: .replyAll) },
+            onForward: { composeRequest = ComposeRequest(kind: .forward) },
+            actionMenu: { messageMenuItems }
+        )
+    }
+
+    /// Farbe des Postfachs der Mail; `nil` = keine gewählt.
+    private var accountColor: Color? {
+        accountStore.accounts.first { $0.id == message.accountID }?.colorHex.map { Color(hex: $0) }
+    }
+    #endif
+
+    #if !os(macOS)
+    /// Antworten (Tipp antwortet direkt, langes Drücken zeigt alle
+    /// Varianten) und das Aktionsmenü.
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        // iPad-Spaltenlayout: Knopf zum Vergrößern/Verkleinern links oben.
+        if onToggleFullscreen != nil {
+            ToolbarItem(placement: Self.fullscreenPlacement) {
+                Button {
+                    onToggleFullscreen?()
+                } label: {
+                    Label(
+                        isFullscreen ? "Spaltenansicht" : "Vollbild",
+                        systemImage: isFullscreen
+                            ? "arrow.down.right.and.arrow.up.left"
+                            : "arrow.up.left.and.arrow.down.right"
+                    )
+                }
+            }
+        }
+        // iPad-Spaltenlayout: vorige/nächste Mail der Liste. Ein Knopf ohne
+        // Ziel (Listenanfang bzw. -ende) ist ausgegraut. Die Pfeiltasten
+        // trägt die Liste (InboxView), damit sie auch ohne geöffnete Mail
+        // wirken.
+        if let stepping {
+            ToolbarItemGroup(placement: Self.fullscreenPlacement) {
+                Button {
+                    stepping.previous?()
+                } label: {
+                    Label("Vorige E-Mail", systemImage: "chevron.up")
+                }
+                .disabled(stepping.previous == nil)
+                Button {
+                    stepping.next?()
+                } label: {
+                    Label("Nächste E-Mail", systemImage: "chevron.down")
+                }
+                .disabled(stepping.next == nil)
+            }
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Menu {
+                ReplyMenuButtons(onAction: handleMenuAction)
+            } label: {
+                Image(systemName: "arrowshape.turn.up.left")
+            } primaryAction: {
+                composeRequest = ComposeRequest(kind: .reply)
+            }
+        }
+        ToolbarItem(placement: .primaryAction) {
+            if isProcessingAction {
+                ProgressView()
+            } else {
+                messageMenu
+            }
+        }
+    }
+
+    /// Platz des Vollbild-Knopfs und der Pfeile (vorige/nächste Mail):
+    /// links oben (`.topBarLeading`).
+    private static var fullscreenPlacement: ToolbarItemPlacement {
+        .topBarLeading
+    }
+
+    /// Aktionsmenü der Mail (iPhone/iPad, Symbolleiste).
+    private var messageMenu: some View {
+        Menu {
+            messageMenuItems
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .disabled(isProcessingAction)
+    }
+    #endif
+
+    /// Einträge des Aktionsmenüs: der gemeinsame Baustein, ergänzt um
+    /// Teilen, Drucken und Anlagen lokal löschen; ganz unten, als eigener
+    /// Abschnitt, die selten gebrauchte Originalquelle. Auf iPhone/iPad im
+    /// Menü der Symbolleiste, auf dem Mac im Menü „…“ der Kopfleiste.
+    @ViewBuilder
+    private var messageMenuItems: some View {
+        MessageMenuItems(context: menuContext, onAction: handleMenuAction) {
+            ShareLink(items: shareItems) {
+                Label("Teilen", systemImage: "square.and.arrow.up")
+            }
+            .disabled(shareItems.isEmpty)
+
+            Button {
+                printMessage()
+            } label: {
+                Label("Drucken", systemImage: "printer")
+            }
+
+            if hasLocalAttachmentData {
+                Button(role: .destructive) {
+                    confirmDeleteLocalAttachments()
+                } label: {
+                    Label("Anlagen lokal löschen", systemImage: "trash")
+                }
+            }
+        }
+        Section {
+            Button {
+                showRawSource = true
+            } label: {
+                Label(MessageMenuLabels.source.title, systemImage: MessageMenuLabels.source.systemImage)
+            }
+            .accessibilityLabel(MessageMenuLabels.source.accessibility)
+        }
+    }
+
+    /// Zustand der Mail für das Menü.
+    private var menuContext: MessageMenuContext {
+        MessageMenuContext(
+            isUnread: isUnread,
+            isFlagged: isFlagged,
+            sender: FilterAddress.sender(fromHeader: message.from)
+        )
+    }
+
+    /// Führt eine Aktion aus dem Menü aus.
+    ///
+    /// Verarbeitung: Löschen und Spam-Aktionen fragen vorher nach;
+    /// Verschieben öffnet die Ordnerwahl.
+    ///
+    /// - Parameter action: Gewählte Aktion.
+    private func handleMenuAction(_ action: MessageMenuAction) {
+        switch action {
+        case .select:
+            break  // gibt es nur im Kontextmenü der Liste
+        case .reply(let kind):
+            composeRequest = ComposeRequest(kind: kind)
+        case .toggleFlag:
+            Task { await toggleFlag() }
+        case .toggleRead:
+            Task { await toggleRead() }
+        case .move:
+            showFolderPicker = true
+        case .spam(let request):
+            activeConfirmation = MessageActionDialogs.spamConfirmation(request) {
+                Task { await performSpamAction(request) }
+            }
+        case .delete:
+            activeConfirmation = MessageActionDialogs.deleteConfirmation(count: 1) {
+                Task { await deleteMessage() }
+            }
+        }
+    }
+
+    /// Dateien zum Teilen: die Mail als HTML, danach die geladenen Anhänge
+    /// in ihrer Reihenfolge.
+    private var shareItems: [URL] {
+        [mailFileURL].compactMap { $0 } + visibleAttachments.compactMap { shareURLs[$0.id] }
+    }
+
+    /// `true`, wenn mindestens ein sichtbarer Anhang lokale Daten hat, die
+    /// gelöscht werden könnten.
+    private var hasLocalAttachmentData: Bool {
+        visibleAttachments.contains { $0.data != nil }
+    }
+
+    // MARK: - Kreis im Kopf
+
+    /// Inhalt des Kreises neben den Kopfdaten – dieselbe Reihenfolge wie
+    /// in der Liste: leer ohne Erlaubnis, sonst Kontaktbild, Logo und
+    /// ersatzweise die Initialen.
+    ///
+    /// Verarbeitung: Bilder werden nur bei Erlaubnis abgefragt, damit Spam
+    /// keinen Logo-Abruf auslöst. Die Abfrage im `body` beobachtet
+    /// Kontaktbilder und Logos; ein später geladenes Logo erscheint so
+    /// ohne erneutes Öffnen.
+    private var headerAvatar: SenderAvatar {
+        let recipients = message.headers.toList.isEmpty ? [message.to] : message.headers.toList
+        let party = MessageRowParty.make(
+            from: message.from,
+            recipients: recipients,
+            showsRecipients: showsRecipients
+        )
+        guard showsSenderImage else { return .empty }
+        if let image = ContactImageDirectory.shared.image(for: party.address) { return .image(image) }
+        if let logo = SenderIconCache.shared.image(forAddress: party.address) { return .logo(logo) }
+        return .initials(party.initials, colorIndex: party.colorIndex)
+    }
+
+    // MARK: - Beim Öffnen
+
+    /// Bereitet die Anzeige vor, entscheidet über externe Inhalte, erkennt
+    /// die Sprache, schreibt die Dateien zum Teilen, markiert eine
+    /// ungelesene Mail als gelesen und lädt fehlende Bilder nach.
+    ///
+    /// Verarbeitung: Die Vorbereitung (Anhänge, HTML mit Bildern, sichtbare
+    /// Anhänge, externe Verweise, Sprache) läuft im Hintergrund
+    /// (`MessageOpenPreparation.prepare`); hier werden nur die Ergebnisse
+    /// übernommen. Anhänge und Bilder kommen vor der Entscheidung über
+    /// externe Inhalte, damit der HTML-Inhalt gleich mit Bildern erscheint
+    /// und nicht zweimal geladen wird. Die Entscheidung über externe
+    /// Inhalte und die Spracherkennung fallen nur einmal je Anzeige – läuft
+    /// die Aufgabe erneut (z. B. nach einer Vorschau), bleibt eine Freigabe
+    /// per Knopf erhalten. Die Dateien zum Teilen entstehen erst danach.
+    /// Scheitert das Markieren, bleibt die Mail ungelesen; eine Meldung
+    /// erscheint nicht, weil der Nutzer nichts ausgelöst hat.
+    /// Messpunkt für Instruments: „Mail öffnen“ – nur die Vorbereitung auf
+    /// dem Gerät, ohne Teilen-Dateien, Markieren und Nachladen über das Netz.
+    @MainActor
+    private func prepareOnOpen() async {
+        let interval = Log.beginInterval(Log.Interval.openMessage)
+        let prepared = await MessageOpenPreparation.prepare(message, detectLanguage: !isLanguageDecided)
+        applyContent(prepared.content)
+        usesOwnColors = prepared.hints.usesOwnColors
+        if !isRemoteContentDecided {
+            await decideRemoteContent(hasRemoteReferences: prepared.hasRemoteContent)
+        }
+        if !isLanguageDecided, let language = prepared.language {
+            await decideLanguage(language)
+        }
+        spamMark = await spamFilter.spamMark(of: message, scoreLimit: scoreLimit)
+        showsSenderImage = await spamFilter.allowsSenderImage(of: message, scoreLimit: scoreLimit)
+        Log.endInterval(interval)
+        // Textmail: sichtbar, sobald vorbereitet (HTML meldet die Web-Ansicht).
+        if message.htmlBody == nil {
+            MessageOpenTimer.shared.finish(messageID: message.id)
+        }
+
+        await refreshShareFiles()
+
+        if isUnread {
+            do {
+                try await MessageActions.setRead(true, for: target, accountStore: accountStore)
+                isUnread = false
+                onChange?()
+            } catch {
+                Log.actions.error("⚠️ Gelesen-Markierung fehlgeschlagen: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        await loadMissingInlineImages()
+    }
+
+    /// Übernimmt aufbereiteten Inhalt: Anhänge, sichtbare Anhänge und HTML
+    /// mit eingesetzten Bildern.
+    ///
+    /// - Parameter content: Ergebnis von `MessageOpenPreparation`.
+    private func applyContent(_ content: MessageOpenPreparation.Content) {
+        attachments = content.attachments
+        visibleAttachments = content.visibleAttachments
+        resolvedHTML = content.resolvedHTML
+    }
+
+    /// Bereitet den Inhalt nach geänderten Anhängen im Hintergrund neu auf
+    /// und erneuert die Dateien zum Teilen.
+    ///
+    /// - Parameter all: Neue Anhänge; `nil` = neu aus dem Cache lesen.
+    @MainActor
+    private func refreshAttachments(_ all: [CachedAttachment]?) async {
+        applyContent(await MessageOpenPreparation.refreshedContent(for: message, attachments: all))
+        await refreshShareFiles()
+    }
+
+    /// Schreibt die Dateien zum Teilen im Hintergrund neu – passend zur
+    /// Freigabe externer Inhalte und zu den geladenen Anhängen.
+    ///
+    /// Verarbeitung: Anhänge mit vorhandener Datei werden nicht erneut
+    /// geschrieben. Überholt ein neuerer Aufruf diesen (z. B. Freigabe
+    /// externer Inhalte während des Schreibens), wird das ältere Ergebnis
+    /// verworfen.
+    @MainActor
+    private func refreshShareFiles() async {
+        shareFilesGeneration += 1
+        let generation = shareFilesGeneration
+        let content = MessageOpenPreparation.Content(
+            attachments: attachments,
+            visibleAttachments: visibleAttachments,
+            resolvedHTML: resolvedHTML
+        )
+        let files = await MessageOpenPreparation.writeShareFiles(
+            for: message,
+            content: content,
+            allowsRemoteContent: allowsRemoteContent,
+            existing: Set(shareURLs.keys)
+        )
+        guard generation == shareFilesGeneration else { return }
+        mailFileURL = files.mailFile
+        shareURLs.merge(files.attachmentFiles) { _, new in new }
+    }
+
+    /// Lädt angesprochene, noch fehlende eingebettete Bilder nach.
+    ///
+    /// Verarbeitung: Nur wenn Bilder fehlen und eine Verbindung besteht.
+    /// Ein Fehler wird nur protokolliert – die Mail bleibt lesbar, die
+    /// Bilder erscheinen leer. Danach werden Anzeige und Dateien zum Teilen
+    /// erneuert.
+    @MainActor
+    private func loadMissingInlineImages() async {
+        guard InlineImages.hasMissingImages(attachments, html: message.htmlBody),
+              NetworkMonitor.shared.isOnline else { return }
+        do {
+            let all = try await InlineImageLoader.loadMissing(
+                for: message, existing: attachments, accountStore: accountStore
+            )
+            await refreshAttachments(all)
+        } catch {
+            Log.view.error("⚠️ Eingebettete Bilder nicht nachgeladen: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    // MARK: - Aktionen an der Mail
+
+    /// Schaltet gelesen/ungelesen um.
+    @MainActor
+    private func toggleRead() async {
+        isProcessingAction = true
+        defer { isProcessingAction = false }
+        let markAsRead = isUnread
+        do {
+            try await MessageActions.setRead(markAsRead, for: target, accountStore: accountStore)
+            isUnread = !markAsRead
+            onChange?()
+        } catch {
+            activeAlert = .failure("Status ändern fehlgeschlagen", error)
+        }
+    }
+
+    /// Schaltet die Kennzeichnung um.
+    @MainActor
+    private func toggleFlag() async {
+        isProcessingAction = true
+        defer { isProcessingAction = false }
+        let newFlagged = !isFlagged
+        do {
+            try await MessageActions.setFlagged(newFlagged, for: target, accountStore: accountStore)
+            isFlagged = newFlagged
+            onChange?()
+        } catch {
+            activeAlert = .failure("Kennzeichnen fehlgeschlagen", error)
+        }
+    }
+
+    /// Löscht die Mail und kehrt zur Liste zurück.
+    @MainActor
+    private func deleteMessage() async {
+        isProcessingAction = true
+        defer { isProcessingAction = false }
+        do {
+            try await MessageActions.delete(target, accountStore: accountStore)
+            onChange?()
+            dismiss()
+        } catch {
+            activeAlert = .failure("Löschen fehlgeschlagen", error)
+        }
+    }
+
+    /// Verschiebt die Mail in den gewählten Ordner und kehrt zur Liste zurück.
+    ///
+    /// - Parameter path: Server-Pfad des Zielordners.
+    @MainActor
+    private func moveMessage(to path: String) async {
+        isProcessingAction = true
+        defer { isProcessingAction = false }
+        do {
+            try await MessageActions.move(target, to: path, accountStore: accountStore)
+            onChange?()
+            dismiss()
+        } catch {
+            activeAlert = .failure("Verschieben fehlgeschlagen", error)
+        }
+    }
+
+    // MARK: - Spam-Aktionen
+
+    /// Trägt Adresse bzw. Domain in die Liste ein und verschiebt die Mail
+    /// bei Bedarf.
+    ///
+    /// Verarbeitung: Wurde die Mail verschoben, zeigt diese Ansicht eine
+    /// Mail, die hier nicht mehr liegt – also zurück zur Liste. Sonst
+    /// bestätigt eine Meldung den Eintrag. Steht der Wert schon auf der
+    /// anderen Liste, wird der Eintrag abgelehnt.
+    ///
+    /// - Parameter request: Spam-Aktion aus dem Menü.
+    @MainActor
+    private func performSpamAction(_ request: SpamMenuRequest) async {
+        isProcessingAction = true
+        defer { isProcessingAction = false }
+        do {
+            let moved = try await request.perform(on: message, using: spamFilter)
+            onChange?()
+            if moved {
+                dismiss()
+            } else {
+                activeAlert = MessageActionDialogs.spamResultAlert(request)
+            }
+        } catch {
+            activeAlert = MessageActionDialogs.spamFailureAlert(request, error)
+        }
+    }
+
+    // MARK: - Externe Inhalte
+
+    /// Prüft, ob die Mail externe Inhalte enthält, und gibt sie bei einem
+    /// vertrauenswürdigen Absender sofort frei.
+    ///
+    /// Verarbeitung: Nur Mails mit externen Verweisen werden gegen die
+    /// Listen geprüft. Danach erscheint der HTML-Inhalt.
+    ///
+    /// - Parameter hasRemoteReferences: Ergebnis der Suche nach externen
+    ///   Verweisen (im Hintergrund, MessageOpenPreparation).
+    @MainActor
+    private func decideRemoteContent(hasRemoteReferences: Bool) async {
+        if hasRemoteReferences {
+            hasRemoteContent = true
+            if await spamFilter.trustsRemoteContent(of: message, scoreLimit: scoreLimit) {
+                allowsRemoteContent = true
+                Log.view.info("🖼 Externe Inhalte sofort geladen (vertrauenswürdiger Absender)")
+            }
+        }
+        isRemoteContentDecided = true
+    }
+
+    /// Gibt externe Inhalte für diese Anzeige frei.
+    ///
+    /// Verarbeitung: Die Mail wird mit gelockerter Regel neu geladen; die
+    /// Datei zum Teilen wird neu geschrieben, damit sie der Anzeige folgt.
+    private func allowRemoteContent() {
+        allowsRemoteContent = true
+        Task { await refreshShareFiles() }
+        Log.view.info("🖼 Externe Inhalte für diese Anzeige freigegeben")
+    }
+
+    // MARK: - Übersetzung
+
+    /// Erkennt die Sprache der Mail und prüft, ob Apple sie übersetzt;
+    /// erst danach erscheint ggf. der Hinweis.
+    ///
+    /// Verarbeitung: Läuft nur einmal je Anzeige (wie `decideRemoteContent`).
+    /// Ohne Treffer oder ohne Übersetzbarkeit bleibt `translationNoticeState`
+    /// `nil` – kein Hinweis. Beide Zwischenergebnisse werden protokolliert
+    /// (ohne Mailinhalt), damit sich spätere Fehlberichte („kein Knopf“)
+    /// ohne erneuten Nachbau einordnen lassen. Erkannt wird im Hintergrund
+    /// (MessageOpenPreparation); hier wird nur noch die Übersetzbarkeit
+    /// geprüft.
+    ///
+    /// - Parameter result: Ergebnis der Spracherkennung.
+    @MainActor
+    private func decideLanguage(_ result: MessageOpenPreparation.LanguageResult) async {
+        defer { isLanguageDecided = true }
+        Log.view.info("🌐 Spracherkennung: \(result.logLine, privacy: .public)")
+        guard let language = result.language else {
+            Log.view.info("🌐 Keine fremde Sprache erkannt")
+            return
+        }
+        let translatable = await MessageLanguage.isTranslatable(language)
+        Log.view.info("🌐 Sprache erkannt: \(language.languageCode?.identifier ?? "?", privacy: .public), übersetzbar: \(translatable, privacy: .public)")
+        guard translatable else { return }
+        detectedLanguage = language
+        translationNoticeState = .offer(languageName: MessageLanguage.germanName(for: language))
+    }
+
+    /// Startet die Übersetzung – oder schaltet, falls schon einmal
+    /// übersetzt wurde, ohne neuen Versuch zurück auf die übersetzte
+    /// Anzeige (z. B. nach „Original anzeigen“).
+    private func translate() {
+        guard let detectedLanguage else { return }
+        if translatedBody != nil {
+            showsTranslation = true
+            translationNoticeState = .translated
+            return
+        }
+        translationNoticeState = .translating
+        translationConfiguration = TranslationSession.Configuration(
+            source: detectedLanguage,
+            target: Locale.Language(identifier: "de")
+        )
+    }
+
+    /// Übersetzt Betreff und Text mit der von `.translationTask`
+    /// gelieferten Sitzung und zeigt das Ergebnis an.
+    ///
+    /// Verarbeitung: Beide Texte in einer Anfrage, damit ein eventuell
+    /// nötiger Download des Sprachmodells nur einmal anfällt. Schlägt die
+    /// Übersetzung fehl (z. B. kein Netz für den Download, Sprachmodell
+    /// nicht verfügbar), bleibt die Originalanzeige; der Hinweis bietet
+    /// „Erneut versuchen“. Die Fehlermeldung ist bewusst allgemein – genauere
+    /// Texte folgen nach dem Testdurchlauf anhand der echten Fehlerfälle.
+    ///
+    /// Achtung: `session.translations(from:)` sowie `.targetText` und
+    /// `.clientIdentifier` auf `TranslationSession.Request`/`.Response`
+    /// konnten nicht gegen die offizielle Apple-Dokumentation geprüft werden
+    /// (JS-gerenderte Seiten). Bitte beim ersten Build gegen Xcodes
+    /// Autovervollständigung/Compiler-Fehler prüfen und diesen Hinweis dann
+    /// entfernen.
+    @MainActor
+    private func performTranslation(session: TranslationSession) async {
+        let body = SearchText.body(text: message.textBody, html: message.htmlBody)
+        do {
+            let responses = try await session.translations(from: [
+                TranslationSession.Request(sourceText: message.subject, clientIdentifier: "subject"),
+                TranslationSession.Request(sourceText: body, clientIdentifier: "body")
+            ])
+            for response in responses {
+                switch response.clientIdentifier {
+                case "subject": translatedSubject = response.targetText
+                case "body": translatedBody = response.targetText
+                default: break
+                }
+            }
+            showsTranslation = true
+            translationNoticeState = .translated
+            Log.view.info("🌐 Mail übersetzt")
+        } catch {
+            Log.view.error("🌐 Übersetzung fehlgeschlagen: \(error.localizedDescription, privacy: .public)")
+            translationNoticeState = .failed("Übersetzung fehlgeschlagen")
+        }
+    }
+
+    /// Rückweg: zeigt wieder das Original. Die Übersetzung bleibt
+    /// erhalten, damit erneutes Umschalten keinen neuen Versuch braucht.
+    private func showOriginal() {
+        showsTranslation = false
+        if let detectedLanguage {
+            translationNoticeState = .offer(languageName: MessageLanguage.germanName(for: detectedLanguage))
+        }
+    }
+
+    // MARK: - Teilen & Drucken
+
+    /// Druckt die Mail samt Kopfdaten und Anhangliste, mit externen
+    /// Inhalten nur, wenn sie in der Anzeige freigegeben sind.
+    private func printMessage() {
+        let html = MailPrintFormatter.html(
+            for: message,
+            attachments: visibleAttachments,
+            inlineImages: attachments,
+            allowsRemoteContent: allowsRemoteContent
+        )
+        MailPrinter().print(html: html)
+    }
+
+    // MARK: - Anlagen lokal löschen
+
+    /// Fragt vor dem lokalen Löschen der Anhang-Daten nach.
+    private func confirmDeleteLocalAttachments() {
+        activeConfirmation = ConfirmationRequest(
+            title: "Anlagen lokal löschen?",
+            message: "Die Anhang-Daten werden lokal gelöscht, um Speicher freizugeben. Die Metadaten bleiben erhalten und die Anhänge können erneut vom Server geladen werden.",
+            confirmLabel: "Löschen"
+        ) {
+            deleteLocalAttachments()
+        }
+    }
+
+    /// Löscht die Daten der sichtbaren Anhänge dieser Mail aus dem Cache;
+    /// die Einträge bleiben, die Daten lassen sich neu laden. Eingebettete
+    /// Bilder im Text bleiben – sie sind Inhalt der Mail.
+    private func deleteLocalAttachments() {
+        for attachment in visibleAttachments {
+            MessageStore.shared.deleteAttachmentData(id: attachment.id)
+        }
+        shareURLs.removeAll()
+        Task { await refreshAttachments(nil) }
+    }
+
+    // MARK: - Anhänge öffnen
+
+    /// Öffnet die Vorschau eines Anhangs; fehlen die Daten, werden sie
+    /// zuerst nachgeladen.
+    ///
+    /// - Parameter attachment: Angetippter Anhang.
+    private func handleTap(_ attachment: CachedAttachment) {
+        if attachment.data != nil {
+            openPreview(attachment)
+        } else {
+            Task { await downloadAndPreview(attachment) }
+        }
+    }
+
+    /// Schreibt den Anhang in eine temporäre Datei und öffnet QuickLook.
+    ///
+    /// - Parameter attachment: Anhang mit Daten.
+    private func openPreview(_ attachment: CachedAttachment) {
+        do {
+            previewURL = try AttachmentManager.writeTempFile(for: attachment)
+        } catch {
+            activeAlert = .failure("Vorschau nicht möglich", error)
+        }
+    }
+
+    /// Lädt einen Anhang vom Server nach und öffnet danach die Vorschau.
+    ///
+    /// - Parameter attachment: Anhang ohne Daten.
+    @MainActor
+    private func downloadAndPreview(_ attachment: CachedAttachment) async {
+        downloadingIDs.insert(attachment.id)
+        defer { downloadingIDs.remove(attachment.id) }
+        do {
+            let updated = try await AttachmentManager.downloadAttachment(
+                attachment,
+                message: message,
+                accountStore: accountStore
+            )
+            var all = attachments
+            if let index = all.firstIndex(where: { $0.id == attachment.id }) {
+                all[index] = updated
+            }
+            openPreview(updated)
+            await refreshAttachments(all)
+        } catch {
+            activeAlert = .failure("Download fehlgeschlagen", error)
+        }
+    }
+}
+
+/// Aktionen der Knöpfe „Vorige E-Mail“ und „Nächste E-Mail“ in der
+/// Mailansicht (iPad-Spaltenlayout). Ein fehlendes Ziel (`nil`) graut den
+/// Knopf aus – am Anfang bzw. Ende der Liste.
+struct MessageStepButtons {
+    /// Öffnet die Mail darüber; `nil` = keine.
+    let previous: (() -> Void)?
+    /// Öffnet die Mail darunter; `nil` = keine.
+    let next: (() -> Void)?
+}

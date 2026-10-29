@@ -1,0 +1,343 @@
+//
+//  MessageStoreFolderTests.swift
+//  MailwerkTests
+//
+//  Zweck: Tests für die ordnerfähige Ablage: Trennung gleicher UIDs in
+//  verschiedenen Ordnern, Ordnerliste, Entfernen eines Postfachs, Umzug
+//  einer Nachricht und die einmalige Migration der Kennungen auf das
+//  Ordner-Schema.
+//
+//  Jeder Test arbeitet auf einer eigenen Datei im Temp-Verzeichnis,
+//  damit die Ablage der App unberührt bleibt.
+//
+
+import Foundation
+import SQLite3
+import Testing
+@testable import Mailwerk
+
+/// Tests für die ordnerfähige Ablage im MessageStore.
+@MainActor
+struct MessageStoreFolderTests {
+
+    // MARK: - Hilfen
+
+    private static let account = UUID(uuidString: "3F2504E0-4F89-11D3-9A0C-0305E82C3301")!
+
+    /// Testhilfe: Pfad einer neuen Datenbankdatei im Temp-Verzeichnis.
+    private func temporaryPath() -> String {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("MailwerkTests-\(UUID().uuidString).sqlite")
+            .path
+    }
+
+    /// Testhilfe: Nachricht in einem Ordner.
+    private func message(
+        folder: String,
+        uid: UInt32,
+        subject: String = "Betreff",
+        date: Date = Date(timeIntervalSince1970: 1_700_000_000)
+    ) -> CachedMessage {
+        CachedMessage(
+            id: CachedMessage.makeID(accountID: Self.account, folder: folder, uid: uid),
+            accountID: Self.account,
+            accountDisplayName: "Test",
+            folder: folder,
+            uid: uid,
+            subject: subject,
+            from: "anna@example.org",
+            to: "kim@example.org",
+            date: date,
+            isUnread: true,
+            isFlagged: false,
+            isAnswered: false,
+            isForwarded: false,
+            totalSizeBytes: 1_024,
+            hasAttachments: false,
+            textBody: "Text",
+            htmlBody: nil,
+            fetchedAt: Date(),
+            headers: CachedMessageHeaders()
+        )
+    }
+
+    // MARK: - Kennung
+
+    /// Die Kennung enthält Konto, Ordner und UID.
+    @Test("Die Kennung enthält Konto, Ordner und UID")
+    func idContainsFolder() {
+        let id = CachedMessage.makeID(accountID: Self.account, folder: "INBOX", uid: 42)
+        #expect(id == "\(Self.account.uuidString)-INBOX-42")
+    }
+
+    /// Ordner mit Bindestrich oder Pfadtrenner ergeben eigene Kennungen.
+    @Test("Ordner mit Bindestrich oder Pfadtrenner ergeben eigene Kennungen")
+    func idStaysUniqueForUnusualFolders() {
+        let a = CachedMessage.makeID(accountID: Self.account, folder: "Junk-E-Mail", uid: 1)
+        let b = CachedMessage.makeID(accountID: Self.account, folder: "INBOX/Junk", uid: 1)
+        #expect(a != b)
+    }
+
+    // MARK: - Trennung der Ordner
+
+    /// Gleiche UID in zwei Ordnern sind zwei Nachrichten.
+    @Test("Gleiche UID in zwei Ordnern sind zwei Nachrichten")
+    func sameUIDInTwoFolders() {
+        let store = MessageStore(path: temporaryPath())
+        store.saveMessage(message(folder: "INBOX", uid: 7, subject: "Aus dem Posteingang"))
+        store.saveMessage(message(folder: "Junk", uid: 7, subject: "Aus dem Spam"))
+
+        let inbox = store.allMessages(accountIDs: [Self.account], folder: "INBOX")
+        let junk = store.allMessages(accountIDs: [Self.account], folder: "Junk")
+
+        #expect(inbox.map(\.subject) == ["Aus dem Posteingang"])
+        #expect(junk.map(\.subject) == ["Aus dem Spam"])
+        #expect(inbox.first?.folder == "INBOX")
+    }
+
+    /// Die bekannten Kennungen kommen je Ordner zurück.
+    @Test("Die bekannten Kennungen kommen je Ordner zurück")
+    func cachedIDsPerFolder() {
+        let store = MessageStore(path: temporaryPath())
+        store.saveMessage(message(folder: "INBOX", uid: 1))
+        store.saveMessage(message(folder: "INBOX", uid: 2))
+        store.saveMessage(message(folder: "Junk", uid: 1))
+
+        #expect(store.cachedMessageIDs(forAccount: Self.account, folder: "INBOX").count == 2)
+        #expect(store.cachedMessageIDs(forAccount: Self.account, folder: "Junk").count == 1)
+    }
+
+    /// Das Löschen eines Ordners räumt Nachrichten, Anhänge und Stand nur dieses Ordners ab.
+    @Test("Das Löschen eines Ordners räumt Nachrichten, Anhänge und Stand nur dieses Ordners ab")
+    func deleteFolderClearsOnlyThatFolder() {
+        let store = MessageStore(path: temporaryPath())
+        let doomed = message(folder: "Test.Neu", uid: 1)
+        store.saveMessage(doomed)
+        store.saveAttachment(CachedAttachment(
+            id: "\(doomed.id)-2", messageID: doomed.id, filename: "a.pdf",
+            contentType: "application/pdf", sizeBytes: 3, data: Data([1, 2, 3])
+        ))
+        store.recordSync(accountID: Self.account, folder: "Test.Neu")
+        store.setWindowStart(Date(timeIntervalSince1970: 1), accountID: Self.account, folder: "Test.Neu")
+        store.saveMessage(message(folder: "Test", uid: 1))
+        store.recordSync(accountID: Self.account, folder: "Test")
+
+        store.deleteFolder(accountID: Self.account, folder: "Test.Neu")
+
+        #expect(store.folderMessages(accountID: Self.account, folder: "Test.Neu").isEmpty)
+        #expect(store.attachments(forMessage: doomed.id).isEmpty)
+        #expect(store.lastSync(accountID: Self.account, folder: "Test.Neu") == nil)
+        #expect(store.windowStart(accountID: Self.account, folder: "Test.Neu") == nil)
+        #expect(store.folderMessages(accountID: Self.account, folder: "Test").count == 1)
+        #expect(store.lastSync(accountID: Self.account, folder: "Test") != nil)
+    }
+
+    // MARK: - Ordnerliste
+
+    /// Die Ordnerliste eines Postfachs wird gespeichert, ersetzt und bleibt je Postfach getrennt.
+    @Test("Die Ordnerliste eines Postfachs wird gespeichert, ersetzt und bleibt je Postfach getrennt")
+    func folderListingRoundTrip() {
+        let path = temporaryPath()
+        let listing = FolderListing(folders: [
+            MailFolder(id: "INBOX", name: "INBOX", specialUse: nil, hierarchyDelimiter: "."),
+            MailFolder(id: "Gr&APYA3w-e", name: "Gr&APYA3w-e", specialUse: nil, hierarchyDelimiter: "."),
+            MailFolder(id: "Junk", name: "Junk", specialUse: .junk, hierarchyDelimiter: ".", isSelectable: false)
+        ], namespacePrefix: "")
+
+        let store = MessageStore(path: path)
+        #expect(store.folderListing(accountID: Self.account) == nil)
+        store.saveFolderListing(listing, accountID: Self.account)
+
+        // Übersteht ein erneutes Öffnen (App-Neustart).
+        let reopened = MessageStore(path: path)
+        #expect(reopened.folderListing(accountID: Self.account) == listing)
+        #expect(reopened.folderListing(accountID: UUID()) == nil)
+
+        let changed = FolderListing(folders: [listing.folders[0]], namespacePrefix: "")
+        reopened.saveFolderListing(changed, accountID: Self.account)
+        #expect(reopened.folderListing(accountID: Self.account) == changed)
+    }
+
+    // MARK: - Postfach entfernen
+
+    /// Das Entfernen eines Postfachs räumt dessen Cache vollständig ab, andere bleiben unberührt.
+    @Test("Das Entfernen eines Postfachs räumt dessen Cache vollständig ab, andere bleiben unberührt")
+    func deleteAccountClearsEverythingForThatAccountOnly() {
+        let path = temporaryPath()
+        let other = UUID()
+        let store = MessageStore(path: path)
+
+        let doomed = message(folder: "INBOX", uid: 1)
+        store.saveMessage(doomed)
+        store.saveAttachment(CachedAttachment(
+            id: "\(doomed.id)-2", messageID: doomed.id, filename: "a.pdf",
+            contentType: "application/pdf", sizeBytes: 3, data: Data([1, 2, 3])
+        ))
+        store.recordSync(accountID: Self.account, folder: "INBOX")
+        store.setWindowStart(Date(timeIntervalSince1970: 1), accountID: Self.account, folder: "INBOX")
+        store.saveFolderListing(
+            FolderListing(folders: [
+                MailFolder(id: "INBOX", name: "INBOX", specialUse: nil, hierarchyDelimiter: ".")
+            ], namespacePrefix: ""),
+            accountID: Self.account
+        )
+        // Zweites Postfach als Gegenprobe.
+        store.recordSync(accountID: other, folder: "INBOX")
+        store.saveFolderListing(FolderListing(folders: [], namespacePrefix: ""), accountID: other)
+
+        #expect(store.deleteAccount(accountID: Self.account) == 1)
+
+        #expect(store.folderMessages(accountID: Self.account, folder: "INBOX").isEmpty)
+        #expect(store.attachments(forMessage: doomed.id).isEmpty)
+        #expect(store.lastSync(accountID: Self.account, folder: "INBOX") == nil)
+        #expect(store.windowStart(accountID: Self.account, folder: "INBOX") == nil)
+        #expect(store.folderListing(accountID: Self.account) == nil)
+
+        #expect(store.lastSync(accountID: other, folder: "INBOX") != nil)
+        #expect(store.folderListing(accountID: other) != nil)
+
+        // Nach erneutem Öffnen ist nichts zurück.
+        #expect(MessageStore(path: path).folderListing(accountID: Self.account) == nil)
+    }
+
+    // MARK: - Umzug
+
+    /// Eine Nachricht zieht mitsamt Anhang in einen anderen Ordner um.
+    @Test("Eine Nachricht zieht mitsamt Anhang in einen anderen Ordner um")
+    func relocateMovesAttachments() throws {
+        let store = MessageStore(path: temporaryPath())
+        let original = message(folder: "INBOX", uid: 7)
+        store.saveMessage(original)
+        store.saveAttachment(CachedAttachment(
+            id: "\(original.id)-1.2",
+            messageID: original.id,
+            filename: "Rechnung.pdf",
+            contentType: "application/pdf",
+            sizeBytes: 3,
+            data: Data([1, 2, 3])
+        ))
+
+        let newID = try #require(
+            store.relocateMessage(id: original.id, toFolder: "Junk", newUID: 99)
+        )
+
+        #expect(newID == CachedMessage.makeID(accountID: Self.account, folder: "Junk", uid: 99))
+        #expect(store.message(id: original.id) == nil)
+
+        let moved = try #require(store.message(id: newID))
+        #expect(moved.folder == "Junk")
+        #expect(moved.uid == 99)
+        #expect(moved.subject == original.subject)
+
+        let attachments = store.attachments(forMessage: newID)
+        #expect(attachments.count == 1)
+        #expect(attachments.first?.id == "\(newID)-1.2")
+        #expect(attachments.first?.data == Data([1, 2, 3]))
+        #expect(store.attachments(forMessage: original.id).isEmpty)
+    }
+
+    /// Eine unbekannte Kennung lässt die Ablage unverändert.
+    @Test("Eine unbekannte Kennung lässt die Ablage unverändert")
+    func relocateUnknownMessage() {
+        let store = MessageStore(path: temporaryPath())
+        store.saveMessage(message(folder: "INBOX", uid: 1))
+        #expect(store.relocateMessage(id: "gibt-es-nicht", toFolder: "Junk", newUID: 5) == nil)
+        #expect(store.allMessages(accountIDs: [Self.account], folder: "INBOX").count == 1)
+    }
+
+    // MARK: - Migration auf das Ordner-Schema
+
+    /// Bestandsdaten werden auf das Ordner-Schema umgeschrieben.
+    @Test("Bestandsdaten werden auf das Ordner-Schema umgeschrieben")
+    func migratesOldDatabase() throws {
+        let path = temporaryPath()
+        let oldMessageID = "\(Self.account.uuidString)-4711"
+        try createLegacyDatabase(at: path, messageID: oldMessageID)
+
+        // Öffnen löst die Migration aus.
+        let store = MessageStore(path: path)
+
+        let expectedID = CachedMessage.makeID(
+            accountID: Self.account, folder: "INBOX", uid: 4711
+        )
+        #expect(store.message(id: oldMessageID) == nil)
+
+        let migrated = try #require(store.message(id: expectedID))
+        #expect(migrated.folder == "INBOX")
+        #expect(migrated.uid == 4711)
+        #expect(migrated.subject == "Alter Bestand")
+
+        let attachments = store.attachments(forMessage: expectedID)
+        #expect(attachments.count == 1, "Der Anhang muss mitwandern statt verwaist zu bleiben")
+        #expect(attachments.first?.id == "\(expectedID)-2")
+        #expect(attachments.first?.filename == "Alt.pdf")
+    }
+
+    /// Eine zweite Öffnung ändert die Kennungen nicht erneut.
+    @Test("Eine zweite Öffnung ändert die Kennungen nicht erneut")
+    func migrationRunsOnlyOnce() throws {
+        let path = temporaryPath()
+        try createLegacyDatabase(at: path, messageID: "\(Self.account.uuidString)-4711")
+
+        _ = MessageStore(path: path)
+        let store = MessageStore(path: path)
+
+        let expectedID = CachedMessage.makeID(
+            accountID: Self.account, folder: "INBOX", uid: 4711
+        )
+        #expect(store.message(id: expectedID) != nil)
+        #expect(store.allMessages(accountIDs: [Self.account], folder: "INBOX").count == 1)
+    }
+
+    /// Legt eine Datenbank im Zustand vor dem Ordner-Schema an: Kennung ohne Ordner,
+    /// keine Spalte `folder`.
+    private func createLegacyDatabase(at path: String, messageID: String) throws {
+        var db: OpaquePointer?
+        #expect(sqlite3_open(path, &db) == SQLITE_OK)
+        defer { sqlite3_close(db) }
+
+        let statements = [
+            """
+            CREATE TABLE message (
+                id TEXT PRIMARY KEY, accountID TEXT NOT NULL,
+                accountDisplayName TEXT NOT NULL, uid INTEGER NOT NULL,
+                subject TEXT NOT NULL, "from" TEXT NOT NULL, "to" TEXT NOT NULL,
+                date REAL, isUnread INTEGER NOT NULL, totalSizeBytes INTEGER NOT NULL,
+                textBody TEXT, htmlBody TEXT, fetchedAt REAL NOT NULL,
+                hasAttachments INTEGER NOT NULL DEFAULT 0,
+                isFlagged INTEGER NOT NULL DEFAULT 0,
+                isAnswered INTEGER NOT NULL DEFAULT 0,
+                isForwarded INTEGER NOT NULL DEFAULT 0,
+                toJSON TEXT, ccJSON TEXT, replyToJSON TEXT,
+                rfcMessageID TEXT, rfcInReplyTo TEXT, rfcReferences TEXT,
+                headersVersion INTEGER NOT NULL DEFAULT 0
+            )
+            """,
+            """
+            CREATE TABLE attachment (
+                id TEXT PRIMARY KEY, messageID TEXT NOT NULL, filename TEXT NOT NULL,
+                contentType TEXT NOT NULL, sizeBytes INTEGER NOT NULL, data BLOB,
+                FOREIGN KEY (messageID) REFERENCES message(id) ON DELETE CASCADE
+            )
+            """,
+            """
+            INSERT INTO message
+            (id, accountID, accountDisplayName, uid, subject, "from", "to", date,
+             isUnread, totalSizeBytes, textBody, htmlBody, fetchedAt, hasAttachments,
+             headersVersion)
+            VALUES ('\(messageID)', '\(Self.account.uuidString)', 'Test', 4711,
+                    'Alter Bestand', 'anna@example.org', 'kim@example.org',
+                    1700000000.0, 1, 1024, 'Text', NULL, 1700000000.0, 1, 1)
+            """,
+            """
+            INSERT INTO attachment (id, messageID, filename, contentType, sizeBytes, data)
+            VALUES ('\(messageID)-2', '\(messageID)', 'Alt.pdf', 'application/pdf', 3, NULL)
+            """
+        ]
+
+        for sql in statements {
+            #expect(sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK,
+                    "Aufbau der Alt-Datenbank fehlgeschlagen: \(String(cString: sqlite3_errmsg(db)))")
+        }
+    }
+}
