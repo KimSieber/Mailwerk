@@ -153,13 +153,14 @@ struct EditAccountView: View {
         account.oauthConfiguration
     }
 
-    /// Pflichtfelder gefüllt, Ports als Zahl lesbar und E-Mail-Adresse gültig;
+    /// Pflichtfelder gefüllt, Ports gültig (1–65535) und E-Mail-Adresse gültig;
     /// bei Anmeldung per OAuth 2 ohne Ports und Server (die sind fest).
     private var isValid: Bool {
         if provider != nil { return !displayName.isEmpty && hasValidEmailAddress }
         return !displayName.isEmpty && hasValidEmailAddress
             && !imapHost.isEmpty && !smtpHost.isEmpty
-            && Int(imapPort) != nil && Int(smtpPort) != nil
+            && MailAccount.port(from: imapPort) != nil
+            && MailAccount.port(from: smtpPort) != nil
     }
 
     /// Formular mit Konto, Servern, Farbe und Verbindungstest.
@@ -407,8 +408,8 @@ struct EditAccountView: View {
 
     /// Speichert die Änderungen und schließt das Formular.
     ///
-    /// Verarbeitung: Ungültige Ports fallen auf die Standardwerte zurück
-    /// (die Eingabe ist durch `isValid` geprüft). Bei Anmeldung per OAuth 2
+    /// Verarbeitung: Gespeichert wird nur bei gültigen Ports (`isValid`);
+    /// sonst bleiben die bisherigen Ports erhalten. Bei Anmeldung per OAuth 2
     /// bleiben die Server unverändert. Scheitert das Speichern (z. B.
     /// Schlüsselbund), bleibt das Formular offen.
     private func save() {
@@ -419,9 +420,9 @@ struct EditAccountView: View {
         updated.emailAddress = MailAccount.normalized(emailAddress)
         if provider == nil {
             updated.imapHost = imapHost
-            updated.imapPort = Int(imapPort) ?? 993
+            updated.imapPort = MailAccount.port(from: imapPort) ?? account.imapPort
             updated.smtpHost = smtpHost
-            updated.smtpPort = Int(smtpPort) ?? 587
+            updated.smtpPort = MailAccount.port(from: smtpPort) ?? account.smtpPort
         }
         updated.storesSentCopy = savesSentCopy
         updated.colorHex = selectedColor?.rawValue
@@ -448,8 +449,8 @@ struct EditAccountView: View {
             await testStoredConnection()
             return
         }
-        guard let imapPortInt = Int(imapPort),
-              let smtpPortInt = Int(smtpPort) else {
+        guard let imapPortInt = MailAccount.port(from: imapPort),
+              let smtpPortInt = MailAccount.port(from: smtpPort) else {
             testResult = .failure("Ungültiger Port")
             return
         }

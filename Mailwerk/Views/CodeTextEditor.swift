@@ -29,6 +29,8 @@ struct CodeTextEditor: UIViewRepresentable {
     @Binding var text: String
 
     /// Legt den Coordinator (Rückmeldung von Eingaben) an.
+    ///
+    /// - Returns: Coordinator mit Bindung an den Text.
     func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
 
     /// Legt die Textansicht einmalig an.
@@ -88,6 +90,8 @@ struct CodeTextEditor: NSViewRepresentable {
     @Binding var text: String
 
     /// Legt den Coordinator (Rückmeldung von Eingaben) an.
+    ///
+    /// - Returns: Coordinator mit Bindung an den Text.
     func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
 
     /// Legt Textansicht samt Scroll-Ansicht einmalig an.

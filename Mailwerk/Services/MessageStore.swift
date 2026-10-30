@@ -644,7 +644,6 @@ nonisolated final class MessageStore: @unchecked Sendable {
                 """)
         }
 
-        // Kennzeichnung
         addColumnIfMissing("isFlagged", "INTEGER NOT NULL DEFAULT 0")
 
         // Beantwortet-/Weitergeleitet-Status, Adresslisten, Threading-Header
@@ -1760,8 +1759,13 @@ nonisolated final class MessageStore: @unchecked Sendable {
     ///   - accountID: Postfach.
     func saveFolderListing(_ listing: FolderListing, accountID: UUID) {
         onWrite {
-            guard let data = try? JSONEncoder().encode(listing),
-                  let json = String(data: data, encoding: .utf8) else { return }
+            let json: String
+            do {
+                json = String(decoding: try JSONEncoder().encode(listing), as: UTF8.self)
+            } catch {
+                Log.store.error("⚠️ Ordnerliste nicht kodierbar, nicht gespeichert: \(error.localizedDescription, privacy: .public)")
+                return
+            }
             let sql = """
                 INSERT INTO folder_listing (accountID, json, savedAt) VALUES (?, ?, ?)
                 ON CONFLICT(accountID) DO UPDATE SET json = excluded.json, savedAt = excluded.savedAt

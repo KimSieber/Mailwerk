@@ -98,6 +98,12 @@ nonisolated enum SpamFolderResolver {
         configuredMatch(in: folders, configured: configured)?.id
     }
 
+    /// Sucht den gemerkten Spam-Ordner in der Ordnerliste.
+    ///
+    /// - Parameters:
+    ///   - folders: Ordnerliste.
+    ///   - configured: gemerkter Pfad; leer oder `nil` ergibt keinen Treffer.
+    /// - Returns: Passender Ordner oder `nil`.
     private static func configuredMatch(
         in folders: [MailFolder],
         configured: String?

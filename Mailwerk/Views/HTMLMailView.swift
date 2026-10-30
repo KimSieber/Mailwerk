@@ -102,6 +102,8 @@ struct HTMLMailView: NSViewRepresentable {
     var onLoaded: (() -> Void)? = nil
 
     /// Legt den Coordinator (Navigation, Höhenmessung) an.
+    ///
+    /// - Returns: Coordinator mit Verweis auf diese Ansicht.
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     /// Legt die Web-Ansicht einmalig an – aus dem Vorrat, sonst neu.
@@ -157,6 +159,8 @@ struct HTMLMailView: UIViewRepresentable {
     var onLoaded: (() -> Void)? = nil
 
     /// Legt den Coordinator (Navigation, Höhenmessung) an.
+    ///
+    /// - Returns: Coordinator mit Verweis auf diese Ansicht.
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     /// Legt die Web-Ansicht einmalig an – aus dem Vorrat, sonst neu.
@@ -227,7 +231,6 @@ extension HTMLMailView {
         #if os(macOS)
         // Auf macOS ist `isOpaque` nur lesbar und `backgroundColor` fehlt.
         webView.setValue(false, forKey: "drawsBackground")
-        // Vergrößern per Trackpad-Geste.
         webView.allowsMagnification = true
         #else
         webView.isOpaque = false
@@ -437,6 +440,11 @@ extension HTMLMailView {
 
         /// Inhalt geladen → Höhe messen, kurz darauf ein zweites Mal. Beim
         /// Ende der Navigation des Mail-Inhalts einmal `onLoaded` melden.
+        ///
+        /// - Parameters:
+        ///   - webView: Web-Ansicht der Mail.
+        ///   - navigation: Abgeschlossene Navigation; nur die des
+        ///     Mail-Inhalts löst `onLoaded` aus.
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             if let navigation, navigation === contentNavigation {
                 contentNavigation = nil

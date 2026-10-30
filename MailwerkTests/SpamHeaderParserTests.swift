@@ -181,3 +181,8 @@ struct SpamHeaderParserTests {
         #expect(SpamHeaderParser.fieldNames.contains("X-Spam-Flag"))
     }
 }
+
+/// Testhilfe: Befund ohne jede Spam-Kopfzeile (in mehreren Testdateien genutzt).
+extension SpamHeaderVerdict {
+    nonisolated static let clean = SpamHeaderVerdict(isSpam: false, score: nil)
+}

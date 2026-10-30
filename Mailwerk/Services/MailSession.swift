@@ -38,6 +38,7 @@
 
 import Foundation
 import SwiftMail
+import os
 
 /// Zugang eines Postfachs: Passwort oder Anmeldung per OAuth 2.
 nonisolated enum MailSecret: Equatable, Sendable {
@@ -150,8 +151,34 @@ nonisolated enum MailSession {
             try await server.logout()
             return result
         } catch {
-            try? await server.disconnect()
+            await disconnectQuietly(Log.fetch, host: credentials.account.imapHost) {
+                try await server.disconnect()
+            }
             throw error
+        }
+    }
+
+    /// Trennt eine Verbindung, deren Ergebnis schon feststeht.
+    ///
+    /// Verarbeitung: Gerufen nach einem Fehler (der eigentliche Fehler ist
+    /// bekannt und wird vom Aufrufer weitergegeben) oder nach erledigtem
+    /// Versand. Ein Fehler beim Trennen – etwa weil die Verbindung längst
+    /// abgerissen ist – ändert am Ergebnis nichts. Er wird deshalb nur
+    /// protokolliert (`.debug`) und nicht geworfen.
+    ///
+    /// - Parameters:
+    ///   - log: Logger des Bereichs (z. B. `Log.fetch`, `Log.send`).
+    ///   - host: Server, für die Zuordnung im Protokoll.
+    ///   - disconnect: Trennt die Verbindung (IMAP oder SMTP).
+    static func disconnectQuietly(
+        _ log: Logger,
+        host: String,
+        _ disconnect: () async throws -> Void
+    ) async {
+        do {
+            try await disconnect()
+        } catch {
+            log.debug("Trennen von \(host, privacy: .public) gescheitert: \(error.localizedDescription, privacy: .public)")
         }
     }
 

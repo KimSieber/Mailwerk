@@ -168,8 +168,10 @@ nonisolated enum MessageOpenPreparation {
         var files: [String: URL] = [:]
         for attachment in content.visibleAttachments
         where attachment.data != nil && !existing.contains(attachment.id) {
-            if let url = try? AttachmentManager.writeTempFile(for: attachment) {
-                files[attachment.id] = url
+            do {
+                files[attachment.id] = try AttachmentManager.writeTempFile(for: attachment)
+            } catch {
+                Log.view.error("⚠️ Anhang als Datei zum Teilen nicht geschrieben: \(error.localizedDescription, privacy: .public)")
             }
         }
         return ShareFiles(mailFile: mailFile, attachmentFiles: files)

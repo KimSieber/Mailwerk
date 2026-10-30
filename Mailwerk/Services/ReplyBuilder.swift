@@ -210,6 +210,10 @@ enum ReplyBuilder {
         ownAddresses: Set<String>
     ) -> (to: [MailAddress], cc: [MailAddress]) {
         var seen = Set(ownAddresses.map { $0.lowercased() })
+        /// Übernimmt nur Adressen, die noch nicht vorkamen (auch eigene nicht).
+        ///
+        /// - Parameter list: Kandidaten.
+        /// - Returns: Neue Adressen in ursprünglicher Reihenfolge.
         func take(_ list: [MailAddress]) -> [MailAddress] {
             list.filter { seen.insert($0.normalizedAddress).inserted }
         }

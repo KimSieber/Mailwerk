@@ -179,6 +179,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Services/ListDateFormatter.swift,
+				Services/Log.swift,
 				Services/Watch/WatchAppGroup.swift,
 			);
 			target = 3B7E79FE30869EA500AAB722 /* MailwerkWatchWidgetExtension */;

@@ -123,7 +123,13 @@ nonisolated enum AccountRefreshService {
         }
         let account = credentials.account
         Log.fetch.info("🔁 [\(account.displayName, privacy: .private)] Anmeldung gescheitert – zweiter Versuch in \(loginRetryDelay.components.seconds) s")
-        try? await Task.sleep(for: loginRetryDelay)
+        // Abgebrochen (z. B. App im Hintergrund, neuer Abruf): keinen
+        // zweiten Anmeldeversuch mehr starten.
+        do {
+            try await Task.sleep(for: loginRetryDelay)
+        } catch {
+            return first.result
+        }
         guard await isOnline() else { return first.result }
         let second = await attempt(
             credentials, spamStep: spamStep, knownSpamFolder: knownSpamFolder,

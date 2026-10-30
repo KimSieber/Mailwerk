@@ -150,14 +150,8 @@ nonisolated struct MessageContentPlan {
         part.contentType.lowercased().hasPrefix("text/html")
     }
 
-    /// Abschnittsnummern der zu ladenden Text-/HTML-Teile (z. B. „1.1").
-    var bodySections: [String] { bodyParts.map(\.section.description) }
-
     /// Abschnittsnummern der Anhänge (z. B. „2").
     var attachmentSections: [String] { attachments.map(\.section.description) }
-
-    /// Abschnittsnummern der eingebetteten Bilder (z. B. „1.2").
-    var inlineImageSections: [String] { inlineImages.map(\.section.description) }
 
     /// Setzt Text und HTML aus den geladenen Teilen zusammen.
     ///

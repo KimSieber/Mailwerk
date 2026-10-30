@@ -28,43 +28,53 @@ struct ColorPickerGrid: View {
     /// Option „Keine Farbe“ und je Farbe ein Kreis mit Häkchen bei Auswahl.
     var body: some View {
         LazyVGrid(columns: columns, spacing: 12) {
-            // "Keine Farbe"-Option
-            ZStack {
-                Circle()
-                    .strokeBorder(Color.secondary, lineWidth: 1)
-                    .frame(width: 36, height: 36)
-                if selection == nil {
-                    Image(systemName: "checkmark")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
-                } else {
-                    Image(systemName: "minus")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .contentShape(Circle())
-            .onTapGesture { selection = nil }
-            .accessibilityLabel("Keine Farbe")
-
-            // Farbkreise
+            noColorOption
             ForEach(AccountColor.allCases, id: \.rawValue) { color in
-                ZStack {
-                    Circle()
-                        .fill(color.color)
-                        .frame(width: 36, height: 36)
-                    if selection == color {
-                        Image(systemName: "checkmark")
-                            .font(.caption.bold())
-                            .foregroundStyle(.white)
-                    }
-                }
-                .contentShape(Circle())
-                .onTapGesture { selection = color }
-                .accessibilityLabel(color.displayName)
+                colorOption(color)
             }
         }
         .padding(.vertical, 4)
     }
-    
+
+    /// Umrandeter Kreis für „Keine Farbe“: Häkchen bei Auswahl, sonst ein
+    /// Strich.
+    private var noColorOption: some View {
+        ZStack {
+            Circle()
+                .strokeBorder(Color.secondary, lineWidth: 1)
+                .frame(width: 36, height: 36)
+            if selection == nil {
+                Image(systemName: "checkmark")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+            } else {
+                Image(systemName: "minus")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .contentShape(Circle())
+        .onTapGesture { selection = nil }
+        .accessibilityLabel("Keine Farbe")
+    }
+
+    /// Gefüllter Kreis einer Farbe, mit Häkchen bei Auswahl.
+    ///
+    /// - Parameter color: Darzustellende Farbe.
+    /// - Returns: Antippbarer Farbkreis.
+    private func colorOption(_ color: AccountColor) -> some View {
+        ZStack {
+            Circle()
+                .fill(color.color)
+                .frame(width: 36, height: 36)
+            if selection == color {
+                Image(systemName: "checkmark")
+                    .font(.caption.bold())
+                    .foregroundStyle(.white)
+            }
+        }
+        .contentShape(Circle())
+        .onTapGesture { selection = color }
+        .accessibilityLabel(color.displayName)
+    }
 }

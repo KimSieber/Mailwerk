@@ -105,12 +105,13 @@ nonisolated enum SenderIconFetcher {
 
         var answered = false
 
-        // 1. apple-touch-icon
+        // Reihenfolge nach Bildqualität: apple-touch-icon ist meist groß und
+        // quadratisch; die Startseite nennt oft bessere Icons als favicon.ico,
+        // das nur als letzte Rückfallebene dient (oft 16 px, ICO-Format).
         let touch = await download(touchIcon, limit: maxImageBytes, session: session)
         answered = answered || touch.isAnswer
         if let png = touch.data.flatMap(normalizedPNG) { return .icon(png) }
 
-        // 2. Icon-Angaben der Startseite
         let page = await download(base, limit: maxPageBytes, session: session)
         answered = answered || page.isAnswer
         if let html = page.data {
@@ -122,7 +123,6 @@ nonisolated enum SenderIconFetcher {
             }
         }
 
-        // 3. favicon.ico
         let ico = await download(favicon, limit: maxImageBytes, session: session)
         answered = answered || ico.isAnswer
         if let png = ico.data.flatMap(normalizedPNG) { return .icon(png) }

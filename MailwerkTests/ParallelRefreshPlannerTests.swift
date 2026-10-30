@@ -92,3 +92,9 @@ struct ParallelRefreshPlannerTests {
         #expect(planner.isFinished)
     }
 }
+
+/// Testhilfe: Ende einer Abrufrunde.
+extension ParallelRefreshPlanner {
+    /// `true`, wenn nichts mehr wartet und nichts mehr läuft.
+    nonisolated var isFinished: Bool { pending.isEmpty && runningCount == 0 }
+}

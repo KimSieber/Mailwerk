@@ -12,6 +12,7 @@
 //
 
 import Foundation
+import SwiftMail
 import Testing
 @testable import Mailwerk
 
@@ -212,4 +213,12 @@ struct MessageContentPlanTests {
         #expect(MessageContentPlan.contentID(for: MessageContentPlan.part(
             section: "1.3", contentType: "image/png")) == "teil-1.3@mailwerk")
     }
+}
+
+/// Testhilfe: Abschnittsnummern als Text, z. B. „1.1“.
+extension MessageContentPlan {
+    /// Abschnitte der zu ladenden Text-/HTML-Teile.
+    nonisolated var bodySections: [String] { bodyParts.map(\.section.description) }
+    /// Abschnitte der eingebetteten Bilder.
+    nonisolated var inlineImageSections: [String] { inlineImages.map(\.section.description) }
 }

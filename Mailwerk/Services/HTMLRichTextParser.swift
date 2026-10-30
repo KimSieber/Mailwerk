@@ -99,7 +99,6 @@ nonisolated enum HTMLRichTextParser {
         while index < chars.count {
             guard chars[index] == "<" else { index += 1; continue }
 
-            // Text bis hierher übernehmen
             if textStart < index {
                 builder.text(String(chars[textStart..<index]))
             }
@@ -375,6 +374,10 @@ nonisolated enum HTMLRichTextParser {
             "large": 18, "x-large": 24, "xx-large": 32
         ]
         if let size = keywords[raw] { return size }
+        /// Zahl vor einer Einheit, z. B. „12“ aus „12px“.
+        ///
+        /// - Parameter suffix: Einheit („px“, „pt“ …).
+        /// - Returns: Zahl, wenn der Wert auf die Einheit endet, sonst `nil`.
         func number(_ suffix: String) -> Double? {
             raw.hasSuffix(suffix) ? Double(raw.dropLast(suffix.count).trimmingCharacters(in: .whitespaces)) : nil
         }
@@ -461,11 +464,6 @@ nonisolated enum HTMLRichTextParser {
             "style", "href", "src", "width", "height", "alt", "title", "color",
             "size", "class", "id", "lang", "dir", "name", "target", "rel",
             "border", "charset", "content", "http-equiv", "xmlns"
-        ]
-        /// CSS-Eigenschaften, die ausgewertet werden.
-        static let supportedStyleProperties: Set<String> = [
-            "font-weight", "font-style", "text-decoration", "text-decoration-line",
-            "font-size", "color"
         ]
 
         /// Format an der aktuellen Stelle.

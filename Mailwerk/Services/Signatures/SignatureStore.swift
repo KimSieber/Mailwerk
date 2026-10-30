@@ -125,11 +125,13 @@ final class InMemorySignatureStorage: SignatureStorage {
     /// Alle Datensätze.
     ///
     /// - Returns: Signaturen.
+    /// - Throws: Nie; `throws` verlangt das Protokoll.
     func all() throws -> [SignatureItem] { items }
 
     /// Ersetzt alle Datensätze des Postfachs durch die Signatur.
     ///
     /// - Parameter item: Signatur.
+    /// - Throws: Nie; `throws` verlangt das Protokoll.
     func save(_ item: SignatureItem) throws {
         items.removeAll { $0.accountID == item.accountID }
         items.append(item)
@@ -138,6 +140,7 @@ final class InMemorySignatureStorage: SignatureStorage {
     /// Entfernt alle Datensätze des Postfachs.
     ///
     /// - Parameter accountID: Kennung des Postfachs.
+    /// - Throws: Nie; `throws` verlangt das Protokoll.
     func remove(accountID: UUID) throws {
         items.removeAll { $0.accountID == accountID }
     }

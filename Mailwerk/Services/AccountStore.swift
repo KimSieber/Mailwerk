@@ -73,12 +73,6 @@ final class AccountStore {
     /// ID des Standard-Postfachs für neue Mails. `nil` = kein Standard definiert.
     private(set) var defaultAccountID: UUID?
 
-    /// Das Standard-Postfach, sofern definiert und noch vorhanden.
-    var defaultAccount: MailAccount? {
-        guard let defaultAccountID else { return nil }
-        return accounts.first { $0.id == defaultAccountID }
-    }
-
     /// Lädt die Postfächer und beobachtet Änderungen von anderen Geräten.
     ///
     /// Verarbeitung: Liest den lokalen Stand und die ausgeschalteten

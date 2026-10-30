@@ -25,10 +25,11 @@
 //  Abgrenzung: Ablage auf dem Server → DraftService; Zusammenstellen und
 //  Wiederherstellen im Verfassen-Fenster → ComposeViewModel.
 //
-//  Abhängigkeiten: Foundation.
+//  Abhängigkeiten: Foundation, os, Log.
 //
 
 import Foundation
+import os
 
 /// Datenblock eines Entwurfs.
 nonisolated struct DraftMetadata: Codable, Equatable {
@@ -202,6 +203,14 @@ nonisolated enum DraftFormat {
     private static func encode(_ metadata: DraftMetadata) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
-        return ((try? encoder.encode(metadata)) ?? Data()).base64EncodedString()
+        do {
+            return try encoder.encode(metadata).base64EncodedString()
+        } catch {
+            // Praktisch ausgeschlossen (nur Zeichenketten und Kennungen). Der
+            // Entwurf wird trotzdem gespeichert – ohne Datenblock öffnet er
+            // sich wie eine fremde Mail, der Text bleibt erhalten.
+            Log.send.error("⚠️ Datenblock des Entwurfs nicht kodierbar: \(error.localizedDescription, privacy: .public)")
+            return ""
+        }
     }
 }

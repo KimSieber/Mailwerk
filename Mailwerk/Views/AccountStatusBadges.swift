@@ -148,6 +148,9 @@ private struct BadgeExplanation: ViewModifier {
     /// Anordnung zu ändern (Innenabstand, Form, negativer Innenabstand).
     /// `presentationCompactAdaptation(.popover)` hält die Sprechblase auch
     /// auf dem iPhone klein, statt ein Blatt über den Bildschirm zu legen.
+    ///
+    /// - Parameter content: Ansicht des Symbols.
+    /// - Returns: Symbol mit vergrößerter Tippfläche und Sprechblase.
     func body(content: Content) -> some View {
         #if os(iOS)
         content

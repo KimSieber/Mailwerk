@@ -100,12 +100,13 @@ final class AddAccountViewModel {
         MailAddress(address: emailAddress).isValid
     }
 
-    /// `true`, wenn alle Pflichtfelder gefüllt, die Ports Zahlen und die
-    /// E-Mail-Adresse gültig sind (Art IMAP/SMTP).
+    /// `true`, wenn alle Pflichtfelder gefüllt, die Ports gültig
+    /// (1–65535) und die E-Mail-Adresse gültig sind (Art IMAP/SMTP).
     var isValid: Bool {
         !displayName.isEmpty && hasValidEmailAddress && !password.isEmpty
             && !imapHost.isEmpty && !smtpHost.isEmpty
-            && Int(imapPort) != nil && Int(smtpPort) != nil
+            && MailAccount.port(from: imapPort) != nil
+            && MailAccount.port(from: smtpPort) != nil
     }
 
     /// `true`, wenn Bezeichnung und gültige E-Mail-Adresse für die
@@ -121,7 +122,8 @@ final class AddAccountViewModel {
     /// `testResult`.
     @MainActor
     func testConnection() async {
-        guard let imapPortInt = Int(imapPort), let smtpPortInt = Int(smtpPort) else {
+        guard let imapPortInt = MailAccount.port(from: imapPort),
+              let smtpPortInt = MailAccount.port(from: smtpPort) else {
             testResult = .failure("Ungültiger Port")
             return
         }
@@ -197,9 +199,9 @@ final class AddAccountViewModel {
             username: loginName,
             emailAddress: emailAddress,
             imapHost: imapHost,
-            imapPort: Int(imapPort) ?? 993,
+            imapPort: MailAccount.port(from: imapPort) ?? 993,
             smtpHost: smtpHost,
-            smtpPort: Int(smtpPort) ?? 587,
+            smtpPort: MailAccount.port(from: smtpPort) ?? 587,
             colorHex: selectedColor?.rawValue,
             storesSentCopy: savesSentCopy
         )

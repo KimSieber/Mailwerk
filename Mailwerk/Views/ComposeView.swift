@@ -662,34 +662,55 @@ struct ComposeView: View {
 
     /// Übernimmt gewählte Dateien als Anhänge.
     ///
-    /// Verarbeitung: Der Zugriff auf Dateien außerhalb der App wird je
-    /// Datei geöffnet und wieder geschlossen. Nicht lesbare Dateien werden
-    /// gemeldet, die übrigen trotzdem angehängt.
+    /// Verarbeitung: Jede gewählte Datei wird einzeln angehängt
+    /// (`attachFile`). Nicht lesbare oder zu große Dateien werden gemeldet,
+    /// die übrigen trotzdem angehängt.
     ///
     /// - Parameter result: Ergebnis der Dateiauswahl.
     private func handleFileImport(_ result: Result<[URL], Error>) {
         switch result {
         case .success(let urls):
-            for url in urls {
-                let needsAccess = url.startAccessingSecurityScopedResource()
-                defer { if needsAccess { url.stopAccessingSecurityScopedResource() } }
-                do {
-                    let data = try Data(contentsOf: url)
-                    let type = UTType(filenameExtension: url.pathExtension)
-                    model.addAttachment(
-                        filename: url.lastPathComponent,
-                        mimeType: type?.preferredMIMEType ?? "application/octet-stream",
-                        data: data
-                    )
-                } catch {
-                    activeAlert = AlertItem(
-                        title: "Datei nicht angehängt",
-                        message: "„\(url.lastPathComponent)“ konnte nicht gelesen werden: \(error.localizedDescription)"
-                    )
-                }
-            }
+            for url in urls { attachFile(at: url) }
         case .failure(let error):
             activeAlert = .failure("Datei nicht angehängt", error)
+        }
+    }
+
+    /// Hängt eine gewählte Datei an.
+    ///
+    /// Verarbeitung: Der Zugriff auf Dateien außerhalb der App wird geöffnet
+    /// und wieder geschlossen. Die Größe wird vor dem Einlesen geprüft
+    /// (`AttachmentManager.maxImportBytes`), damit eine sehr große Datei
+    /// nicht erst vollständig in den Speicher geladen wird.
+    ///
+    /// - Parameter url: Gewählte Datei.
+    private func attachFile(at url: URL) {
+        let needsAccess = url.startAccessingSecurityScopedResource()
+        defer { if needsAccess { url.stopAccessingSecurityScopedResource() } }
+        let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
+        guard !AttachmentManager.exceedsImportLimit(sizeBytes: size) else {
+            let limit = ByteCountFormatter.string(
+                fromByteCount: Int64(AttachmentManager.maxImportBytes), countStyle: .file
+            )
+            activeAlert = AlertItem(
+                title: "Datei nicht angehängt",
+                message: "„\(url.lastPathComponent)“ ist größer als \(limit) und lässt sich nicht versenden."
+            )
+            return
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            let type = UTType(filenameExtension: url.pathExtension)
+            model.addAttachment(
+                filename: url.lastPathComponent,
+                mimeType: type?.preferredMIMEType ?? "application/octet-stream",
+                data: data
+            )
+        } catch {
+            activeAlert = AlertItem(
+                title: "Datei nicht angehängt",
+                message: "„\(url.lastPathComponent)“ konnte nicht gelesen werden: \(error.localizedDescription)"
+            )
         }
     }
 

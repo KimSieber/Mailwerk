@@ -23,7 +23,6 @@ struct MailAccountOAuthTests {
         """#
         let account = try JSONDecoder().decode(MailAccount.self, from: Data(json.utf8))
         #expect(account.oauthProvider == nil)
-        #expect(!account.usesOAuth)
         #expect(account.oauthConfiguration == nil)
     }
 
@@ -46,7 +45,6 @@ struct MailAccountOAuthTests {
         )
         let decoded = try JSONDecoder().decode(MailAccount.self, from: JSONEncoder().encode(account))
         #expect(decoded == account)
-        #expect(decoded.usesOAuth)
         #expect(decoded.oauthConfiguration == .microsoft)
     }
 

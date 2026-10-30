@@ -654,6 +654,8 @@ private struct RichTextViewRepresentable {
     let controller: RichTextController
 
     /// Legt den Coordinator (Bindungen, Höhenmeldung) an.
+    ///
+    /// - Returns: Coordinator mit Text, Höhe und Steuerung.
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text, contentHeight: $contentHeight, controller: controller)
     }

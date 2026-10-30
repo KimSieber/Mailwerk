@@ -326,7 +326,12 @@ final class WatchBridge {
             deliveries[token] = (chunks, Date())
         }
         Log.watch.debug("⌚️ Lieferung: \(blob.count / 1024, privacy: .public) KB in \(chunks.count, privacy: .public) Stücken")
-        return (try? WatchWire.encode(chunks[0])) ?? Data()
+        do {
+            return try WatchWire.encode(chunks[0])
+        } catch {
+            Log.watch.error("⚠️ Erstes Stück der Lieferung nicht kodierbar: \(error.localizedDescription, privacy: .public)")
+            return Data()
+        }
     }
 
     /// Entfernt abgelaufene Lieferungen.
@@ -411,9 +416,16 @@ final class WatchBridge {
         let content = WatchSnapshotBuilder.content(mailIDs: missing, imageKeys: keys)
         Log.endInterval(interval)
         let packed = await Task.detached(priority: .utility) {
-            try? WatchWire.pack(.package(snapshot, content))
+            Result { try WatchWire.pack(.package(snapshot, content)) }
         }.value
-        guard let blob = packed else { return }
+        let blob: Data
+        switch packed {
+        case .success(let data):
+            blob = data
+        case .failure(let error):
+            Log.watch.error("⚠️ Stand für die Watch nicht packbar: \(error.localizedDescription, privacy: .public)")
+            return
+        }
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("watch-\(UUID().uuidString).mwpack")
         do {
@@ -470,7 +482,12 @@ final class WatchBridge {
 /// (`WatchBridge.handle`).
 nonisolated final class WatchBridgeSessionDelegate: NSObject, WCSessionDelegate {
 
-    /// Aktivierung abgeschlossen.
+    /// Aktivierung abgeschlossen; ein Fehler wird protokolliert.
+    ///
+    /// - Parameters:
+    ///   - session: Sitzung mit der Watch.
+    ///   - activationState: Erreichter Zustand (nicht ausgewertet).
+    ///   - error: Fehler der Aktivierung, sonst `nil`.
     func session(
         _ session: WCSession,
         activationDidCompleteWith activationState: WCSessionActivationState,
@@ -481,15 +498,28 @@ nonisolated final class WatchBridgeSessionDelegate: NSObject, WCSessionDelegate 
         }
     }
 
-    /// Sitzung vorübergehend inaktiv (Wechsel der Watch).
+    /// Sitzung vorübergehend inaktiv (Wechsel der Watch); nichts zu tun.
+    ///
+    /// - Parameter session: Sitzung mit der Watch.
     func sessionDidBecomeInactive(_ session: WCSession) {}
 
     /// Sitzung beendet (Wechsel der Watch) – für die neue Watch neu aktivieren.
+    ///
+    /// - Parameter session: Beendete Sitzung.
     func sessionDidDeactivate(_ session: WCSession) {
         session.activate()
     }
 
     /// Anfrage der Watch mit Antwort.
+    ///
+    /// Verarbeitung: Die Anfrage wird am Main-Actor beantwortet
+    /// (`WatchBridge.handle`); die Antwortfunktion wird dafür in
+    /// `ReplyHandler` verpackt.
+    ///
+    /// - Parameters:
+    ///   - session: Sitzung mit der Watch.
+    ///   - messageData: Kodierte Anfrage.
+    ///   - replyHandler: Gibt die kodierte Antwort an die Watch zurück.
     func session(
         _ session: WCSession,
         didReceiveMessageData messageData: Data,
@@ -502,8 +532,17 @@ nonisolated final class WatchBridgeSessionDelegate: NSObject, WCSessionDelegate 
     }
 
     /// Datei an die Watch übertragen (oder gescheitert): aufräumen.
+    ///
+    /// - Parameters:
+    ///   - session: Sitzung mit der Watch.
+    ///   - fileTransfer: Abgeschlossene Übertragung; ihre Datei wird gelöscht.
+    ///   - error: Fehler der Übertragung, sonst `nil`.
     func session(_ session: WCSession, didFinish fileTransfer: WCSessionFileTransfer, error: Error?) {
-        try? FileManager.default.removeItem(at: fileTransfer.file.fileURL)
+        do {
+            try FileManager.default.removeItem(at: fileTransfer.file.fileURL)
+        } catch {
+            Log.watch.debug("⌚️ Übertragene Datei nicht gelöscht: \(error.localizedDescription, privacy: .public)")
+        }
         if let error {
             Log.watch.info("⌚️ Datei für die Watch nicht übertragen: \(error.localizedDescription, privacy: .public)")
         }

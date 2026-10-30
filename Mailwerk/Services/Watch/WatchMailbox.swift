@@ -227,6 +227,11 @@ nonisolated struct WatchMailbox: Codable, Equatable, Sendable {
 
     /// `true`, wenn zwei Änderungen dieselbe Art betreffen (und die neuere
     /// die ältere damit ersetzt).
+    ///
+    /// - Parameters:
+    ///   - lhs: Erste Änderung.
+    ///   - rhs: Zweite Änderung.
+    /// - Returns: `true` bei gleicher Art (bei Spam: gleiche Art des Eintrags und gleicher Wert).
     private static func sameKind(_ lhs: WatchAction.Change, _ rhs: WatchAction.Change) -> Bool {
         switch (lhs, rhs) {
         case (.read, .read), (.flagged, .flagged): return true
@@ -237,6 +242,13 @@ nonisolated struct WatchMailbox: Codable, Equatable, Sendable {
     }
 
     /// `true`, wenn der Wert auf der angegebenen Liste steht.
+    ///
+    /// - Parameters:
+    ///   - value: Adresse oder Domain.
+    ///   - kind: Art des Werts.
+    ///   - list: Weiße oder schwarze Liste.
+    ///   - lists: Aktuelle Filterlisten.
+    /// - Returns: `true`, wenn der Wert auf der Liste steht.
     private static func contains(_ value: String, kind: FilterEntryKind, list: FilterList, in lists: FilterLists) -> Bool {
         switch (list, kind) {
         case (.white, .address): return lists.whiteAddresses.contains(value)

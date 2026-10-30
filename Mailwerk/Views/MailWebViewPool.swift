@@ -44,8 +44,8 @@ final class MailWebViewPool {
     let capacity: Int
     /// Erzeugt eine neue, sicher eingerichtete Ansicht.
     private let factory: () -> WKWebView
-    /// Vorrätige Ansichten.
-    private var available: [WKWebView] = []
+    /// Vorrätige Ansichten (lesbar nur für die Tests).
+    private(set) var available: [WKWebView] = []
 
     /// Legt den Vorrat an.
     ///
@@ -56,9 +56,6 @@ final class MailWebViewPool {
         self.capacity = capacity
         self.factory = factory
     }
-
-    /// Anzahl vorrätiger Ansichten.
-    var availableCount: Int { available.count }
 
     /// Wärmt den Vorrat vor: eine Ansicht mit leerem Dokument, damit der
     /// WebKit-Prozess schon läuft. Ist bereits eine vorrätig, passiert nichts.

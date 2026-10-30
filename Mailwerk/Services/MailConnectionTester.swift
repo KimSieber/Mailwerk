@@ -97,7 +97,9 @@ enum MailConnectionTester {
             try await server.logout()
         } catch {
             // Verbindung nicht offen lassen (z. B. nach fehlgeschlagenem Login)
-            try? await server.disconnect()
+            await MailSession.disconnectQuietly(Log.fetch, host: host) {
+                try await server.disconnect()
+            }
             Log.fetch.error("❌ Verbindungstest IMAP \(host, privacy: .public):\(port, privacy: .public) gescheitert: \(error.localizedDescription, privacy: .public)")
             throw TestError.imapFailed(error.localizedDescription)
         }
@@ -133,7 +135,9 @@ enum MailConnectionTester {
             try await server.disconnect()
         } catch {
             // Verbindung nicht offen lassen (z. B. nach fehlgeschlagenem Login)
-            try? await server.disconnect()
+            await MailSession.disconnectQuietly(Log.send, host: host) {
+                try await server.disconnect()
+            }
             Log.send.error("❌ Verbindungstest SMTP \(host, privacy: .public):\(port, privacy: .public) gescheitert beim Schritt \(step.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
             guard step == .login else {
                 throw TestError.smtpFailed(error.localizedDescription)

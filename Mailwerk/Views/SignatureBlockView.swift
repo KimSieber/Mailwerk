@@ -74,6 +74,21 @@ private struct EditableHTMLView {
     /// Name der Nachricht vom App-Skript an die App.
     static let messageName = "mailwerkSignature"
 
+    /// Größte übernommene Höhe in Punkt. Eine Signatur ist nie so hoch;
+    /// ein unsinniger Wert aus der Web-Ansicht würde sonst das Layout des
+    /// Verfassen-Fensters sprengen.
+    static let maxContentHeight: CGFloat = 2000
+
+    /// Prüft eine vom App-Skript gemeldete Höhe auf Plausibilität.
+    ///
+    /// - Parameter raw: Gemeldete Höhe.
+    /// - Returns: Höhe im Bereich 0…`maxContentHeight`; `nil` bei NaN oder
+    ///   unendlichem Wert.
+    static func plausibleHeight(_ raw: Double) -> CGFloat? {
+        guard raw.isFinite else { return nil }
+        return min(max(CGFloat(raw), 0), maxContentHeight)
+    }
+
     /// Skript der App: Inhalt bearbeitbar machen, Änderungen und Höhe melden.
     static let script = """
     (function() {
@@ -112,6 +127,8 @@ private struct EditableHTMLView {
     }
 
     /// Legt den Coordinator an.
+    ///
+    /// - Returns: Coordinator mit Verweis auf diese Ansicht.
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     /// Erzeugt die Web-Ansicht samt App-Skript.
@@ -186,7 +203,8 @@ private struct EditableHTMLView {
         ///
         /// - Parameters:
         ///   - userContentController: Absender.
-        ///   - message: Meldung mit `html` (optional) und `height`.
+        ///   - message: Meldung mit `html` (optional) und `height`; eine
+        ///     unplausible Höhe wird verworfen bzw. begrenzt.
         func userContentController(
             _ userContentController: WKUserContentController,
             didReceive message: WKScriptMessage
@@ -195,8 +213,8 @@ private struct EditableHTMLView {
             if let html = body["html"] as? String {
                 parent.onChange(html)
             }
-            if let height = body["height"] as? Double {
-                let value = CGFloat(height)
+            if let height = body["height"] as? Double,
+               let value = EditableHTMLView.plausibleHeight(height) {
                 if abs(value - parent.contentHeight) > 0.5 {
                     parent.contentHeight = value
                 }

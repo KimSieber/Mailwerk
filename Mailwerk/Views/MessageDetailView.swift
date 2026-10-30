@@ -98,7 +98,7 @@
 //  die Mail als reiner Text mit allen Kopfzeilen, für Analysen. Mit
 //  Tastatur auch per ⌥⌘U, wie in Apple Mail.
 //
-//  Abhängigkeiten: SwiftUI, QuickLook, WebKit, Translation, MessageActions,
+//  Abhängigkeiten: SwiftUI, QuickLook, Translation, MessageActions,
 //  MessageMenu, MessageActionDialogs, MessageDetailHeader,
 //  MessageAttachmentList, SpamFilterService,
 //  AttachmentManager, MessageStore, MessageOpenPreparation, RemoteContentPolicy,
@@ -112,7 +112,6 @@
 
 import SwiftUI
 import QuickLook
-import WebKit
 import Translation
 import os
 
@@ -991,12 +990,8 @@ struct MessageDetailView: View {
     /// „Erneut versuchen“. Die Fehlermeldung ist bewusst allgemein – genauere
     /// Texte folgen nach dem Testdurchlauf anhand der echten Fehlerfälle.
     ///
-    /// Achtung: `session.translations(from:)` sowie `.targetText` und
-    /// `.clientIdentifier` auf `TranslationSession.Request`/`.Response`
-    /// konnten nicht gegen die offizielle Apple-Dokumentation geprüft werden
-    /// (JS-gerenderte Seiten). Bitte beim ersten Build gegen Xcodes
-    /// Autovervollständigung/Compiler-Fehler prüfen und diesen Hinweis dann
-    /// entfernen.
+    /// - Parameter session: Übersetzungssitzung des Systems
+    ///   (`translationTask`).
     @MainActor
     private func performTranslation(session: TranslationSession) async {
         let body = SearchText.body(text: message.textBody, html: message.htmlBody)

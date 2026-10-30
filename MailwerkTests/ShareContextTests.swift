@@ -88,7 +88,7 @@ struct ShareContextTests {
         let first = account("a"), second = account("b")
         let store = AccountStore(shareContext: ShareContext(accounts: [first, second], defaultAccountID: second.id, signatures: []))
         #expect(store.accounts == [first, second])
-        #expect(store.defaultAccount == second)
+        #expect(store.defaultAccountID == second.id)
 
         let stale = AccountStore(shareContext: ShareContext(accounts: [first], defaultAccountID: UUID(), signatures: []))
         #expect(stale.defaultAccountID == nil)

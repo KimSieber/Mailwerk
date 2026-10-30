@@ -104,6 +104,10 @@ nonisolated struct OAuthAuthorization: Equatable, Sendable {
     ///   `.invalidResponse`.
     static func code(from callback: URL, expectedState: String) throws -> String {
         let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        /// Wert eines Abfrage-Parameters der Rückkehr-Adresse.
+        ///
+        /// - Parameter name: Name des Parameters.
+        /// - Returns: Wert oder `nil`, wenn er fehlt.
         func value(_ name: String) -> String? {
             items.first(where: { $0.name == name })?.value
         }

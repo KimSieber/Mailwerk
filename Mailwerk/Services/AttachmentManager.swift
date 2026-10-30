@@ -14,6 +14,9 @@
 //    erfolgt im Ordner der Mail, weil UIDs nur innerhalb eines Ordners
 //    eindeutig sind.
 //
+//  Größenlimit beim Anhängen: `maxImportBytes` begrenzt Dateien, die beim
+//  Verfassen eingelesen werden (ComposeView), bevor sie im Speicher landen.
+//
 //  Abgrenzung: Der automatische Download beim Abruf liegt im
 //  MailFetchService; hier geht es nur um Einzelzugriffe.
 //
@@ -56,6 +59,23 @@ enum AttachmentManager {
 
     /// Name des Unterordners im tmp-Verzeichnis für Anhang-Dateien.
     nonisolated private static let tempSubdirectory = "Mailwerk-Attachments"
+
+    /// Größte Datei, die beim Verfassen angehängt wird (50 MB).
+    ///
+    /// Größere Dateien lehnt jeder gängige Anbieter beim Versand ab (Gmail
+    /// 25 MB, die meisten anderen bis 50 MB); sie würden nur den Speicher
+    /// füllen, bevor der Server sie zurückweist.
+    nonisolated static let maxImportBytes = 50 * 1024 * 1024
+
+    /// Prüft, ob eine Datei zum Anhängen zu groß ist.
+    ///
+    /// - Parameter sizeBytes: Dateigröße; `nil`, wenn das System sie nicht
+    ///   kennt (dann wird nicht vorab abgelehnt).
+    /// - Returns: `true`, wenn die Datei `maxImportBytes` überschreitet.
+    nonisolated static func exceedsImportLimit(sizeBytes: Int?) -> Bool {
+        guard let sizeBytes else { return false }
+        return sizeBytes > maxImportBytes
+    }
 
     // MARK: - Temp-Verzeichnis
 
@@ -103,7 +123,6 @@ enum AttachmentManager {
         let safe = Self.sanitizedFilename(attachment.completedFilename)
         let fileURL = tempDir.appendingPathComponent(safe)
 
-        // Bestehende Datei überschreiben
         if FileManager.default.fileExists(atPath: fileURL.path) {
             try FileManager.default.removeItem(at: fileURL)
         }
@@ -129,11 +148,10 @@ enum AttachmentManager {
         if let lastBackslash = name.lastIndex(of: "\\") {
             name = String(name[name.index(after: lastBackslash)...])
         }
-        // Führende Punkte entfernen
+        // Führende Punkte entfernen – sonst entstünde eine versteckte Datei.
         while name.hasPrefix(".") {
             name = String(name.dropFirst())
         }
-        // Leerer Name → Fallback
         if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             name = "Anhang"
         }

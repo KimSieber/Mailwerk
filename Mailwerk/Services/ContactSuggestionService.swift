@@ -125,7 +125,6 @@ final class ContactSuggestionService {
         let store = CNContactStore()
         var contacts: [CNContact] = []
 
-        // Treffer über den Namen
         let byName = try? store.unifiedContacts(
             matching: CNContact.predicateForContacts(matchingName: query),
             keysToFetch: keys

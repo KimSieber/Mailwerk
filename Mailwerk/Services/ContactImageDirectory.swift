@@ -145,15 +145,6 @@ final class ContactImageDirectory {
         return listThumbnails[Self.normalized(address)]
     }
 
-    /// `true`, wenn es zur Adresse ein Kontaktbild gibt (ohne zu dekodieren).
-    ///
-    /// - Parameter address: E-Mail-Adresse.
-    /// - Returns: `true` bei vorhandenem Bild.
-    func hasImage(for address: String?) -> Bool {
-        guard let address else { return false }
-        return thumbnails[Self.normalized(address)] != nil
-    }
-
     /// Verkleinertes Kontaktbild zu einer Adresse für die Mailliste.
     ///
     /// Verarbeitung: Dekodiert einmal je Adresse im Hintergrund auf

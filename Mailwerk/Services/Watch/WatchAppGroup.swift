@@ -16,10 +16,11 @@
 //
 //  Abgrenzung: Mails und Inhalte → WatchStore; Anzeige → MailwerkUnreadWidget.
 //
-//  Abhängigkeiten: Foundation.
+//  Abhängigkeiten: Foundation, os, Log (auch in der Komplikation eingebunden).
 //
 
 import Foundation
+import os
 
 /// Speicherort der Watch-App und ihrer Komplikation.
 nonisolated enum WatchAppGroup {
@@ -55,7 +56,12 @@ nonisolated enum WatchAppGroup {
             base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         }
         let directory = base.appendingPathComponent("Mailwerk", isDirectory: true)
-        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        do {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            // Späteres Schreiben scheitert dann ebenfalls – hier steht die Ursache.
+            Log.watch.error("⚠️ Ordner im gemeinsamen Speicher nicht angelegt: \(error.localizedDescription, privacy: .public)")
+        }
         return directory
     }
 }

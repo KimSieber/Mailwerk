@@ -642,6 +642,7 @@ nonisolated private struct FilterListTextFile: FileDocument {
     ///
     /// - Parameter configuration: Schreibkonfiguration des Systems.
     /// - Returns: Dateiinhalt.
+    /// - Throws: Nie; `throws` verlangt das Protokoll `FileDocument`.
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         FileWrapper(regularFileWithContents: Data(text.utf8))
     }

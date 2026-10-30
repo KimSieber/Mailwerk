@@ -41,9 +41,6 @@ nonisolated struct SpamHeaderVerdict: Equatable, Sendable {
     let isSpam: Bool
     /// Höchster lesbarer Score aller `X-Spam-Status`-Zeilen, sonst nil.
     let score: Double?
-
-    /// Befund ohne jede Spam-Kopfzeile.
-    static let clean = SpamHeaderVerdict(isSpam: false, score: nil)
 }
 
 /// Auswertung der Spam-Kopfzeilen des Servers.

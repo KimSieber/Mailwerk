@@ -37,7 +37,7 @@ struct MailWebViewPoolTests {
         let pool = pool(counter: counter)
         pool.prewarm()
         pool.prewarm()
-        #expect(pool.availableCount == 1)
+        #expect(pool.available.count == 1)
         #expect(counter.created == 1)
     }
 
@@ -49,7 +49,7 @@ struct MailWebViewPoolTests {
         pool.prewarm()
         _ = pool.take()
         #expect(counter.created == 1)
-        #expect(pool.availableCount == 0)
+        #expect(pool.available.count == 0)
     }
 
     /// Leerer Vorrat: Entnehmen erzeugt eine neue Ansicht.
@@ -82,7 +82,7 @@ struct MailWebViewPoolTests {
         let b = pool.take()
         pool.recycle(a)
         pool.recycle(b)
-        #expect(pool.availableCount == 1)
+        #expect(pool.available.count == 1)
     }
 
     /// Zurücksetzen löst die Verbindung zur alten Mail.

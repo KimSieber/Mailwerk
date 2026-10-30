@@ -92,6 +92,7 @@ final class InMemoryFilterListRepository: FilterListRepository {
     /// Alle Einträge, zusammengeführt und sortiert.
     ///
     /// - Returns: Einträge.
+    /// - Throws: Nie; `throws` verlangt das Protokoll.
     func entries() async throws -> [FilterEntryItem] {
         FilterListRules.merged(storage)
     }
@@ -99,6 +100,7 @@ final class InMemoryFilterListRepository: FilterListRepository {
     /// Momentaufnahme für den Classifier.
     ///
     /// - Returns: Listen als Mengen.
+    /// - Throws: Nie; `throws` verlangt das Protokoll.
     func lists() async throws -> FilterLists {
         FilterListRules.lists(from: storage)
     }
@@ -139,6 +141,7 @@ final class InMemoryFilterListRepository: FilterListRepository {
     /// Entfernt einen Eintrag samt seiner zusammengeführten Doppelten.
     ///
     /// - Parameter id: Kennung des Eintrags.
+    /// - Throws: Nie; `throws` verlangt das Protokoll.
     func remove(_ id: UUID) async throws {
         guard let target = storage.first(where: { $0.id == id }) else { return }
         // Auch die zusammengeführten Doppelten entfernen, sonst taucht der

@@ -1307,7 +1307,12 @@ final class InboxViewModel {
     ///   - credentials: Zugangsdaten des Postfachs.
     @MainActor
     private func retrySpamFolder(_ folder: String, of account: MailAccount, credentials: MailCredentials) async {
-        try? await Task.sleep(for: Self.spamRetryDelay)
+        // Abgebrochen: kein zweiter Abruf mehr.
+        do {
+            try await Task.sleep(for: Self.spamRetryDelay)
+        } catch {
+            return
+        }
         guard network.isOnline else { return }
         do {
             try await MailFetchService.refreshAndCache(credentials, folder: folder)
@@ -1494,17 +1499,6 @@ final class InboxViewModel {
     func beginSelection(with id: String) {
         selectedIDs.insert(id)
         isSelecting = true
-    }
-
-    /// Wählt eine Mail aus bzw. ab (Klick im Auswahlmodus auf dem Mac).
-    ///
-    /// - Parameter id: Cache-ID der Mail.
-    func toggleSelection(_ id: String) {
-        if selectedIDs.contains(id) {
-            selectedIDs.remove(id)
-        } else {
-            selectedIDs.insert(id)
-        }
     }
 
     /// Beendet den Auswahlmodus und leert die Auswahl.

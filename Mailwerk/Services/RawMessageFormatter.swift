@@ -196,6 +196,8 @@ nonisolated enum RawMessageFormatter {
         var part: [String]?   // nil = noch in der Präambel
         var isClosed = false
 
+        /// Gibt den gesammelten Teil aus (eine Ebene tiefer) und leert ihn;
+        /// in der Präambel (`part == nil`) passiert nichts.
         func flush() {
             guard let lines = part else { return }
             if depth < maxDepth {

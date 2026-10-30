@@ -260,7 +260,6 @@ enum MailSendService {
             throw SendError.invalidSender(senderAddress)
         }
 
-        // Empfänger prüfen
         let allRecipients = mail.to + mail.cc + mail.bcc
         guard !allRecipients.isEmpty else { throw SendError.noRecipients }
         if let invalid = allRecipients.first(where: { !$0.isValid }) {
@@ -407,7 +406,9 @@ enum MailSendService {
         } catch {
             failure = error
         }
-        try? await smtp.disconnect()
+        await MailSession.disconnectQuietly(Log.send, host: account.smtpHost) {
+            try await smtp.disconnect()
+        }
         if let failure {
             Log.send.error("❌ [\(account.displayName, privacy: .private)] Versand gescheitert beim Schritt \(step.rawValue, privacy: .public): \(failure.localizedDescription, privacy: .public)")
             if let oauthError = failure as? OAuthError { throw oauthError }

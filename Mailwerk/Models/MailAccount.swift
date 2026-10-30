@@ -144,11 +144,6 @@ nonisolated struct MailAccount: Identifiable, Codable, Equatable, Sendable {
         self.oauthProvider = oauthProvider
     }
 
-    /// `true`, wenn sich das Postfach per OAuth 2 anmeldet.
-    var usesOAuth: Bool {
-        oauthProvider != nil
-    }
-
     /// Konfiguration des OAuth-Anbieters; `nil` bei Anmeldung mit Passwort.
     var oauthConfiguration: OAuthProvider? {
         oauthProvider.map { OAuthProvider.provider(for: $0) }
@@ -178,6 +173,24 @@ nonisolated struct MailAccount: Identifiable, Codable, Equatable, Sendable {
         return login.isEmpty
             ? emailAddress.trimmingCharacters(in: .whitespacesAndNewlines)
             : login
+    }
+
+    /// Zulässige TCP-Ports.
+    nonisolated static let validPorts = 1...65535
+
+    /// Liest eine Port-Eingabe aus den Formularen.
+    ///
+    /// Verarbeitung: Leerraum an den Rändern entfällt; nur ganze Zahlen im
+    /// Bereich `validPorts` gelten. Werte wie 0 oder 70000 würden sonst
+    /// gespeichert und erst beim Verbinden mit einer unklaren Meldung
+    /// scheitern.
+    ///
+    /// - Parameter text: Eingabe im Feld Port.
+    /// - Returns: Port oder `nil` bei ungültiger Eingabe.
+    nonisolated static func port(from text: String) -> Int? {
+        guard let port = Int(text.trimmingCharacters(in: .whitespaces)),
+              validPorts.contains(port) else { return nil }
+        return port
     }
 
     /// Bereinigt einen Namen: Leerraum an den Rändern entfällt, ein leerer

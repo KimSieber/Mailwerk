@@ -99,7 +99,6 @@ nonisolated enum MailboxNameCodec {
                 continue
             }
 
-            // Ende des Abschnitts suchen.
             guard let end = scalars[(index + 1)...].firstIndex(of: "-") else { return nil }
             let body = String(String.UnicodeScalarView(scalars[(index + 1)..<end]))
 

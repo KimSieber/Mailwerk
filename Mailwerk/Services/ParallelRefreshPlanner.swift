@@ -64,9 +64,6 @@ nonisolated struct ParallelRefreshPlanner {
     /// Anzahl laufender Abrufe.
     var runningCount: Int { runningPerHost.values.reduce(0, +) }
 
-    /// `true`, wenn nichts mehr wartet und nichts mehr läuft.
-    var isFinished: Bool { pending.isEmpty && runningCount == 0 }
-
     /// Plant Postfächer ein; schon eingeplante werden übergangen.
     ///
     /// - Parameter items: Postfächer in gewünschter Reihenfolge.

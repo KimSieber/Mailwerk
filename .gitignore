@@ -13,8 +13,9 @@ xcuserdata/
 *.storyboard.xml
 
 # Swift Package Manager
+# Package.resolved wird bewusst eingecheckt: Er legt die Versionen von
+# SwiftMail und swift-nio fest, damit jeder Build gleich auflöst.
 .build/
-Package.resolved
 
 # CocoaPods (falls du es je nutzt)
 Pods/
