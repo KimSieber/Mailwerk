@@ -10,6 +10,9 @@
 //  wenige Befehle sieht statt einen je Nachricht. Reine Logik ohne IMAP,
 //  deshalb `nonisolated` und vollständig per Unit-Test abgedeckt.
 //
+//  Dazu die Auswahl der zu prüfenden Mails (`uncheckedUIDs`) – auch das
+//  reine Logik, damit der Filterlauf im Dienst nur noch ausführt.
+//
 //  Abgrenzung: Einzelentscheidung → SpamClassifier; Ausführen →
 //  SpamFilterService.
 //
@@ -95,5 +98,22 @@ nonisolated enum SpamFilterPlanner {
         plan.moveToSpam.sort()
         plan.keep.sort()
         return plan
+    }
+
+    /// Bestimmt, welche gefundenen Mails ein Filterlauf prüfen muss.
+    ///
+    /// Verarbeitung: Speichert der Server eigene Schlüsselwörter, hat die
+    /// Suche schon nur Mails ohne `$MailwerkChecked` geliefert – alle zählen.
+    /// Sonst gilt als „schon geprüft“, was bereits im Cache des
+    /// Posteingangs liegt: Der Filter läuft vor jedem Abruf des
+    /// Posteingangs, neue Mails sind also genau die noch nicht gecachten.
+    ///
+    /// - Parameters:
+    ///   - found: UIDs aus der Suche des Filterlaufs.
+    ///   - usesKeywords: `true`, wenn der Server eigene Schlüsselwörter speichert.
+    ///   - cached: UIDs des Posteingangs im Cache.
+    /// - Returns: Zu prüfende UIDs in der Reihenfolge der Suche.
+    static func uncheckedUIDs(found: [UInt32], usesKeywords: Bool, cached: Set<UInt32>) -> [UInt32] {
+        usesKeywords ? found : found.filter { !cached.contains($0) }
     }
 }

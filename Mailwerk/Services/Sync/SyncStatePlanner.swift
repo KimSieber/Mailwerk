@@ -60,6 +60,15 @@ nonisolated enum SyncStatePlanner {
     }
 
     /// Ergebnis der Planung für Neuankünfte.
+    /// UID-Bereich möglicher Neuankünfte: ab dem beim letzten Abruf
+    /// gespeicherten UIDNEXT bis vor den aktuellen.
+    struct ArrivalWindow: Equatable {
+        /// Gespeicherter UIDNEXT des letzten Abrufs.
+        let fromUID: UInt32
+        /// UIDNEXT aus dem aktuellen SELECT.
+        let serverUIDNext: UInt32
+    }
+
     struct ArrivalPlan: Equatable {
         /// UIDs, die jetzt geladen werden, aufsteigend.
         let toLoad: [UInt32]
@@ -108,18 +117,19 @@ nonisolated enum SyncStatePlanner {
     ///
     /// - Parameters:
     ///   - serverUIDs: Alle UIDs des Ordners auf dem Server.
-    ///   - fromUID: Gespeicherter UIDNEXT des letzten Abrufs.
-    ///   - serverUIDNext: UIDNEXT aus dem aktuellen SELECT.
+    ///   - window: Gespeicherter UIDNEXT des letzten Abrufs und UIDNEXT
+    ///     aus dem aktuellen SELECT.
     ///   - known: UIDs, die nicht mehr geladen werden müssen.
     ///   - limit: Obergrenze für diesen Abruf.
     /// - Returns: Zu ladende UIDs, Anzahl zurückgestellter und neuer UIDNEXT.
     static func arrivals(
         serverUIDs: Set<UInt32>,
-        fromUID: UInt32,
-        serverUIDNext: UInt32,
+        window: ArrivalWindow,
         known: Set<UInt32>,
         limit: Int = arrivalLimit
     ) -> ArrivalPlan {
+        let fromUID = window.fromUID
+        let serverUIDNext = window.serverUIDNext
         let candidates = serverUIDs
             .filter { $0 >= fromUID && $0 < serverUIDNext }
             .subtracting(known)

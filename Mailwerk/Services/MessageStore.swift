@@ -1119,23 +1119,11 @@ nonisolated final class MessageStore: @unchecked Sendable {
     ///
     /// - Parameters:
     ///   - messageID: Cache-ID der Nachricht.
-    ///   - isUnread: `true` = ungelesen.
-    ///   - isFlagged: `true` = gekennzeichnet.
-    ///   - isAnswered: `true` = beantwortet.
-    ///   - isForwarded: `true` = weitergeleitet.
-    func updateServerFlags(
-        messageID: String,
-        isUnread: Bool,
-        isFlagged: Bool,
-        isAnswered: Bool,
-        isForwarded: Bool
-    ) {
+    ///   - flags: Ausgewertete Flags des Servers.
+    func updateServerFlags(messageID: String, flags: FlagState) {
         onWrite {
             logged("updateServerFlags \(messageID)") {
-                try writeServerFlags(
-                    messageID: messageID, isUnread: isUnread, isFlagged: isFlagged,
-                    isAnswered: isAnswered, isForwarded: isForwarded
-                )
+                try writeServerFlags(messageID: messageID, flags: flags)
             }
         }
     }
@@ -1144,28 +1132,19 @@ nonisolated final class MessageStore: @unchecked Sendable {
     ///
     /// - Parameters:
     ///   - messageID: Cache-ID der Nachricht.
-    ///   - isUnread: `true` = ungelesen.
-    ///   - isFlagged: `true` = gekennzeichnet.
-    ///   - isAnswered: `true` = beantwortet.
-    ///   - isForwarded: `true` = weitergeleitet.
+    ///   - flags: Ungelesen, gekennzeichnet, beantwortet, weitergeleitet.
     /// - Throws: `StoreError`, wenn das Schreiben fehlschlägt.
-    private func writeServerFlags(
-        messageID: String,
-        isUnread: Bool,
-        isFlagged: Bool,
-        isAnswered: Bool,
-        isForwarded: Bool
-    ) throws {
+    private func writeServerFlags(messageID: String, flags: FlagState) throws {
         let sql = """
             UPDATE message
             SET isUnread = ?, isFlagged = ?, isAnswered = ?, isForwarded = ?
             WHERE id = ?
             """
         try execute(sql, context: "writeServerFlags \(messageID)") { stmt in
-            sqlite3_bind_int(stmt, 1, isUnread ? 1 : 0)
-            sqlite3_bind_int(stmt, 2, isFlagged ? 1 : 0)
-            sqlite3_bind_int(stmt, 3, isAnswered ? 1 : 0)
-            sqlite3_bind_int(stmt, 4, isForwarded ? 1 : 0)
+            sqlite3_bind_int(stmt, 1, flags.isUnread ? 1 : 0)
+            sqlite3_bind_int(stmt, 2, flags.isFlagged ? 1 : 0)
+            sqlite3_bind_int(stmt, 3, flags.isAnswered ? 1 : 0)
+            sqlite3_bind_int(stmt, 4, flags.isForwarded ? 1 : 0)
             bind(stmt, 5, messageID)
         }
     }
@@ -1203,23 +1182,20 @@ nonisolated final class MessageStore: @unchecked Sendable {
     ///   - date: Datumsgrenze.
     /// - Returns: Gelesene Flag-Zustände.
     private func flagStates(sql: String, accountID: UUID, folder: String, date: Date) -> [CachedFlagState] {
-        guard let stmt = prepare(sql) else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        bind(stmt, 1, accountID.uuidString)
-        bind(stmt, 2, folder)
-        sqlite3_bind_double(stmt, 3, date.timeIntervalSince1970)
-        var result: [CachedFlagState] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            result.append(CachedFlagState(
+        return query(sql, bind: { stmt in
+            bind(stmt, 1, accountID.uuidString)
+            bind(stmt, 2, folder)
+            sqlite3_bind_double(stmt, 3, date.timeIntervalSince1970)
+        }) { stmt in
+            CachedFlagState(
                 id: str(stmt, 0),
                 uid: UInt32(sqlite3_column_int64(stmt, 1)),
                 isUnread: sqlite3_column_int(stmt, 2) == 1,
                 isFlagged: sqlite3_column_int(stmt, 3) == 1,
                 isAnswered: sqlite3_column_int(stmt, 4) == 1,
                 isForwarded: sqlite3_column_int(stmt, 5) == 1
-            ))
+            )
         }
-        return result
     }
 
     /// Wendet einen Abgleichsplan an.
@@ -1238,13 +1214,7 @@ nonisolated final class MessageStore: @unchecked Sendable {
                         try removeMessage(id: id)
                     }
                     for state in plan.flagUpdates {
-                        try writeServerFlags(
-                            messageID: state.id,
-                            isUnread: state.isUnread,
-                            isFlagged: state.isFlagged,
-                            isAnswered: state.isAnswered,
-                            isForwarded: state.isForwarded
-                        )
+                        try writeServerFlags(messageID: state.id, flags: state.flags)
                     }
                 }
             }
@@ -1265,16 +1235,13 @@ nonisolated final class MessageStore: @unchecked Sendable {
                 SELECT id FROM message
                 WHERE accountID = ? AND folder = ? AND headersVersion < ?
                 """
-            guard let stmt = prepare(sql) else { return [] }
-            defer { sqlite3_finalize(stmt) }
-            bind(stmt, 1, accountID.uuidString)
-            bind(stmt, 2, folder)
-            sqlite3_bind_int(stmt, 3, Int32(Self.currentHeadersVersion))
-            var ids = Set<String>()
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                ids.insert(str(stmt, 0))
-            }
-            return ids
+            return Set(query(sql, bind: { stmt in
+                bind(stmt, 1, accountID.uuidString)
+                bind(stmt, 2, folder)
+                sqlite3_bind_int(stmt, 3, Int32(Self.currentHeadersVersion))
+            }) { stmt in
+                str(stmt, 0)
+            })
         }
     }
 
@@ -1419,15 +1386,12 @@ nonisolated final class MessageStore: @unchecked Sendable {
                 WHERE accountID IN (\(Self.placeholders(accountIDs.count))) AND folder = ?
                 ORDER BY date DESC
                 """
-            guard let stmt = prepare(sql) else { return [] }
-            defer { sqlite3_finalize(stmt) }
-            let next = bind(stmt, accountIDs: accountIDs)
-            bind(stmt, next, folder)
-            var result: [MessageListItem] = []
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                result.append(readListItem(stmt))
+            return query(sql, bind: { stmt in
+                let next = bind(stmt, accountIDs: accountIDs)
+                bind(stmt, next, folder)
+            }) { stmt in
+                readListItem(stmt)
             }
-            return result
         }
     }
 
@@ -1456,14 +1420,11 @@ nonisolated final class MessageStore: @unchecked Sendable {
                 WHERE \(Self.folderCondition(folders.count))
                 ORDER BY date DESC
                 """
-            guard let stmt = prepare(sql) else { return [] }
-            defer { sqlite3_finalize(stmt) }
-            _ = bind(stmt, folders: folders, from: 1)
-            var result: [MessageListItem] = []
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                result.append(readListItem(stmt))
+            return query(sql, bind: { stmt in
+                _ = bind(stmt, folders: folders, from: 1)
+            }) { stmt in
+                readListItem(stmt)
             }
-            return result
         }
     }
 
@@ -1490,18 +1451,15 @@ nonisolated final class MessageStore: @unchecked Sendable {
                 AND (isUnread = 1\(keepCondition))
                 ORDER BY date DESC
                 """
-            guard let stmt = prepare(sql) else { return [] }
-            defer { sqlite3_finalize(stmt) }
-            let next = bind(stmt, accountIDs: accountIDs)
-            bind(stmt, next, MailFolder.inboxPath)
-            for (offset, id) in kept.enumerated() {
-                bind(stmt, next + 1 + Int32(offset), id)
+            return query(sql, bind: { stmt in
+                let next = bind(stmt, accountIDs: accountIDs)
+                bind(stmt, next, MailFolder.inboxPath)
+                for (offset, id) in kept.enumerated() {
+                    bind(stmt, next + 1 + Int32(offset), id)
+                }
+            }) { stmt in
+                readListItem(stmt)
             }
-            var result: [MessageListItem] = []
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                result.append(readListItem(stmt))
-            }
-            return result
         }
     }
 
@@ -1516,11 +1474,12 @@ nonisolated final class MessageStore: @unchecked Sendable {
                 SELECT COUNT(*) FROM message
                 WHERE accountID IN (\(Self.placeholders(accountIDs.count))) AND folder = ? AND isUnread = 1
                 """
-            guard let stmt = prepare(sql) else { return 0 }
-            defer { sqlite3_finalize(stmt) }
-            let next = bind(stmt, accountIDs: accountIDs)
-            bind(stmt, next, MailFolder.inboxPath)
-            return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int(stmt, 0)) : 0
+            return queryFirst(sql, bind: { stmt in
+                let next = bind(stmt, accountIDs: accountIDs)
+                bind(stmt, next, MailFolder.inboxPath)
+            }) { stmt in
+                Int(sqlite3_column_int(stmt, 0))
+            } ?? 0
         }
     }
 
@@ -1573,17 +1532,16 @@ nonisolated final class MessageStore: @unchecked Sendable {
     func syncState(accountID: UUID, folder: String) -> FolderSyncState? {
         return onRead {
             let sql = "SELECT uidValidity, uidNext FROM folder_sync WHERE accountID = ? AND folder = ?"
-            guard let stmt = prepare(sql) else { return nil }
-            defer { sqlite3_finalize(stmt) }
-            bind(stmt, 1, accountID.uuidString)
-            bind(stmt, 2, folder)
-            guard sqlite3_step(stmt) == SQLITE_ROW,
-                  sqlite3_column_type(stmt, 0) != SQLITE_NULL,
-                  sqlite3_column_type(stmt, 1) != SQLITE_NULL else { return nil }
-            return FolderSyncState(
-                uidValidity: UInt32(truncatingIfNeeded: sqlite3_column_int64(stmt, 0)),
-                uidNext: UInt32(truncatingIfNeeded: sqlite3_column_int64(stmt, 1))
-            )
+            return queryFirst(sql, bind: { stmt in
+                bindFolder(stmt, accountID: accountID, folder: folder)
+            }) { stmt -> FolderSyncState? in
+                guard sqlite3_column_type(stmt, 0) != SQLITE_NULL,
+                      sqlite3_column_type(stmt, 1) != SQLITE_NULL else { return nil }
+                return FolderSyncState(
+                    uidValidity: UInt32(truncatingIfNeeded: sqlite3_column_int64(stmt, 0)),
+                    uidNext: UInt32(truncatingIfNeeded: sqlite3_column_int64(stmt, 1))
+                )
+            }
         }
     }
 
@@ -1596,12 +1554,11 @@ nonisolated final class MessageStore: @unchecked Sendable {
     func lastSync(accountID: UUID, folder: String) -> Date? {
         return onRead {
             let sql = "SELECT lastSyncAt FROM folder_sync WHERE accountID = ? AND folder = ?"
-            guard let stmt = prepare(sql) else { return nil }
-            defer { sqlite3_finalize(stmt) }
-            bind(stmt, 1, accountID.uuidString)
-            bind(stmt, 2, folder)
-            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-            return Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0))
+            return queryFirst(sql, bind: { stmt in
+                bindFolder(stmt, accountID: accountID, folder: folder)
+            }) { stmt in
+                Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0))
+            }
         }
     }
 
@@ -1616,12 +1573,11 @@ nonisolated final class MessageStore: @unchecked Sendable {
     func windowStart(accountID: UUID, folder: String) -> Date? {
         return onRead {
             let sql = "SELECT windowStart FROM folder_window WHERE accountID = ? AND folder = ?"
-            guard let stmt = prepare(sql) else { return nil }
-            defer { sqlite3_finalize(stmt) }
-            bind(stmt, 1, accountID.uuidString)
-            bind(stmt, 2, folder)
-            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-            return Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0))
+            return queryFirst(sql, bind: { stmt in
+                bindFolder(stmt, accountID: accountID, folder: folder)
+            }) { stmt in
+                Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0))
+            }
         }
     }
 
@@ -1659,15 +1615,12 @@ nonisolated final class MessageStore: @unchecked Sendable {
                 WHERE accountID IN (\(Self.placeholders(accountIDs.count))) AND folder = ? AND isFlagged = 1
                 ORDER BY date DESC
                 """
-            guard let stmt = prepare(sql) else { return [] }
-            defer { sqlite3_finalize(stmt) }
-            let next = bind(stmt, accountIDs: accountIDs)
-            bind(stmt, next, MailFolder.inboxPath)
-            var result: [MessageListItem] = []
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                result.append(readListItem(stmt))
+            return query(sql, bind: { stmt in
+                let next = bind(stmt, accountIDs: accountIDs)
+                bind(stmt, next, MailFolder.inboxPath)
+            }) { stmt in
+                readListItem(stmt)
             }
-            return result
         }
     }
 
@@ -1682,11 +1635,12 @@ nonisolated final class MessageStore: @unchecked Sendable {
                 SELECT COUNT(*) FROM message
                 WHERE accountID IN (\(Self.placeholders(accountIDs.count))) AND folder = ? AND isFlagged = 1
                 """
-            guard let stmt = prepare(sql) else { return 0 }
-            defer { sqlite3_finalize(stmt) }
-            let next = bind(stmt, accountIDs: accountIDs)
-            bind(stmt, next, MailFolder.inboxPath)
-            return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int(stmt, 0)) : 0
+            return queryFirst(sql, bind: { stmt in
+                let next = bind(stmt, accountIDs: accountIDs)
+                bind(stmt, next, MailFolder.inboxPath)
+            }) { stmt in
+                Int(sqlite3_column_int(stmt, 0))
+            } ?? 0
         }
     }
 
@@ -1699,15 +1653,12 @@ nonisolated final class MessageStore: @unchecked Sendable {
     func cachedMessageIDs(forAccount accountID: UUID, folder: String) -> Set<String> {
         return onRead {
             let sql = "SELECT id FROM message WHERE accountID = ? AND folder = ?"
-            guard let stmt = prepare(sql) else { return [] }
-            defer { sqlite3_finalize(stmt) }
-            bind(stmt, 1, accountID.uuidString)
-            bind(stmt, 2, folder)
-            var ids = Set<String>()
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                ids.insert(str(stmt, 0))
-            }
-            return ids
+            return Set(query(sql, bind: { stmt in
+                bind(stmt, 1, accountID.uuidString)
+                bind(stmt, 2, folder)
+            }) { stmt in
+                str(stmt, 0)
+            })
         }
     }
 
@@ -1720,15 +1671,12 @@ nonisolated final class MessageStore: @unchecked Sendable {
     func cachedUIDs(accountID: UUID, folder: String) -> Set<UInt32> {
         return onRead {
             let sql = "SELECT uid FROM message WHERE accountID = ? AND folder = ?"
-            guard let stmt = prepare(sql) else { return [] }
-            defer { sqlite3_finalize(stmt) }
-            bind(stmt, 1, accountID.uuidString)
-            bind(stmt, 2, folder)
-            var uids = Set<UInt32>()
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                uids.insert(UInt32(truncatingIfNeeded: sqlite3_column_int64(stmt, 0)))
-            }
-            return uids
+            return Set(query(sql, bind: { stmt in
+                bind(stmt, 1, accountID.uuidString)
+                bind(stmt, 2, folder)
+            }) { stmt in
+                UInt32(truncatingIfNeeded: sqlite3_column_int64(stmt, 0))
+            })
         }
     }
 
@@ -1739,14 +1687,11 @@ nonisolated final class MessageStore: @unchecked Sendable {
     func attachments(forMessage messageID: String) -> [CachedAttachment] {
         return onRead {
             let sql = "SELECT \(Self.attachmentColumns) FROM attachment WHERE messageID = ?"
-            guard let stmt = prepare(sql) else { return [] }
-            defer { sqlite3_finalize(stmt) }
-            bind(stmt, 1, messageID)
-            var result: [CachedAttachment] = []
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                result.append(readAttachment(stmt))
+            return query(sql, bind: { stmt in
+                bind(stmt, 1, messageID)
+            }) { stmt in
+                readAttachment(stmt)
             }
-            return result
         }
     }
 
@@ -2145,15 +2090,12 @@ nonisolated final class MessageStore: @unchecked Sendable {
                 \(scope.flaggedOnly ? "AND isFlagged = 1" : "")
                 AND rowid IN (SELECT rowid FROM message_search WHERE message_search MATCH ?)
                 """
-            guard let stmt = prepare(sql) else { return [] }
-            defer { sqlite3_finalize(stmt) }
-            let next = bind(stmt, folders: scope.folders, from: 1)
-            bind(stmt, next, match)
-            var ids = Set<String>()
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                ids.insert(str(stmt, 0))
-            }
-            return ids
+            return Set(query(sql, bind: { stmt in
+                let next = bind(stmt, folders: scope.folders, from: 1)
+                bind(stmt, next, match)
+            }) { stmt in
+                str(stmt, 0)
+            })
         }
     }
 
@@ -2616,6 +2558,67 @@ nonisolated final class MessageStore: @unchecked Sendable {
             bind(s, Int32(offset + 1), id.uuidString)
         }
         return Int32(accountIDs.count + 1)
+    }
+
+    /// Bindet Postfach und Ordner an die Platzhalter 1 und 2 – die häufigste
+    /// Bedingung „accountID = ? AND folder = ?“.
+    ///
+    /// - Parameters:
+    ///   - s: Vorbereitetes Statement.
+    ///   - accountID: Postfach.
+    ///   - folder: IMAP-Ordner.
+    private func bindFolder(_ s: OpaquePointer?, accountID: UUID, folder: String) {
+        bind(s, 1, accountID.uuidString)
+        bind(s, 2, folder)
+    }
+
+    /// Führt eine lesende Abfrage aus und bildet jede Ergebniszeile ab.
+    ///
+    /// Verarbeitung: Vorbereiten, Werte binden, alle Zeilen lesen, die
+    /// Anweisung freigeben – an einer Stelle statt in jeder Abfrage. Lässt
+    /// sich die Abfrage nicht vorbereiten, ist das Ergebnis leer (der
+    /// Fehler ist dann protokolliert, siehe `prepare`).
+    ///
+    /// - Parameters:
+    ///   - sql: Abfrage.
+    ///   - bind: Bindet die Werte an die Platzhalter.
+    ///   - row: Bildet die aktuelle Zeile ab.
+    /// - Returns: Abgebildete Zeilen in der Reihenfolge des Ergebnisses.
+    private func query<T>(
+        _ sql: String,
+        bind: (OpaquePointer) -> Void = { _ in },
+        row: (OpaquePointer) -> T
+    ) -> [T] {
+        guard let stmt = prepare(sql) else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt)
+        var rows: [T] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            rows.append(row(stmt))
+        }
+        return rows
+    }
+
+    /// Führt eine lesende Abfrage aus und bildet nur die erste Zeile ab.
+    ///
+    /// Verarbeitung: Wie `query`, liest aber höchstens eine Zeile – für
+    /// Einzelwerte (Anzahl, Zeitpunkt, Zustand).
+    ///
+    /// - Parameters:
+    ///   - sql: Abfrage.
+    ///   - bind: Bindet die Werte an die Platzhalter.
+    ///   - row: Bildet die Zeile ab; `nil` = Zeile unbrauchbar.
+    /// - Returns: Abgebildete erste Zeile; `nil` ohne Ergebnis.
+    private func queryFirst<T>(
+        _ sql: String,
+        bind: (OpaquePointer) -> Void = { _ in },
+        row: (OpaquePointer) -> T?
+    ) -> T? {
+        guard let stmt = prepare(sql) else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return row(stmt)
     }
 
     /// Bereitet eine Leseabfrage vor.

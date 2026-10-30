@@ -25,7 +25,10 @@ struct SpamMarkTests {
         _ lists: FilterLists = .empty,
         _ style: SpamMark.Style = .detail
     ) throws -> String? {
-        SpamMark.text(sender: try sender(address), verdict: verdict, lists: lists, scoreLimit: 15, style: style)
+        SpamMark.text(
+            sender: try sender(address), verdict: verdict,
+            rules: SpamRules(lists: lists, scoreLimit: 15), style: style
+        )
     }
 
     // MARK: - Mailliste

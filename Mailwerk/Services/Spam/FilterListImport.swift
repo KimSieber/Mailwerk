@@ -78,6 +78,18 @@ nonisolated enum FilterListImport {
         return plan
     }
 
+    /// Ergebnis eines Imports.
+    struct Outcome: Equatable {
+        /// Anzahl übernommener Einträge.
+        var added = 0
+        /// Anzahl schon vorhandener Einträge.
+        var alreadyPresent = 0
+        /// Angaben, die schon auf der anderen Liste stehen.
+        var conflicts: [String] = []
+        /// Nicht verwertbare Angaben.
+        var invalid: [String] = []
+    }
+
     /// Fasst das Ergebnis eines Imports zusammen.
     ///
     /// Verarbeitung: Nennt die Anzahl der übernommenen und schon
@@ -85,28 +97,21 @@ nonisolated enum FilterListImport {
     /// Angaben werden einzeln benannt, damit klar ist, was noch zu tun ist.
     ///
     /// - Parameters:
-    ///   - added: Anzahl übernommener Einträge.
-    ///   - alreadyPresent: Anzahl schon vorhandener Einträge.
-    ///   - conflicts: Angaben, die schon auf der anderen Liste stehen.
-    ///   - invalid: Nicht verwertbare Angaben.
+    ///   - outcome: Ergebnis des Imports.
     ///   - otherListName: Name der anderen Liste, z. B. „Whitelist“.
     /// - Returns: Text für die Meldung.
-    static func summary(
-        added: Int,
-        alreadyPresent: Int,
-        conflicts: [String],
-        invalid: [String],
-        otherListName: String
-    ) -> String {
+    static func summary(_ outcome: Outcome, otherListName: String) -> String {
+        let added = outcome.added
+        let alreadyPresent = outcome.alreadyPresent
         var parts = [added == 1 ? "1 Eintrag übernommen" : "\(added) Einträge übernommen"]
         if alreadyPresent > 0 {
             parts.append(alreadyPresent == 1 ? "1 Eintrag war schon vorhanden" : "\(alreadyPresent) Einträge waren schon vorhanden")
         }
-        if !conflicts.isEmpty {
-            parts.append("Nicht übernommen, weil bereits auf der \(otherListName): \(conflicts.joined(separator: ", "))")
+        if !outcome.conflicts.isEmpty {
+            parts.append("Nicht übernommen, weil bereits auf der \(otherListName): \(outcome.conflicts.joined(separator: ", "))")
         }
-        if !invalid.isEmpty {
-            parts.append("Nicht verwertbar: \(invalid.joined(separator: ", "))")
+        if !outcome.invalid.isEmpty {
+            parts.append("Nicht verwertbar: \(outcome.invalid.joined(separator: ", "))")
         }
         return parts.joined(separator: "\n")
     }

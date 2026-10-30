@@ -477,8 +477,8 @@ struct FilterListView: View {
             activeAlert = AlertItem(
                 title: "Import",
                 message: FilterListImport.summary(
-                    added: 0, alreadyPresent: plan.alreadyPresent.count,
-                    conflicts: [], invalid: plan.invalid, otherListName: otherListName
+                    FilterListImport.Outcome(alreadyPresent: plan.alreadyPresent.count, invalid: plan.invalid),
+                    otherListName: otherListName
                 )
             )
             return
@@ -507,8 +507,11 @@ struct FilterListView: View {
         activeAlert = AlertItem(
             title: "Import",
             message: FilterListImport.summary(
-                added: outcome.added, alreadyPresent: plan.alreadyPresent.count,
-                conflicts: outcome.conflicts, invalid: plan.invalid, otherListName: otherListName
+                FilterListImport.Outcome(
+                    added: outcome.added, alreadyPresent: plan.alreadyPresent.count,
+                    conflicts: outcome.conflicts, invalid: plan.invalid
+                ),
+                otherListName: otherListName
             )
         )
     }

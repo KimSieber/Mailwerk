@@ -24,7 +24,8 @@
 //  MessageDetailView.
 //
 //  Abhängigkeiten: SwiftMail (IMAP), MailSession, AccountStore,
-//  MessageContentPlan, InlineImages, MessageStore, Log.
+//  MessageContentPlan, InlineImages, FetchedMessageMapping, MessageStore,
+//  Log.
 //
 
 import Foundation
@@ -33,6 +34,71 @@ import os
 
 /// Nachladen eingebetteter Bilder einer Mail.
 enum InlineImageLoader {
+
+    /// Ein eingebettetes Bild der Mail und ob seine Daten zu laden sind.
+    nonisolated struct ImageTask {
+        /// Teil der Mail.
+        let part: MessagePart
+        /// Eintrag für den Cache (vorhanden oder neu, ggf. ohne Daten).
+        let entry: CachedAttachment
+        /// `true`, wenn das HTML das Bild anspricht und die Daten fehlen.
+        let needsData: Bool
+    }
+
+    /// Bestimmt, welche eingebetteten Bilder der Mail geladen werden.
+    ///
+    /// Verarbeitung: Je Bild der vorhandene Eintrag aus dem Cache, sonst ein
+    /// neuer ohne Daten (`FetchedMessageMapping.attachment`). Zu laden ist
+    /// ein Bild nur, wenn das HTML es per `cid:` anspricht und noch keine
+    /// Daten vorliegen.
+    ///
+    /// - Parameters:
+    ///   - plan: Teile der Mail.
+    ///   - messageID: Cache-ID der Mail.
+    ///   - existing: Bisherige Anhänge der Mail aus dem Cache.
+    ///   - referenced: Normalisierte Content-IDs, die das HTML anspricht.
+    /// - Returns: Je eingebettetem Bild Eintrag und Ladebedarf.
+    nonisolated static func tasks(
+        for plan: MessageContentPlan,
+        messageID: String,
+        existing: [CachedAttachment],
+        referenced: Set<String>
+    ) -> [ImageTask] {
+        let existingByID = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return plan.inlineImages.map { part in
+            let entry = existingByID["\(messageID)-\(part.section)"]
+                ?? FetchedMessageMapping.attachment(for: part, data: nil, isInline: true, messageID: messageID)
+            let isReferenced = referenced.contains(
+                InlineImages.normalizedContentID(MessageContentPlan.contentID(for: part))
+            )
+            return ImageTask(part: part, entry: entry, needsData: isReferenced && entry.data == nil)
+        }
+    }
+
+    /// Lädt die Daten eines Bildes, falls nötig.
+    ///
+    /// Verarbeitung: Lässt sich das Bild nicht laden, bleibt der Eintrag
+    /// ohne Daten (protokolliert).
+    ///
+    /// - Parameters:
+    ///   - task: Bild und Ladebedarf.
+    ///   - uid: UID der Mail.
+    ///   - server: Verbindung mit ausgewähltem Ordner.
+    /// - Returns: Eintrag, ggf. mit Daten.
+    nonisolated private static func load(
+        _ task: ImageTask,
+        uid: SwiftMail.UID,
+        on server: SwiftMail.IMAPServer
+    ) async -> CachedAttachment {
+        guard task.needsData else { return task.entry }
+        do {
+            let raw = try await server.fetchPart(section: task.part.section, of: uid)
+            return task.entry.with(data: raw.decoded(for: task.part))
+        } catch {
+            Log.fetch.error("⚠️ Eingebettetes Bild \(task.part.section.description, privacy: .public) nicht geladen: \(error.localizedDescription, privacy: .public)")
+            return task.entry
+        }
+    }
 
     /// Lädt die angesprochenen, noch fehlenden Bilder einer Mail und
     /// speichert sie.
@@ -54,39 +120,20 @@ enum InlineImageLoader {
     ) async throws -> [CachedAttachment] {
         let credentials = try accountStore.credentials(for: message.accountID)
         let referenced = InlineImages.referencedContentIDs(in: message.htmlBody)
-        let existingByID = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let folder = message.folder
         let uid = SwiftMail.UID(message.uid)
+        let messageID = message.id
 
         let images = try await MailSession.withIMAP(credentials) { server -> [CachedAttachment] in
             _ = try await server.examineMailbox(folder)
             let structure = try await server.fetchStructure(uid)
-            let plan = MessageContentPlan(structure: structure, totalSize: 0, threshold: 0)
-
+            let tasks = Self.tasks(
+                for: MessageContentPlan(structure: structure, totalSize: 0, threshold: 0),
+                messageID: messageID, existing: existing, referenced: referenced
+            )
             var result: [CachedAttachment] = []
-            for part in plan.inlineImages {
-                let id = "\(message.id)-\(part.section)"
-                let contentID = MessageContentPlan.contentID(for: part)
-                var image = existingByID[id] ?? CachedAttachment(
-                    id: id,
-                    messageID: message.id,
-                    filename: part.filename ?? "Bild",
-                    contentType: part.contentType,
-                    sizeBytes: part.size ?? 0,
-                    data: nil,
-                    contentID: contentID,
-                    isInline: true
-                )
-                let isReferenced = referenced.contains(InlineImages.normalizedContentID(contentID))
-                if isReferenced && image.data == nil {
-                    do {
-                        let raw = try await server.fetchPart(section: part.section, of: uid)
-                        image = image.with(data: raw.decoded(for: part))
-                    } catch {
-                        Log.fetch.error("⚠️ Eingebettetes Bild \(part.section.description, privacy: .public) nicht geladen: \(error.localizedDescription, privacy: .public)")
-                    }
-                }
-                result.append(image)
+            for task in tasks {
+                result.append(await Self.load(task, uid: uid, on: server))
             }
             return result
         }

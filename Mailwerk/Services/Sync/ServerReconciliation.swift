@@ -27,9 +27,12 @@
 //  Papierkorb erscheint sie also erst, wenn er geöffnet wird. Das ist
 //  dasselbe Verhalten wie beim Verschieben in Mailwerk.
 //
+//  Den Stand des Ordners baut `folderState` aus der Flag-Abfrage; auch
+//  das ist reine Logik (Code-Review v0.3.1, Regel 4).
+//
 //  Reine Logik ohne IMAP- und Datenbankzugriff, deshalb `nonisolated`.
 //
-//  Abhängigkeiten: keine (reine Datentypen).
+//  Abhängigkeiten: FlagState (ausgewertete Flags).
 //
 
 import Foundation
@@ -65,6 +68,11 @@ nonisolated struct CachedFlagState: Equatable {
     /// true = weitergeleitet (`$Forwarded`).
     var isForwarded: Bool
 
+    /// Die vier Flags dieses Stands.
+    var flags: FlagState {
+        FlagState(isUnread: isUnread, isFlagged: isFlagged, isAnswered: isAnswered, isForwarded: isForwarded)
+    }
+
     /// Prüft, ob dieser Stand den übergebenen Flags entspricht.
     ///
     /// Verarbeitung: Grundlage für „Flags nur bei Änderung schreiben“ im
@@ -85,6 +93,27 @@ nonisolated struct CachedFlagState: Equatable {
 }
 
 nonisolated enum ServerReconciliation {
+
+    /// Baut den Stand eines Ordners aus den Flags aller seiner Mails.
+    ///
+    /// Verarbeitung: Jede UID kommt in `all` und je nach Flags in die
+    /// passenden Mengen. `forwarded` ist immer ermittelt (nie `nil`), weil
+    /// die Flag-Abfrage das Kennzeichen mitliefert, wenn der Server es kennt.
+    ///
+    /// - Parameter messages: UID und Flags je Mail des Ordners.
+    /// - Returns: Stand des Ordners als UID-Mengen.
+    static func folderState(from messages: [(uid: UInt32, flags: FlagState)]) -> ServerFolderState {
+        var state = ServerFolderState(all: [], unseen: [], flagged: [], answered: [], forwarded: [])
+        for message in messages {
+            let uid = message.uid
+            state.all.insert(uid)
+            if message.flags.isUnread { state.unseen.insert(uid) }
+            if message.flags.isFlagged { state.flagged.insert(uid) }
+            if message.flags.isAnswered { state.answered.insert(uid) }
+            if message.flags.isForwarded { state.forwarded?.insert(uid) }
+        }
+        return state
+    }
 
     /// Was am Cache eines Ordners zu ändern ist.
     struct Plan: Equatable {

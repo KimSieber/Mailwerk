@@ -270,8 +270,7 @@ struct WatchMailDetailView: View {
         return SpamMark.text(
             sender: mail.sender,
             verdict: mail.verdict?.verdict,
-            lists: lists,
-            scoreLimit: store.scoreLimit,
+            rules: SpamRules(lists: lists, scoreLimit: store.scoreLimit),
             style: .detail
         )
     }

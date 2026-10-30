@@ -18,7 +18,7 @@ struct LoadCompletenessTests {
     /// Testhilfe: Planung mit drei Neuankünften ab UID 10, UIDNEXT 20.
     private var plan: SyncStatePlanner.ArrivalPlan {
         SyncStatePlanner.arrivals(
-            serverUIDs: [10, 11, 12], fromUID: 10, serverUIDNext: 20, known: []
+            serverUIDs: [10, 11, 12], window: .init(fromUID: 10, serverUIDNext: 20), known: []
         )
     }
 

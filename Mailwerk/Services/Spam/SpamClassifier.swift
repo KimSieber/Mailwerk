@@ -27,6 +27,8 @@
 //  Abgrenzung: Auswertung der Server-Header → SpamHeaderParser; Plan für
 //  viele Mails → SpamFilterPlanner; Ausführen → SpamFilterService.
 //
+//  Regeln für einen Lauf (Listen und Score-Obergrenze) bündelt `SpamRules`.
+//
 //  Abhängigkeiten: Foundation, FilterAddress, FilterDomain, SpamHeaderVerdict.
 //
 
@@ -61,6 +63,16 @@ nonisolated struct FilterLists: Equatable, Sendable {
 
     /// Leere Listen.
     static let empty = FilterLists()
+}
+
+/// Regeln eines Filterlaufs bzw. einer Anzeige: die Listen und die
+/// Score-Obergrenze, ab der auch ein Whitelist-Eintrag eine Mail nicht mehr
+/// rettet. Bündelt, was überall gemeinsam übergeben wird.
+nonisolated struct SpamRules: Equatable, Sendable {
+    /// Black- und Whitelist.
+    let lists: FilterLists
+    /// Score-Obergrenze für Whitelist-Treffer.
+    let scoreLimit: Double
 }
 
 /// Entscheidungsregeln aus Listen und Server-Einstufung.

@@ -67,8 +67,8 @@ nonisolated struct MessageRowModel: Equatable, Sendable {
                 sender: sender, verdict: item.spamVerdict, lists: lists, scoreLimit: inputs.scoreLimit
             ),
             spamMark: SpamMark.text(
-                sender: sender, verdict: item.spamVerdict, lists: lists,
-                scoreLimit: inputs.scoreLimit, style: .list
+                sender: sender, verdict: item.spamVerdict,
+                rules: SpamRules(lists: lists, scoreLimit: inputs.scoreLimit), style: .list
             )
         )
     }

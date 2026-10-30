@@ -21,7 +21,7 @@
 //  Zusammenbau der Mail → ComposeViewModel.
 //
 //  Abhängigkeiten: Foundation, UIKit bzw. AppKit, RichTextListStyle,
-//  RichTextSize, RichTextController, ReplyBuilder (Maskierung),
+//  RichTextSize, RichTextController, HTMLEscaping (Maskierung),
 //  MailImageAttachment, OutgoingAttachment.
 //
 
@@ -157,7 +157,7 @@ enum RichTextHTML {
         guard let rawSource = imageSource(image) else { return "" }
         let width = Int(image.bounds.width.rounded())
         let height = Int(image.bounds.height.rounded())
-        let source = ReplyBuilder.escapeHTML(rawSource)
+        let source = HTMLEscaping.escaped(rawSource)
         return "<img src=\"\(source)\" width=\"\(width)\" height=\"\(height)\" alt=\"\">"
     }
 
@@ -232,54 +232,90 @@ enum RichTextHTML {
         attributed.enumerateAttributes(in: range, options: []) { attributes, subRange, _ in
             let raw = text.substring(with: subRange)
             guard !raw.isEmpty else { return }
-
             if attributes[.attachment] != nil {
-                var piece = ""
-                if let image = attributes[.attachment] as? MailImageAttachment {
-                    let count = raw.components(separatedBy: attachmentCharacter).count - 1
-                    piece = String(repeating: imageHTML(image, imageSource: imageSource), count: count)
-                }
-                if !piece.isEmpty, let link = linkURL(attributes[.link]) {
-                    piece = "<a href=\"\(ReplyBuilder.escapeHTML(link))\">\(piece)</a>"
-                }
-                result += piece
-                return
+                result += attachmentHTML(raw, attributes: attributes, imageSource: imageSource)
+            } else {
+                result += textHTML(raw, attributes: attributes)
             }
-
-            var piece = ReplyBuilder.escapeHTML(raw)
-
-            var styles: [String] = []
-            if let font = attributes[.font] as? PlatformFont {
-                let traits = font.fontDescriptor.symbolicTraits
-                #if os(iOS)
-                if traits.contains(.traitBold) { styles.append("font-weight:bold") }
-                if traits.contains(.traitItalic) { styles.append("font-style:italic") }
-                #else
-                if traits.contains(.bold) { styles.append("font-weight:bold") }
-                if traits.contains(.italic) { styles.append("font-style:italic") }
-                #endif
-                if abs(font.pointSize - RichTextSize.normal.rawValue) > 0.5 {
-                    styles.append("font-size:\(Int(font.pointSize.rounded()))px")
-                }
-            }
-            if (attributes[.underlineStyle] as? Int ?? 0) != 0 {
-                styles.append("text-decoration:underline")
-            }
-            if let color = attributes[.foregroundColor] as? PlatformColor,
-               let hex = color.mwHexRGB,
-               hex != RichTextController.defaultTextColor.mwHexRGB {
-                styles.append("color:\(hex)")
-            }
-
-            if !styles.isEmpty {
-                piece = "<span style=\"\(styles.joined(separator: ";"))\">\(piece)</span>"
-            }
-            if let link = linkURL(attributes[.link]) {
-                piece = "<a href=\"\(ReplyBuilder.escapeHTML(link))\">\(piece)</a>"
-            }
-            result += piece
         }
         return result
+    }
+
+    /// HTML eines Abschnitts mit Anhang: ein Bild wird zu `<img>` (je
+    /// Anhangszeichen eins, ein Link darum bleibt); andere Anhänge entfallen.
+    ///
+    /// - Parameters:
+    ///   - raw: Text des Abschnitts (Anhangszeichen).
+    ///   - attributes: Attribute des Abschnitts.
+    ///   - imageSource: Quelle der Bilder im HTML.
+    /// - Returns: HTML des Abschnitts; leer bei anderen Anhängen.
+    private static func attachmentHTML(
+        _ raw: String,
+        attributes: [NSAttributedString.Key: Any],
+        imageSource: ImageSource
+    ) -> String {
+        guard let image = attributes[.attachment] as? MailImageAttachment else { return "" }
+        let count = raw.components(separatedBy: attachmentCharacter).count - 1
+        let piece = String(repeating: imageHTML(image, imageSource: imageSource), count: count)
+        return linked(piece, attributes: attributes)
+    }
+
+    /// HTML eines Textabschnitts: maskierter Text, bei Bedarf in
+    /// `<span style>` und `<a href>`.
+    ///
+    /// - Parameters:
+    ///   - raw: Text des Abschnitts.
+    ///   - attributes: Attribute des Abschnitts.
+    /// - Returns: HTML des Abschnitts.
+    private static func textHTML(_ raw: String, attributes: [NSAttributedString.Key: Any]) -> String {
+        var piece = HTMLEscaping.escaped(raw)
+        let styles = cssStyles(of: attributes)
+        if !styles.isEmpty {
+            piece = "<span style=\"\(styles.joined(separator: ";"))\">\(piece)</span>"
+        }
+        return linked(piece, attributes: attributes)
+    }
+
+    /// CSS-Angaben der Zeichenformate: fett, kursiv, Größe, Unterstreichung,
+    /// Farbe. Standardgröße und Standardfarbe erzeugen keine Angabe.
+    ///
+    /// - Parameter attributes: Attribute eines Abschnitts.
+    /// - Returns: CSS-Angaben, z. B. „font-weight:bold“.
+    private static func cssStyles(of attributes: [NSAttributedString.Key: Any]) -> [String] {
+        var styles: [String] = []
+        if let font = attributes[.font] as? PlatformFont {
+            let traits = font.fontDescriptor.symbolicTraits
+            #if os(iOS)
+            if traits.contains(.traitBold) { styles.append("font-weight:bold") }
+            if traits.contains(.traitItalic) { styles.append("font-style:italic") }
+            #else
+            if traits.contains(.bold) { styles.append("font-weight:bold") }
+            if traits.contains(.italic) { styles.append("font-style:italic") }
+            #endif
+            if abs(font.pointSize - RichTextSize.normal.rawValue) > 0.5 {
+                styles.append("font-size:\(Int(font.pointSize.rounded()))px")
+            }
+        }
+        if (attributes[.underlineStyle] as? Int ?? 0) != 0 {
+            styles.append("text-decoration:underline")
+        }
+        if let color = attributes[.foregroundColor] as? PlatformColor,
+           let hex = color.mwHexRGB,
+           hex != RichTextController.defaultTextColor.mwHexRGB {
+            styles.append("color:\(hex)")
+        }
+        return styles
+    }
+
+    /// Legt einen Link um ein HTML-Stück, falls der Abschnitt einen trägt.
+    ///
+    /// - Parameters:
+    ///   - piece: HTML-Stück; leer bleibt leer.
+    ///   - attributes: Attribute des Abschnitts.
+    /// - Returns: Stück, ggf. in `<a href>`.
+    private static func linked(_ piece: String, attributes: [NSAttributedString.Key: Any]) -> String {
+        guard !piece.isEmpty, let link = linkURL(attributes[.link]) else { return piece }
+        return "<a href=\"\(HTMLEscaping.escaped(link))\">\(piece)</a>"
     }
 
     /// Link-Ziel aus dem Attribut `.link`.

@@ -71,6 +71,42 @@ nonisolated enum AccountRefreshService {
         var fetchError: (any Error)?
     }
 
+    /// Auswertung des Abrufs für Erreichbarkeit und Meldungen.
+    enum FetchEvaluation {
+        /// Posteingang (und ggf. Spam-Ordner) vollständig abgerufen.
+        case completed(spamFolder: String?)
+        /// Posteingang aktuell, nur der Spam-Ordner fehlt: Das Postfach war
+        /// erreichbar; der Spam-Ordner wird einmal allein nachgeholt.
+        case spamFolderFailed(folder: String, underlying: any Error)
+        /// Abruf gescheitert; das Postfach gilt je nach Fehler als nicht
+        /// erreichbar.
+        case failed(underlying: any Error)
+    }
+
+    /// Wertet das Ergebnis eines Postfach-Abrufs aus.
+    ///
+    /// Verarbeitung: Ohne Abruffehler gilt der Abruf als vollständig. Brach
+    /// er erst nach dem vollständig abgerufenen Posteingang ab und ist ein
+    /// Spam-Ordner bekannt, betrifft der Fehler nur den Spam-Ordner. Sonst
+    /// ist der Abruf gescheitert. Der eigentliche Fehler steckt ggf. in
+    /// `MailFetchService.FolderRefreshError.underlying`. Ein leerer
+    /// Spam-Ordner zählt als keiner.
+    ///
+    /// - Parameter result: Ergebnis von `refresh`.
+    /// - Returns: Auswertung für Erreichbarkeit, Meldung und zweiten Versuch.
+    static func evaluate(_ result: RefreshResult) -> FetchEvaluation {
+        let spamFolder = result.spamFolder.flatMap { $0.isEmpty ? nil : $0 }
+        guard let fetchError = result.fetchError else {
+            return .completed(spamFolder: spamFolder)
+        }
+        let failure = fetchError as? MailFetchService.FolderRefreshError
+        let underlying = failure?.underlying ?? fetchError
+        if let spamFolder, failure?.completed.contains(MailFolder.inboxPath) == true {
+            return .spamFolderFailed(folder: spamFolder, underlying: underlying)
+        }
+        return .failed(underlying: underlying)
+    }
+
     /// Wie es nach einem Fehler des Spam-Schritts weitergeht.
     enum SpamStepFailure: Equatable, Sendable {
         /// Verbindung ist noch brauchbar – Abruf auf ihr fortsetzen.
@@ -274,8 +310,7 @@ nonisolated enum AccountRefreshService {
             let outcome = try await SpamFilterService.filterInbox(
                 on: server,
                 account: account,
-                lists: lists,
-                scoreLimit: scoreLimit,
+                rules: SpamRules(lists: lists, scoreLimit: scoreLimit),
                 rememberSpamFolder: { folder in
                     found = folder
                     await rememberSpamFolder(folder)

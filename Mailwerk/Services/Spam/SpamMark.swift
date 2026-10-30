@@ -78,22 +78,22 @@ nonisolated enum SpamMark {
     /// - Parameters:
     ///   - sender: Absender; `nil`, wenn er sich nicht auswerten lässt.
     ///   - verdict: Gespeicherter Befund des Servers; `nil` = unbekannt.
-    ///   - lists: Black- und Whitelist.
-    ///   - scoreLimit: Score-Obergrenze für Whitelist-Treffer.
+    ///   - rules: Black- und Whitelist samt Score-Obergrenze.
     ///   - style: Mailliste oder Mailansicht.
     /// - Returns: Anzeigetext oder `nil`.
     static func text(
         sender: FilterAddress?,
         verdict: SpamHeaderVerdict?,
-        lists: FilterLists,
-        scoreLimit: Double,
+        rules: SpamRules,
         style: Style
     ) -> String? {
-        let whitelisted = sender.map { SpamClassifier.isWhitelisted($0, in: lists) } ?? false
+        let whitelisted = sender.map { SpamClassifier.isWhitelisted($0, in: rules.lists) } ?? false
         guard let verdict else {
             return text(isSpam: false, score: nil, keptByWhitelist: whitelisted, style: style)
         }
-        let decision = SpamClassifier.classify(sender: sender, verdict: verdict, lists: lists, scoreLimit: scoreLimit)
+        let decision = SpamClassifier.classify(
+            sender: sender, verdict: verdict, lists: rules.lists, scoreLimit: rules.scoreLimit
+        )
         let isSpam = decision != .keep
         return text(isSpam: isSpam, score: verdict.score, keptByWhitelist: whitelisted && !isSpam, style: style)
     }

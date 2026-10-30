@@ -159,54 +159,67 @@ final class ComposeViewModel {
     /// Abbrechen nicht als Eingabe.
     private var initialSignatureHTML: String?
 
+    /// Wofür das Verfassen-Fenster geöffnet wird.
+    struct Request {
+        /// Art des Verfassens.
+        let kind: ComposeKind
+        /// Originalnachricht bei Antwort oder Weiterleitung.
+        var original: CachedMessage?
+        /// Anhänge und Bilder der Originalnachricht aus dem Cache.
+        var originalAttachments: [CachedAttachment] = []
+        /// Getippter mailto:-Link zur Vorbelegung.
+        var mailto: MailtoLink?
+        /// Absende-Postfach einer neuen Mail; `nil` (oder ein nicht mehr
+        /// vorhandenes Postfach) = Standard-Postfach.
+        var senderAccountID: UUID?
+        /// Aus einer anderen App geteilte Inhalte; `nil` = keine.
+        var shared: SharedContent?
+    }
+
     /// Legt das Verfassen-Fenster an und belegt es vor.
     ///
-    /// Verarbeitung: Ermittelt die Vorbelegung über den ReplyBuilder (die
-    /// eigene Adresse entfällt bei „Allen antworten“). Eine neue Mail geht
-    /// vom übergebenen Postfach aus (Ordner eines Postfachs), sonst vom
-    /// Standard-Postfach; Antworten und Weiterleiten immer vom Postfach der
-    /// Originalmail. Beim Antworten und
-    /// Weiterleiten werden die vom Zitat angesprochenen Bilder vorgemerkt.
-    /// Beim Weiterleiten werden die Anhänge der Originalmail übernommen;
-    /// noch nicht geladene Anhänge und Bilder werden erst beim Senden
-    /// nachgeladen. Ein mailto:-Link überschreibt
-    /// Empfänger, Betreff und Text. Geteilte Inhalte setzen Anhänge, Text
-    /// und gegebenenfalls den Betreff. Erst ganz am Ende wird der
+    /// Verarbeitung: Ermittelt die Vorbelegung über den ReplyBuilder
+    /// (`applyPrefill`), übernimmt Bilder und Anhänge der Originalmail
+    /// (`adoptOriginal`), danach einen mailto:-Link (`applyMailto`) und
+    /// geteilte Inhalte (`applyShared`). Erst ganz am Ende wird der
     /// Ausgangszustand für die Änderungserkennung festgehalten – einmal,
     /// aus den fertig vorbelegten Feldern; die Vorbelegung zählt beim
     /// Abbrechen also nicht als Eingabe.
     ///
     /// - Parameters:
     ///   - accountStore: Quelle für Postfächer und Standard-Postfach.
-    ///   - kind: Art des Verfassens.
-    ///   - original: Originalnachricht bei Antwort oder Weiterleitung.
-    ///   - mailto: Getippter mailto:-Link zur Vorbelegung.
-    ///   - senderAccountID: Absende-Postfach einer neuen Mail; `nil` (oder
-    ///     ein nicht mehr vorhandenes Postfach) = Standard-Postfach.
-    ///   - shared: Aus einer anderen App geteilte Inhalte; `nil` = keine.
-    init(
-        accountStore: AccountStore,
-        kind: ComposeKind,
-        original: CachedMessage? = nil,
-        mailto: MailtoLink? = nil,
-        senderAccountID: UUID? = nil,
-        shared: SharedContent? = nil
-    ) {
+    ///   - request: Art, Original samt Anhängen, mailto:-Link, Absender,
+    ///     geteilte Inhalte.
+    init(accountStore: AccountStore, request: Request) {
         self.accountStore = accountStore
-        self.kind = kind
-        self.original = original
+        self.kind = request.kind
+        self.original = request.original
         self.editedDraft = nil
 
-        // Nur die Adresse des antwortenden Postfachs entfällt bei „Allen
-        // antworten" – andere eigene Postfächer bleiben als Empfänger stehen.
+        applyPrefill(senderAccountID: request.senderAccountID)
+        if let original = request.original, kind != .new {
+            adoptOriginal(original, attachments: request.originalAttachments)
+        }
+        if let mailto = request.mailto { applyMailto(mailto) }
+        if let shared = request.shared { applyShared(shared) }
+        initialState = currentState
+    }
+
+    /// Belegt Absender, Empfänger, Betreff, Zitat und Threading vor.
+    ///
+    /// Verarbeitung: Nur die Adresse des antwortenden Postfachs entfällt bei
+    /// „Allen antworten“ – andere eigene Postfächer bleiben als Empfänger
+    /// stehen. Eine neue Mail geht vom übergebenen Postfach aus (Ordner
+    /// eines Postfachs), sonst vom Standard-Postfach; Antworten und
+    /// Weiterleiten immer vom Postfach der Originalmail.
+    ///
+    /// - Parameter senderAccountID: Gewünschtes Absende-Postfach einer neuen Mail.
+    private func applyPrefill(senderAccountID: UUID?) {
         let replyingAccountID = original?.accountID ?? accountStore.defaultAccountID
         let ownAddress = accountStore.accounts
             .first { $0.id == replyingAccountID }?
             .senderAddress
             .lowercased()
-        let ownAddresses = Set([ownAddress].compactMap { $0 })
-
-        // Neue Mail: Postfach des gezeigten Ordners, sonst Standard-Postfach
         let newMailAccountID = senderAccountID
             .flatMap { id in accountStore.accounts.contains(where: { $0.id == id }) ? id : nil }
             ?? accountStore.defaultAccountID
@@ -214,7 +227,7 @@ final class ComposeViewModel {
             kind: kind,
             original: original,
             defaultAccountID: newMailAccountID,
-            ownAddresses: ownAddresses
+            ownAddresses: Set([ownAddress].compactMap { $0 })
         )
         accountID = prefill.accountID
         to = prefill.to
@@ -224,61 +237,67 @@ final class ComposeViewModel {
         quotedText = prefill.quotedText
         inReplyTo = prefill.inReplyTo
         references = prefill.references
+    }
 
-        if let original, kind != .new {
-            // Eingebettete Bilder, die das Zitat anspricht, gehen mit.
-            originalAttachments = MessageStore.shared.attachments(forMessage: original.id)
-            imageReferenceHTML = original.htmlBody
-            pendingInlineImages = quotedHTML == nil
-                ? []
-                : InlineImages.referencedImages(originalAttachments, html: original.htmlBody)
-            updateQuotedPreview()
-        }
+    /// Übernimmt Bilder und Anhänge der Originalmail (Antworten,
+    /// Weiterleiten).
+    ///
+    /// Verarbeitung: Die vom Zitat angesprochenen Bilder werden vorgemerkt.
+    /// Beim Weiterleiten kommen die Anhänge der Originalmail mit (ohne die
+    /// Bilder im Text); noch nicht geladene Anhänge und Bilder werden erst
+    /// beim Senden nachgeladen. Fehlt einem Namen die Endung, bekommt er die
+    /// zum Typ passende – so kann auch der Empfänger die Datei öffnen.
+    ///
+    /// - Parameters:
+    ///   - original: Originalnachricht.
+    ///   - attachments: Anhänge und Bilder der Originalnachricht.
+    private func adoptOriginal(_ original: CachedMessage, attachments originals: [CachedAttachment]) {
+        originalAttachments = originals
+        imageReferenceHTML = original.htmlBody
+        pendingInlineImages = quotedHTML == nil
+            ? []
+            : InlineImages.referencedImages(originals, html: original.htmlBody)
+        updateQuotedPreview()
 
-        if kind == .forward, let original {
-            // Anhänge der Originalmail übernehmen (ohne die Bilder im
-            // Text); fehlende Daten werden erst beim Senden nachgeladen.
-            pendingOriginalAttachments = InlineImages.visibleAttachments(
-                originalAttachments, html: original.htmlBody
+        guard kind == .forward else { return }
+        pendingOriginalAttachments = InlineImages.visibleAttachments(originals, html: original.htmlBody)
+        attachments = pendingOriginalAttachments.compactMap { attachment in
+            guard let data = attachment.data else { return nil }
+            return OutgoingAttachment(
+                filename: attachment.completedFilename,
+                mimeType: attachment.contentType,
+                data: data
             )
-            // Fehlt einem Namen die Endung, bekommt er die zum Typ passende –
-            // so kann auch der Empfänger die Datei öffnen.
-            attachments = pendingOriginalAttachments.compactMap { attachment in
-                guard let data = attachment.data else { return nil }
-                return OutgoingAttachment(
-                    filename: attachment.completedFilename,
-                    mimeType: attachment.contentType,
-                    data: data
-                )
-            }
         }
+    }
 
-        // Getippter mailto:-Link aus einer Mail: Felder vorbelegen.
-        // Ungültige Adressen fallen weg.
-        if let mailto {
-            to = mailto.to.compactMap { MailAddress(parsing: $0) }
-            cc = mailto.cc.compactMap { MailAddress(parsing: $0) }
-            bcc = mailto.bcc.compactMap { MailAddress(parsing: $0) }
-            showBcc = !bcc.isEmpty
-            if let linkSubject = mailto.subject { subject = linkSubject }
-            if let linkBody = mailto.body {
-                body = NSAttributedString(string: linkBody, attributes: RichTextController.defaultAttributes)
-            }
-            initialBody = body
+    /// Belegt die Felder aus einem getippten mailto:-Link vor; ungültige
+    /// Adressen fallen weg.
+    ///
+    /// - Parameter mailto: Link aus einer Mail.
+    private func applyMailto(_ mailto: MailtoLink) {
+        to = mailto.to.compactMap { MailAddress(parsing: $0) }
+        cc = mailto.cc.compactMap { MailAddress(parsing: $0) }
+        bcc = mailto.bcc.compactMap { MailAddress(parsing: $0) }
+        showBcc = !bcc.isEmpty
+        if let linkSubject = mailto.subject { subject = linkSubject }
+        if let linkBody = mailto.body {
+            body = NSAttributedString(string: linkBody, attributes: RichTextController.defaultAttributes)
         }
+        initialBody = body
+    }
 
-        // Geteilte Inhalte: Anhänge, Text mit Links, Betreff
-        if let shared {
-            if let sharedSubject = shared.subject { subject = sharedSubject }
-            attachments += shared.attachments.map {
-                OutgoingAttachment(filename: $0.filename, mimeType: $0.mimeType, data: $0.data)
-            }
-            let parts = shared.bodyParts
-            if !parts.isEmpty { body = ComposeViewModel.sharedBody(parts) }
-            initialBody = body
+    /// Übernimmt geteilte Inhalte: Anhänge, Text mit Links, Betreff.
+    ///
+    /// - Parameter shared: Aus einer anderen App geteilte Inhalte.
+    private func applyShared(_ shared: SharedContent) {
+        if let sharedSubject = shared.subject { subject = sharedSubject }
+        attachments += shared.attachments.map {
+            OutgoingAttachment(filename: $0.filename, mimeType: $0.mimeType, data: $0.data)
         }
-
-        initialState = currentState
+        let parts = shared.bodyParts
+        if !parts.isEmpty { body = ComposeViewModel.sharedBody(parts) }
+        initialBody = body
     }
 
     /// Text einer neuen Mail aus geteilten Inhalten.
@@ -311,18 +330,11 @@ final class ComposeViewModel {
     ///
     /// Verarbeitung: Absender ist das Postfach des Entwurfs, An, Cc und
     /// Betreff kommen aus dem Cache. Ein Mailwerk-Entwurf (DraftFormat)
-    /// liefert außerdem Bcc, Art, Threading und den Bezug zur Originalmail;
-    /// Text vor und nach der Signatur kommen mit Formaten und Bildern in den
-    /// Editor (`cid:` → Inline-Bild des Entwurfs mit derselben Content-ID).
-    /// Eine einfache Signatur steht wieder markiert im Text, eine
-    /// HTML-Signatur als Block; beide bleiben beim Wechsel des Postfachs
-    /// austauschbar. Das Zitat bleibt unverändert, sein Text kommt aus dem
-    /// Textteil des Entwurfs (sonst aus dem Zitat-HTML). Ein Entwurf eines
-    /// anderen Programms kommt als Ganzes vereinfacht in den Editor. Anhänge
-    /// werden übernommen; fehlende Daten lädt das Senden bzw. Sichern nach.
-    /// Fehlen Bilder des Entwurfs, steht ein Hinweis in `restoreNotice`.
-    /// Zuletzt wird der Ausgangszustand festgehalten – ein unveränderter
-    /// Entwurf schließt ohne Rückfrage.
+    /// liefert außerdem Bcc, Art, Threading und den Bezug zur Originalmail
+    /// (`restoreMailwerkDraft`); ein Entwurf eines anderen Programms kommt
+    /// als Ganzes vereinfacht in den Editor. Anhänge werden übernommen
+    /// (`adoptDraftAttachments`). Zuletzt wird der Ausgangszustand
+    /// festgehalten – ein unveränderter Entwurf schließt ohne Rückfrage.
     ///
     /// - Parameters:
     ///   - accountStore: Quelle für Postfächer.
@@ -348,66 +360,93 @@ final class ComposeViewModel {
 
         let images = ComposeViewModel.imageResolver(draftAttachments)
         if let parts {
-            let metadata = parts.metadata
-            bcc = metadata.bcc.compactMap { MailAddress(parsing: $0) }
-            showBcc = !bcc.isEmpty
-            inReplyTo = metadata.inReplyTo
-            references = metadata.references
-            draftOrigin = metadata.origin
-
-            let text = NSMutableAttributedString(
-                attributedString: RichTextImport.attributedString(fromHTML: parts.textBefore, images: images).text
-            )
-            if let signatureHTML = parts.signature {
-                switch metadata.signature {
-                case .simple:
-                    let marked = NSMutableAttributedString(
-                        attributedString: RichTextImport.attributedString(fromHTML: signatureHTML, images: images).text
-                    )
-                    marked.addAttribute(.mailwerkSignature, value: true, range: NSRange(location: 0, length: marked.length))
-                    text.append(marked)
-                case .html:
-                    htmlSignature = HTMLSignatureBlock(restoredHTML: signatureHTML, images: draftAttachments)
-                case .none:
-                    break
-                }
-            }
-            if !parts.textAfter.isEmpty {
-                text.append(RichTextImport.attributedString(fromHTML: parts.textAfter, images: images).text)
-            }
-            body = text
-
-            if let quote = parts.quote {
-                quotedHTML = quote
-                imageReferenceHTML = quote
-                pendingInlineImages = InlineImages.referencedImages(draftAttachments, html: quote)
-                updateQuotedPreview()
-                // Eigener Text wie beim Senden, noch ohne Zitat
-                let ownText = composedText()
-                quotedText = DraftFormat.quotedText(draftText: draft.textBody, ownText: ownText)
-                    ?? SignatureRules.plainText(fromHTML: quote)
-            }
+            restoreMailwerkDraft(parts, draft: draft, images: images)
         } else if let html = draft.htmlBody, !html.isEmpty {
             body = RichTextImport.attributedString(fromHTML: html, images: images).text
         } else {
             body = NSAttributedString(string: draft.textBody ?? "", attributes: RichTextController.defaultAttributes)
         }
-
-        // Anhänge des Entwurfs (ohne die Bilder im Text); fehlende Daten
-        // werden beim Senden bzw. Sichern nachgeladen.
-        pendingOriginalAttachments = InlineImages.visibleAttachments(draftAttachments, html: draft.htmlBody)
-        attachments = pendingOriginalAttachments.compactMap { attachment in
-            guard let data = attachment.data else { return nil }
-            return OutgoingAttachment(filename: attachment.filename, mimeType: attachment.contentType, data: data)
-        }
-
-        if InlineImages.hasMissingImages(draftAttachments, html: draft.htmlBody) {
-            restoreNotice = "Einige Bilder des Entwurfs konnten nicht geladen werden und fehlen im Text."
-        }
+        adoptDraftAttachments(draftAttachments, html: draft.htmlBody)
 
         initialBody = body
         initialSignatureHTML = htmlSignature?.editedHTML
         initialState = currentState
+    }
+
+    /// Stellt einen Mailwerk-Entwurf wieder her.
+    ///
+    /// Verarbeitung: Bcc, Threading und Bezug zur Originalmail aus dem
+    /// Datenblock. Text vor und nach der Signatur kommen mit Formaten und
+    /// Bildern in den Editor (`cid:` → Inline-Bild des Entwurfs mit
+    /// derselben Content-ID). Eine einfache Signatur steht wieder markiert
+    /// im Text, eine HTML-Signatur als Block; beide bleiben beim Wechsel des
+    /// Postfachs austauschbar. Das Zitat bleibt unverändert, sein Text kommt
+    /// aus dem Textteil des Entwurfs (sonst aus dem Zitat-HTML).
+    ///
+    /// - Parameters:
+    ///   - parts: Zerlegter Entwurf.
+    ///   - draft: Entwurf aus dem Cache.
+    ///   - images: Zuordnung `cid:` → Bild.
+    private func restoreMailwerkDraft(
+        _ parts: DraftParts,
+        draft: CachedMessage,
+        images: RichTextImport.ImageResolver
+    ) {
+        let metadata = parts.metadata
+        bcc = metadata.bcc.compactMap { MailAddress(parsing: $0) }
+        showBcc = !bcc.isEmpty
+        inReplyTo = metadata.inReplyTo
+        references = metadata.references
+        draftOrigin = metadata.origin
+
+        let text = NSMutableAttributedString(
+            attributedString: RichTextImport.attributedString(fromHTML: parts.textBefore, images: images).text
+        )
+        if let signatureHTML = parts.signature {
+            switch metadata.signature {
+            case .simple:
+                let marked = NSMutableAttributedString(
+                    attributedString: RichTextImport.attributedString(fromHTML: signatureHTML, images: images).text
+                )
+                marked.addAttribute(.mailwerkSignature, value: true, range: NSRange(location: 0, length: marked.length))
+                text.append(marked)
+            case .html:
+                htmlSignature = HTMLSignatureBlock(restoredHTML: signatureHTML, images: originalAttachments)
+            case .none:
+                break
+            }
+        }
+        if !parts.textAfter.isEmpty {
+            text.append(RichTextImport.attributedString(fromHTML: parts.textAfter, images: images).text)
+        }
+        body = text
+
+        guard let quote = parts.quote else { return }
+        quotedHTML = quote
+        imageReferenceHTML = quote
+        pendingInlineImages = InlineImages.referencedImages(originalAttachments, html: quote)
+        updateQuotedPreview()
+        // Eigener Text wie beim Senden, noch ohne Zitat
+        quotedText = DraftFormat.quotedText(draftText: draft.textBody, ownText: composedText())
+            ?? SignatureRules.plainText(fromHTML: quote)
+    }
+
+    /// Übernimmt die Anhänge eines Entwurfs (ohne die Bilder im Text);
+    /// fehlende Daten werden beim Senden bzw. Sichern nachgeladen. Fehlen
+    /// Bilder des Entwurfs, steht ein Hinweis in `restoreNotice`.
+    ///
+    /// - Parameters:
+    ///   - draftAttachments: Anhänge und Bilder des Entwurfs.
+    ///   - html: HTML des Entwurfs.
+    private func adoptDraftAttachments(_ draftAttachments: [CachedAttachment], html: String?) {
+        pendingOriginalAttachments = InlineImages.visibleAttachments(draftAttachments, html: html)
+        attachments = pendingOriginalAttachments.compactMap { attachment in
+            guard let data = attachment.data else { return nil }
+            return OutgoingAttachment(filename: attachment.filename, mimeType: attachment.contentType, data: data)
+        }
+        if InlineImages.hasMissingImages(draftAttachments, html: html) {
+            restoreNotice = "Einige Bilder des Entwurfs konnten nicht geladen werden und fehlen im Text."
+        }
     }
 
     /// Zuordnung `cid:`-Quelle → Bild im Editor für einen Entwurf.

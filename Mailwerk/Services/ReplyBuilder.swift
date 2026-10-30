@@ -32,7 +32,7 @@
 //  Abgrenzung: Anzeige des Zitats → ComposeView (HTMLMailView);
 //  Zusammenbau der zu sendenden Mail → ComposeViewModel, MailSendService.
 //
-//  Abhängigkeiten: Foundation, CachedMessage, MailAddress.
+//  Abhängigkeiten: Foundation, CachedMessage, MailAddress, HTMLEscaping.
 //
 
 import Foundation
@@ -279,7 +279,7 @@ enum ReplyBuilder {
     /// - Returns: HTML-Zitat.
     static func replyQuoteHTML(_ message: CachedMessage) -> String {
         """
-        <div>\(escapeHTML(quoteHeader(for: message)))</div>\
+        <div>\(HTMLEscaping.escaped(quoteHeader(for: message)))</div>\
         <blockquote type="cite" style="margin:0 0 0 0.8ex;border-left:2px solid #ccc;padding-left:1ex">\
         \(originalBodyHTML(message))\
         </blockquote>
@@ -330,7 +330,7 @@ enum ReplyBuilder {
     /// - Returns: HTML-Inhalt.
     static func forwardHTML(_ message: CachedMessage) -> String {
         let header = forwardHeaderLines(message)
-            .map { "<b>\(escapeHTML($0.0)):</b> \(escapeHTML($0.1))" }
+            .map { "<b>\(HTMLEscaping.escaped($0.0)):</b> \(HTMLEscaping.escaped($0.1))" }
             .joined(separator: "<br>")
         return "<div>\(forwardSeparator)<br>\(header)</div><br>\(originalBodyHTML(message))"
     }
@@ -374,24 +374,12 @@ enum ReplyBuilder {
 
     // MARK: - HTML-Helfer
 
-    /// Maskiert `&`, `<`, `>`, `"` und `'` für HTML.
-    ///
-    /// - Parameter text: Rohtext.
-    /// - Returns: Maskierter Text.
-    static func escapeHTML(_ text: String) -> String {
-        text.replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-            .replacingOccurrences(of: "\"", with: "&quot;")
-            .replacingOccurrences(of: "'", with: "&#39;")
-    }
-
     /// Wandelt Text in HTML: maskiert, Zeilenumbrüche als `<br>`.
     ///
     /// - Parameter text: Rohtext.
     /// - Returns: HTML.
     static func textToHTML(_ text: String) -> String {
-        escapeHTML(text)
+        HTMLEscaping.escaped(text)
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\n", with: "<br>")
     }

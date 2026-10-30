@@ -35,7 +35,7 @@
 //  die Datei zum Teilen schreibt MessageOpenPreparation im Hintergrund.
 //
 //  Abhängigkeiten: CachedMessage, CachedAttachment, RemoteContentPolicy,
-//  InlineImages.
+//  InlineImages, HTMLEscaping.
 //
 
 import Foundation
@@ -67,7 +67,7 @@ nonisolated enum MailPrintFormatter {
         allowsRemoteContent: Bool = false
     ) -> String {
         let body = message.htmlBody.map { InlineImages.resolve($0, images: inlineImages) }
-            ?? "<pre>\(escaped(message.textBody ?? ""))</pre>"
+            ?? "<pre>\(HTMLEscaping.escaped(message.textBody ?? ""))</pre>"
         return """
         <!DOCTYPE html>
         <html>
@@ -174,11 +174,11 @@ nonisolated enum MailPrintFormatter {
     /// - Returns: Von, An, ggf. Kopie und Datum, Betreff – maskiert.
     private static func header(for message: CachedMessage) -> String {
         var lines = [
-            "<b>Von:</b> \(escaped(message.from))",
-            "<b>An:</b> \(escaped(message.to))"
+            "<b>Von:</b> \(HTMLEscaping.escaped(message.from))",
+            "<b>An:</b> \(HTMLEscaping.escaped(message.to))"
         ]
         if !message.headers.ccList.isEmpty {
-            lines.append("<b>Kopie:</b> \(escaped(message.headers.ccList.joined(separator: ", ")))")
+            lines.append("<b>Kopie:</b> \(HTMLEscaping.escaped(message.headers.ccList.joined(separator: ", ")))")
         }
         if let date = message.date {
             let style = Date.FormatStyle(
@@ -186,7 +186,7 @@ nonisolated enum MailPrintFormatter {
             )
             lines.append("<b>Datum:</b> \(date.formatted(style))")
         }
-        lines.append("<b>Betreff:</b> \(escaped(message.subject))")
+        lines.append("<b>Betreff:</b> \(HTMLEscaping.escaped(message.subject))")
         return lines.map { $0 + "<br>" }.joined()
     }
 
@@ -201,7 +201,7 @@ nonisolated enum MailPrintFormatter {
                 fromByteCount: Int64(attachment.sizeBytes), countStyle: .file
             )
             return "<tr><td style=\"padding:4pt 8pt 4pt 0\">\(icon(for: attachment.contentType))</td>"
-                + "<td style=\"padding:4pt 0\">\(escaped(attachment.filename))</td>"
+                + "<td style=\"padding:4pt 0\">\(HTMLEscaping.escaped(attachment.filename))</td>"
                 + "<td style=\"padding:4pt 0 4pt 12pt;color:#888\">\(size)</td></tr>"
         }.joined()
         return """
@@ -225,15 +225,5 @@ nonisolated enum MailPrintFormatter {
         if type.contains("audio/") { return "🎵" }
         if type.contains("video/") { return "🎬" }
         return "📎"
-    }
-
-    /// Maskiert `&`, `<` und `>` für HTML.
-    ///
-    /// - Parameter text: Rohtext.
-    /// - Returns: Maskierter Text.
-    private static func escaped(_ text: String) -> String {
-        text.replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
     }
 }

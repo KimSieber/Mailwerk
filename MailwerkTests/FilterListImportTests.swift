@@ -53,10 +53,11 @@ struct FilterListImportTests {
     /// Zusammenfassung nennt Zahlen und abgelehnte Angaben.
     @Test func summaryNamesConflictsAndInvalid() {
         let text = FilterListImport.summary(
-            added: 3, alreadyPresent: 1, conflicts: ["a@b.de"], invalid: ["xyz"], otherListName: "Whitelist"
+            FilterListImport.Outcome(added: 3, alreadyPresent: 1, conflicts: ["a@b.de"], invalid: ["xyz"]),
+            otherListName: "Whitelist"
         )
         #expect(text == "3 Einträge übernommen\n1 Eintrag war schon vorhanden\nNicht übernommen, weil bereits auf der Whitelist: a@b.de\nNicht verwertbar: xyz")
-        #expect(FilterListImport.summary(added: 0, alreadyPresent: 0, conflicts: [], invalid: [], otherListName: "Blacklist")
+        #expect(FilterListImport.summary(FilterListImport.Outcome(), otherListName: "Blacklist")
                 == "0 Einträge übernommen")
     }
 }

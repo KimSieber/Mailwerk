@@ -213,6 +213,11 @@ final class WatchBridge {
 
     /// Führt Aktionen der Watch auf Server und Cache aus.
     ///
+    /// Verarbeitung: Schon erledigte Aktionen (`completed`) werden nur
+    /// erneut bestätigt – die Watch schickt eine Aktion, bis sie die Antwort
+    /// sieht. Ohne Netz bleiben alle offen. Ausführen und Fehler auswerten
+    /// übernehmen `execute` und `failureHandling`.
+    ///
     /// - Parameters:
     ///   - actions: Aktionen in ihrer Reihenfolge.
     ///   - objects: Objekte der App.
@@ -225,40 +230,91 @@ final class WatchBridge {
                 continue
             }
             guard NetworkMonitor.shared.isOnline else { continue }
-            guard let message = MessageStore.shared.message(id: action.mailID) else {
-                record(.dropped, for: action, into: &outcomes)
-                continue
-            }
-            let target = MessageActions.Target(message)
-            do {
-                switch action.change {
-                case .read(let isRead):
-                    try await MessageActions.apply(.read(isRead), to: target, accountStore: objects.accountStore)
-                case .flagged(let isFlagged):
-                    try await MessageActions.apply(.flagged(isFlagged), to: target, accountStore: objects.accountStore)
-                case .spam:
-                    if let request = action.spamRequest {
-                        _ = try await request.perform(on: message, using: objects.inbox.spamFilter)
-                    }
-                }
-                record(.done, for: action, into: &outcomes)
-                Log.watch.info("⌚️ Aktion der Watch ausgeführt")
-            } catch {
-                if ConnectionErrorClassifier.isConnectionError(error) || MailFetchService.isConnectionError(error) {
-                    Log.watch.info("⌚️ Aktion der Watch bleibt offen (keine Verbindung)")
-                    continue
-                }
-                let reason: String
-                if case FilterListError.alreadyOnOtherList(let list) = error, let request = action.spamRequest {
-                    reason = SpamMenuTexts.otherListMessage(request, list: list)
-                } else {
-                    reason = error.localizedDescription
-                }
-                record(.failed(reason), for: action, into: &outcomes)
-                Log.watch.error("⚠️ Aktion der Watch gescheitert: \(error.localizedDescription, privacy: .public)")
+            if let result = await performOne(action, objects: objects) {
+                record(result, for: action, into: &outcomes)
             }
         }
         return outcomes
+    }
+
+    /// Führt eine einzelne, noch nicht erledigte Aktion aus.
+    ///
+    /// - Parameters:
+    ///   - action: Aktion der Watch.
+    ///   - objects: Objekte der App.
+    /// - Returns: Ergebnis; `nil`, wenn die Aktion offen bleibt (keine
+    ///   Verbindung).
+    private func performOne(_ action: WatchAction, objects: AppObjects) async -> WatchActionOutcome.Result? {
+        guard let message = MessageStore.shared.message(id: action.mailID) else { return .dropped }
+        do {
+            try await execute(action.change, spamRequest: action.spamRequest, on: message, objects: objects)
+            Log.watch.info("⌚️ Aktion der Watch ausgeführt")
+            return .done
+        } catch {
+            switch Self.failureHandling(for: error, spamRequest: action.spamRequest) {
+            case .keepOpen:
+                Log.watch.info("⌚️ Aktion der Watch bleibt offen (keine Verbindung)")
+                return nil
+            case .fail(let reason):
+                Log.watch.error("⚠️ Aktion der Watch gescheitert: \(error.localizedDescription, privacy: .public)")
+                return .failed(reason)
+            }
+        }
+    }
+
+    /// Setzt die Änderung einer Aktion an der Mail um.
+    ///
+    /// - Parameters:
+    ///   - change: Gewünschte Änderung (gelesen, gekennzeichnet, Spam-Liste).
+    ///   - spamRequest: Eintrag für die Filterlisten (nur bei Spam).
+    ///   - message: Betroffene Mail aus dem Cache.
+    ///   - objects: Objekte der App.
+    /// - Throws: Fehler der Aktion (Server, Filterlisten).
+    private func execute(
+        _ change: WatchAction.Change,
+        spamRequest: SpamMenuRequest?,
+        on message: CachedMessage,
+        objects: AppObjects
+    ) async throws {
+        let target = MessageActions.Target(message)
+        switch change {
+        case .read(let isRead):
+            try await MessageActions.apply(.read(isRead), to: target, accountStore: objects.accountStore)
+        case .flagged(let isFlagged):
+            try await MessageActions.apply(.flagged(isFlagged), to: target, accountStore: objects.accountStore)
+        case .spam:
+            if let spamRequest {
+                _ = try await spamRequest.perform(on: message, using: objects.inbox.spamFilter)
+            }
+        }
+    }
+
+    /// Umgang mit einem Fehler beim Ausführen einer Aktion der Watch.
+    nonisolated enum FailureHandling: Equatable {
+        /// Keine Verbindung: Aktion bleibt offen, die Watch schickt sie erneut.
+        case keepOpen
+        /// Aktion gescheitert; der Text erscheint auf der Watch.
+        case fail(String)
+    }
+
+    /// Wertet einen Fehler beim Ausführen einer Aktion aus.
+    ///
+    /// Verarbeitung: Reine Verbindungsfehler lassen die Aktion offen.
+    /// Steht ein Spam-Eintrag schon auf der anderen Liste, erklärt der Text
+    /// das wie im Spam-Menü der App; sonst gilt die Fehlermeldung.
+    ///
+    /// - Parameters:
+    ///   - error: Aufgetretener Fehler.
+    ///   - spamRequest: Eintrag für die Filterlisten, falls Spam-Aktion.
+    /// - Returns: Offen lassen oder mit Text scheitern.
+    nonisolated static func failureHandling(for error: Error, spamRequest: SpamMenuRequest?) -> FailureHandling {
+        if ConnectionErrorClassifier.isConnectionError(error) || MailFetchService.isConnectionError(error) {
+            return .keepOpen
+        }
+        if case FilterListError.alreadyOnOtherList(let list) = error, let spamRequest {
+            return .fail(SpamMenuTexts.otherListMessage(spamRequest, list: list))
+        }
+        return .fail(error.localizedDescription)
     }
 
     /// Merkt das Ergebnis einer Aktion.
@@ -299,14 +355,17 @@ final class WatchBridge {
         // Hauptthread gelöst werden muss.
         let interval = Log.beginInterval(Log.Interval.watchSnapshot)
         defer { Log.endInterval(interval) }
+        let accounts = objects.accountStore.fetchingAccounts
         return WatchSnapshotBuilder.snapshot(
-            accounts: objects.accountStore.fetchingAccounts,
-            spamFolders: objects.inbox.spamFolders,
-            lists: lists,
-            scoreLimit: objects.spamSettings.scoreLimit,
-            isFresh: isFresh,
-            outcomes: outcomes,
-            problems: problems
+            WatchSnapshotBuilder.Frame(
+                accounts: accounts,
+                lists: lists,
+                scoreLimit: objects.spamSettings.scoreLimit,
+                isFresh: isFresh,
+                outcomes: outcomes,
+                problems: problems
+            ),
+            cache: WatchSnapshotBuilder.cacheData(accounts: accounts, spamFolders: objects.inbox.spamFolders)
         )
     }
 

@@ -128,10 +128,18 @@ struct ComposeView: View {
         onSent: @escaping () -> Void = {},
         onClose: (() -> Void)? = nil
     ) {
+        // Anhänge der Originalmail aus dem Cache – nur beim Antworten und
+        // Weiterleiten gebraucht (eingebettete Bilder, weitergeleitete Anhänge).
+        let originalAttachments = kind == .new
+            ? []
+            : original.map { MessageStore.shared.attachments(forMessage: $0.id) } ?? []
         _model = State(
             initialValue: ComposeViewModel(
-                accountStore: accountStore, kind: kind, original: original, mailto: mailto,
-                senderAccountID: senderAccountID, shared: shared
+                accountStore: accountStore,
+                request: ComposeViewModel.Request(
+                    kind: kind, original: original, originalAttachments: originalAttachments,
+                    mailto: mailto, senderAccountID: senderAccountID, shared: shared
+                )
             )
         )
         self.onSent = onSent

@@ -39,7 +39,7 @@ nonisolated enum MailLogin: Equatable, Sendable {
 enum MailConnectionTester {
 
     /// Fehler des Verbindungstests.
-    enum TestError: LocalizedError {
+    enum TestError: LocalizedError, Equatable {
         /// IMAP-Anmeldung oder Auswahl des Posteingangs gescheitert.
         case imapFailed(String)
         /// SMTP-Verbindung gescheitert.
@@ -139,15 +139,32 @@ enum MailConnectionTester {
                 try await server.disconnect()
             }
             Log.send.error("❌ Verbindungstest SMTP \(host, privacy: .public):\(port, privacy: .public) gescheitert beim Schritt \(step.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            guard step == .login else {
-                throw TestError.smtpFailed(error.localizedDescription)
-            }
-            var reply: String?
-            if case SMTPError.authenticationFailed(let text) = error { reply = text }
-            switch login {
-            case .password: throw TestError.smtpLoginRejected(reply)
-            case .accessToken: throw TestError.smtpTokenRejected(reply)
-            }
+            throw smtpTestError(for: error, step: step, login: login)
+        }
+    }
+
+    /// Ordnet einen Fehler des SMTP-Tests einer Meldung zu.
+    ///
+    /// Verarbeitung: Scheitert die Verbindung, gilt `smtpFailed`. Scheitert
+    /// erst die Anmeldung, gilt je nach Zugang `smtpLoginRejected` bzw.
+    /// `smtpTokenRejected` – mit der Antwort des Servers, sofern SwiftMail
+    /// sie liefert. Auch ein NIO-Fehler in diesem Schritt zählt als
+    /// abgelehnte Anmeldung: Manche Server beenden die Verbindung sofort.
+    ///
+    /// - Parameters:
+    ///   - error: Aufgetretener Fehler.
+    ///   - step: Schritt, in dem er auftrat.
+    ///   - login: Verwendeter Zugang.
+    /// - Returns: Fehler für den Nutzer.
+    static func smtpTestError(for error: Error, step: SMTPStep, login: MailLogin) -> TestError {
+        guard step == .login else {
+            return .smtpFailed(error.localizedDescription)
+        }
+        var reply: String?
+        if case SMTPError.authenticationFailed(let text) = error { reply = text }
+        switch login {
+        case .password: return .smtpLoginRejected(reply)
+        case .accessToken: return .smtpTokenRejected(reply)
         }
     }
 

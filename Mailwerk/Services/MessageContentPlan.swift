@@ -52,7 +52,8 @@
 //  einzelnen Anhangs → AttachmentManager; Nachladen eingebetteter Bilder
 //  beim Öffnen → InlineImageLoader.
 //
-//  Abhängigkeiten: SwiftMail (MessagePart, Message, Section), InlineImages.
+//  Abhängigkeiten: SwiftMail (MessagePart, Message, Section), InlineImages,
+//  HTMLEscaping.
 //
 
 import Foundation
@@ -191,7 +192,7 @@ nonisolated struct MessageContentPlan {
             } else if layout == .htmlSequence, Self.isHTML(part), let html = content[part.section]?.textContent {
                 pieces.append((html, false))
             } else if layout == .textSequence, let plain = content[part.section]?.textContent {
-                pieces.append(("<div style=\"white-space: pre-wrap\">\(Self.escaped(plain))</div>", false))
+                pieces.append(("<div style=\"white-space: pre-wrap\">\(HTMLEscaping.escaped(plain))</div>", false))
             }
         }
 
@@ -211,16 +212,6 @@ nonisolated struct MessageContentPlan {
         }
         let html = pieces.map(\.html).joined(separator: "\n")
         return (text, html.isEmpty ? nil : html)
-    }
-
-    /// Maskiert Text für HTML.
-    ///
-    /// - Parameter text: Rohtext.
-    /// - Returns: Text mit maskiertem `&`, `<`, `>`.
-    private static func escaped(_ text: String) -> String {
-        text.replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
     }
 
     /// Baut einen Strukturteil, z. B. für Tests.

@@ -729,11 +729,9 @@ final class InboxViewModel {
 
     /// Lädt für die festgehaltenen Ordner den nächsten älteren Zeitraum.
     ///
-    /// Verarbeitung: Ruft je Ordner `MailFetchService.fetchOlder` auf.
-    /// Ordner ohne Älteres werden für diese Sitzung vermerkt. Konnten Mails
-    /// eines Zeitraums nicht geladen werden, erscheint ein Hinweis; der
-    /// Zeitraum wird beim nächsten Tipp erneut versucht. Verbindungsfehler
-    /// werden still in der Zeile angezeigt, andere Fehler gesammelt gemeldet.
+    /// Verarbeitung: Je Ordner `loadOlder`; danach lädt die Liste neu.
+    /// Geht das Netz verloren, endet die Runde. Fehler werden gesammelt
+    /// gemeldet; Verbindungsfehler erscheinen still in der Zeile.
     ///
     /// - Parameter targets: Ordner der Ansicht zum Zeitpunkt des Tippens.
     @MainActor
@@ -743,33 +741,11 @@ final class InboxViewModel {
         // abschließende Neuladen (bisher doppelt).
         var isListCurrent = false
         for target in targets {
-            isListCurrent = false
-            let key = FolderKey(accountID: target.account.id, folder: target.folder)
-            do {
-                let credentials = try accountStore.credentials(for: target.account)
-                let result = try await MailFetchService.fetchOlder(
-                    credentials, folder: target.folder
-                )
-                switch result {
-                case .noOlder:
-                    exhaustedFolders.insert(key)
-                case .loaded(let count, let failed, _, let hasMore):
-                    Log.fetch.info("📬 [\(target.account.displayName, privacy: .private)/\(target.folder, privacy: .public)] \(count) ältere Nachrichten geladen, \(failed) fehlgeschlagen")
-                    if failed > 0 {
-                        // Fensterbeginn ist stehen geblieben; erneutes Tippen
-                        // versucht denselben Zeitraum noch einmal.
-                        errors.append("\(target.account.displayName): \(failed) ältere Nachrichten konnten nicht geladen werden. Bitte „Ältere laden“ erneut tippen.")
-                    } else if !hasMore {
-                        exhaustedFolders.insert(key)
-                    }
-                }
-            } catch {
-                if let message = classify(error, context: target.account.displayName) {
-                    errors.append(message)
-                } else {
-                    olderConnectionFailed = true
-                }
-                if !network.isOnline { break }
+            let outcome = await loadOlder(account: target.account, folder: target.folder)
+            if let message = outcome.message { errors.append(message) }
+            if outcome.failed && !network.isOnline {
+                isListCurrent = false
+                break
             }
             loadFromCache()
             isListCurrent = true
@@ -779,6 +755,61 @@ final class InboxViewModel {
         }
         if !errors.isEmpty {
             alert = AlertItem(title: "Ältere Nachrichten", message: errors.joined(separator: "\n"))
+        }
+    }
+
+    /// Lädt für einen Ordner den nächsten älteren Zeitraum.
+    ///
+    /// Verarbeitung: Ruft `MailFetchService.fetchOlder` auf und wertet das
+    /// Ergebnis mit `recordOlder` aus. Ein Verbindungsfehler wird in der
+    /// Zeile angezeigt (`olderConnectionFailed`), andere Fehler als Text
+    /// zurückgegeben.
+    ///
+    /// - Parameters:
+    ///   - account: Postfach.
+    ///   - folder: IMAP-Ordner.
+    /// - Returns: Meldungstext (falls einer anfällt) und ob der Abruf scheiterte.
+    @MainActor
+    private func loadOlder(account: MailAccount, folder: String) async -> (message: String?, failed: Bool) {
+        do {
+            let credentials = try accountStore.credentials(for: account)
+            let result = try await MailFetchService.fetchOlder(credentials, folder: folder)
+            return (recordOlder(result, account: account, folder: folder), false)
+        } catch {
+            if let message = classify(error, context: account.displayName) {
+                return (message, true)
+            }
+            olderConnectionFailed = true
+            return (nil, true)
+        }
+    }
+
+    /// Wertet das Ergebnis von „Ältere laden“ für einen Ordner aus.
+    ///
+    /// Verarbeitung: Ordner ohne Älteres werden für diese Sitzung vermerkt.
+    /// Konnten Mails eines Zeitraums nicht geladen werden, ist der
+    /// Fensterbeginn stehen geblieben – erneutes Tippen versucht denselben
+    /// Zeitraum noch einmal; dafür gibt es einen Hinweis.
+    ///
+    /// - Parameters:
+    ///   - result: Ergebnis von `fetchOlder`.
+    ///   - account: Postfach.
+    ///   - folder: IMAP-Ordner.
+    /// - Returns: Hinweis bei fehlgeschlagenen Mails, sonst `nil`.
+    @MainActor
+    private func recordOlder(_ result: OlderFetchResult, account: MailAccount, folder: String) -> String? {
+        let key = FolderKey(accountID: account.id, folder: folder)
+        switch result {
+        case .noOlder:
+            exhaustedFolders.insert(key)
+            return nil
+        case .loaded(let count, let failed, _, let hasMore):
+            Log.fetch.info("📬 [\(account.displayName, privacy: .private)/\(folder, privacy: .public)] \(count) ältere Nachrichten geladen, \(failed) fehlgeschlagen")
+            if failed > 0 {
+                return "\(account.displayName): \(failed) ältere Nachrichten konnten nicht geladen werden. Bitte „Ältere laden“ erneut tippen."
+            }
+            if !hasMore { exhaustedFolders.insert(key) }
+            return nil
         }
     }
 
@@ -1028,6 +1059,29 @@ final class InboxViewModel {
         let pausedCount = accountStore.accounts.count - accountCount
         Log.fetch.info("🔄 Refresh gestartet für \(accountCount) Konten (\(pausedCount) ausgeschaltet)")
 
+        let errors = await runRefreshRound()
+        listReloadTask?.cancel()
+        listReloadTask = nil
+        loadFromCache()
+
+        if !errors.isEmpty {
+            alert = AlertItem(title: "Fehler beim Abrufen", message: errors.joined(separator: "\n"))
+        }
+        let total = messages.count
+        Log.fetch.info("🔄 Refresh fertig. Fehler: \(errors.count), Nachrichten gesamt: \(total)")
+    }
+
+    /// Eine Abrufrunde: alle eingeschalteten Postfächer, begrenzt parallel.
+    ///
+    /// Verarbeitung: Die Verteilung übernimmt `ParallelRefreshPlanner`.
+    /// Ist ein Postfach fertig, lädt die Liste zusammengefasst neu; danach
+    /// kommen inzwischen hinzugekommene Postfächer in dieselbe Runde. Geht
+    /// das Netz verloren, entfallen wartende Postfächer und laufende werden
+    /// abgebrochen.
+    ///
+    /// - Returns: Meldungstexte aller Postfächer.
+    @MainActor
+    private func runRefreshRound() async -> [String] {
         var errors: [String] = []
         var planner = ParallelRefreshPlanner(
             maxConcurrent: Self.maxConcurrentRefreshes,
@@ -1060,15 +1114,7 @@ final class InboxViewModel {
                 }
             }
         }
-        listReloadTask?.cancel()
-        listReloadTask = nil
-        loadFromCache()
-
-        if !errors.isEmpty {
-            alert = AlertItem(title: "Fehler beim Abrufen", message: errors.joined(separator: "\n"))
-        }
-        let total = messages.count
-        Log.fetch.info("🔄 Refresh fertig. Fehler: \(errors.count), Nachrichten gesamt: \(total)")
+        return errors
     }
 
     /// Neue Postfächer für die laufende Abrufrunde.
@@ -1156,9 +1202,7 @@ final class InboxViewModel {
         } catch {
             // Filterlisten nicht lesbar: ohne Filter abrufen.
             Log.spam.error("⚠️ \(account.displayName, privacy: .private): Spamfilter fehlgeschlagen: \(error.localizedDescription, privacy: .public)")
-            if let message = classify(error, context: "\(account.displayName): Spamfilter") {
-                errors.append(message)
-            }
+            errors += [classify(error, context: "\(account.displayName): Spamfilter")].compactMap { $0 }
             spamStep = .none
         }
 
@@ -1174,37 +1218,44 @@ final class InboxViewModel {
             isOnline: { [network] in network.isOnline }
         )
 
-        if let message = evaluateSpamStep(spamStep, result: result, account: account) {
-            errors.append(message)
-        }
+        errors += [evaluateSpamStep(spamStep, result: result, account: account)].compactMap { $0 }
+        errors += await handleFetchResult(result, of: account, credentials: credentials)
+        return errors
+    }
 
-        let spamFolder = result.spamFolder.flatMap { $0.isEmpty ? nil : $0 }
-        guard let fetchError = result.fetchError else {
+    /// Setzt die Auswertung des Abrufs um (`AccountRefreshService.evaluate`):
+    /// Erreichbarkeit, Protokoll, ggf. zweiter Versuch beim Spam-Ordner.
+    ///
+    /// - Parameters:
+    ///   - result: Ergebnis des Abrufs.
+    ///   - account: Postfach.
+    ///   - credentials: Zugangsdaten (für den zweiten Versuch).
+    /// - Returns: Meldungstext eines gescheiterten Abrufs, sonst leer.
+    @MainActor
+    private func handleFetchResult(
+        _ result: AccountRefreshService.RefreshResult,
+        of account: MailAccount,
+        credentials: MailCredentials
+    ) async -> [String] {
+        switch AccountRefreshService.evaluate(result) {
+        case .completed(let spamFolder):
             updateReachability(of: account, error: nil)
             if let spamFolder {
                 Log.fetch.info("📬 [\(account.displayName, privacy: .private)] Spam-Ordner \(spamFolder, privacy: .public) abgerufen")
             }
             Log.fetch.info("✅ \(account.displayName, privacy: .private): Abruf abgeschlossen")
-            return errors
-        }
-
-        let failure = fetchError as? MailFetchService.FolderRefreshError
-        let underlying = failure?.underlying ?? fetchError
-        if let spamFolder, failure?.completed.contains(MailFolder.inboxPath) == true {
-            // Posteingang ist aktuell, nur der Spam-Ordner fehlt: Das
-            // Postfach war erreichbar.
+            return []
+        case .spamFolderFailed(let spamFolder, let underlying):
             updateReachability(of: account, error: nil)
             Log.fetch.error("⚠️ [\(account.displayName, privacy: .private)] Spam-Abruf fehlgeschlagen: \(underlying.localizedDescription, privacy: .public)")
             await retrySpamFolder(spamFolder, of: account, credentials: credentials)
             Log.fetch.info("✅ \(account.displayName, privacy: .private): Abruf abgeschlossen")
-            return errors
+            return []
+        case .failed(let underlying):
+            updateReachability(of: account, error: underlying)
+            Log.fetch.error("❌ \(account.displayName, privacy: .private): \(underlying.localizedDescription, privacy: .public)")
+            return [classify(underlying, context: account.displayName)].compactMap { $0 }
         }
-        updateReachability(of: account, error: underlying)
-        Log.fetch.error("❌ \(account.displayName, privacy: .private): \(underlying.localizedDescription, privacy: .public)")
-        if let message = classify(underlying, context: account.displayName) {
-            errors.append(message)
-        }
-        return errors
     }
 
     /// Bestimmt den Spam-Schritt vor dem Abruf eines Postfachs.

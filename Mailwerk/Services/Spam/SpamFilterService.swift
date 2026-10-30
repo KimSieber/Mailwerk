@@ -141,30 +141,28 @@ final class SpamFilterService {
     ///    Vorschlag. Ein gefundener Ordner wird über `rememberSpamFolder`
     ///    sofort gemerkt – noch vor den übrigen Schritten.
     /// 2. Ungeprüfte Mails des Standardfensters (`SyncWindow`) suchen
-    ///    (ohne `$MailwerkChecked`).
-    /// 3. Absender und Spam-Header holen – ohne die Mails als gelesen zu markieren.
+    ///    (`findUnchecked`).
+    /// 3. Absender und Spam-Header holen – ohne die Mails als gelesen zu
+    ///    markieren (`fetchCandidates`).
     /// 4. Mit `SpamFilterPlanner` entscheiden.
-    /// 5. Keywords setzen, dann Spam verschieben und den Cache nachziehen.
+    /// 5. Keywords setzen, dann Spam verschieben und den Cache nachziehen
+    ///    (`apply`).
     ///
     /// Läuft im Kontext des Aufrufers (AccountRefreshService, `@concurrent`).
     ///
     /// - Parameters:
     ///   - server: Angemeldete Verbindung des Postfachs.
     ///   - account: Postfach.
-    ///   - lists: Black- und Whitelist (Momentaufnahme).
-    ///   - scoreLimit: Ab diesem Score rettet auch ein Whitelist-Eintrag eine
-    ///     Mail nicht mehr.
+    ///   - rules: Black- und Whitelist (Momentaufnahme) und Score-Obergrenze.
     ///   - rememberSpamFolder: Merkt den gefundenen Spam-Ordner.
     /// - Returns: Abgeschlossen oder der Vorschlag für einen Spam-Ordner.
     /// - Throws: IMAP- oder Verbindungsfehler.
     nonisolated static func filterInbox(
         on server: SwiftMail.IMAPServer,
         account: MailAccount,
-        lists: FilterLists,
-        scoreLimit: Double,
+        rules: SpamRules,
         rememberSpamFolder: (String) async -> Void
     ) async throws -> Outcome {
-        // 1. Spam-Ordner des Postfachs bestimmen
         let spamFolder: String
         switch try await Self.resolveSpamFolder(for: account, on: server) {
         case .found(let folder):
@@ -175,9 +173,37 @@ final class SpamFilterService {
         }
         await rememberSpamFolder(spamFolder)
 
-        // 2. Ungeprüfte Mails des Standardfensters suchen – mit
-        //    `$MailwerkChecked`, sofern der Server eigene Schlüsselwörter
-        //    speichert, sonst alle noch nicht gecachten.
+        let unchecked = try await findUnchecked(on: server, account: account)
+        guard !unchecked.uids.isEmpty else { return .completed }
+
+        let candidates = try await fetchCandidates(unchecked.uids, on: server)
+        let plan = SpamFilterPlanner.plan(for: candidates, lists: rules.lists, scoreLimit: rules.scoreLimit)
+        try await Self.apply(plan, in: FilterTarget(
+            server: server, account: account, spamFolder: spamFolder, storesKeywords: unchecked.usesKeywords
+        ))
+
+        Log.spam.info("🛡️ [\(account.displayName, privacy: .private)] Fertig: \(plan.checked.count) geprüft, \(plan.moveToSpam.count) nach \(spamFolder, privacy: .public), \(plan.keep.count) behalten")
+        return .completed
+    }
+
+    /// Sucht die ungeprüften Mails des Standardfensters im Posteingang.
+    ///
+    /// Verarbeitung: Wählt den Posteingang aus. Speichert der Server eigene
+    /// Schlüsselwörter, wird nach Mails ohne `$MailwerkChecked` gesucht,
+    /// sonst nach allen; welche davon als ungeprüft gelten, entscheidet
+    /// `SpamFilterPlanner.uncheckedUIDs`. Gesucht wird ohne Sortierung: Die
+    /// Reihenfolge spielt keine Rolle, der Plan sortiert ohnehin – das spart
+    /// die SORT-Erweiterung des Servers.
+    ///
+    /// - Parameters:
+    ///   - server: Angemeldete Verbindung des Postfachs.
+    ///   - account: Postfach.
+    /// - Returns: Ungeprüfte UIDs und ob der Server Schlüsselwörter speichert.
+    /// - Throws: IMAP-Fehler.
+    nonisolated private static func findUnchecked(
+        on server: SwiftMail.IMAPServer,
+        account: MailAccount
+    ) async throws -> (uids: [UInt32], usesKeywords: Bool) {
         let inbox = try await server.selectMailbox(MailFolder.inboxPath)
         let usesKeywords = Self.storesKeywords(inbox)
         if !usesKeywords {
@@ -187,43 +213,39 @@ final class SpamFilterService {
         let criteria: [SwiftMail.SearchCriteria] = usesKeywords
             ? [.unkeyword(SpamKeyword.checked), .since(sinceDate)]
             : [.since(sinceDate)]
-        // Ohne Sortierung: Die Reihenfolge spielt keine Rolle, der Plan
-        // sortiert ohnehin. Das spart die SORT-Erweiterung des Servers.
         let searchResult: ExtendedSearchResult<SwiftMail.UID> = try await server.extendedSearch(
             criteria: criteria,
             calendar: SyncWindow.calendar
         )
         // `all` liefert ESEARCH, `ordered` eine einfache SEARCH-Antwort.
-        let matches = searchResult.all ?? UIDSet(searchResult.ordered ?? [])
-        var uids = matches.toArray()
-        if !usesKeywords {
-            let known = MessageStore.shared.cachedUIDs(accountID: account.id, folder: MailFolder.inboxPath)
-            uids = uids.filter { !known.contains($0.value) }
-        }
+        let found = (searchResult.all?.toArray() ?? searchResult.ordered ?? []).map(\.value)
+        let uids = SpamFilterPlanner.uncheckedUIDs(
+            found: found,
+            usesKeywords: usesKeywords,
+            cached: usesKeywords ? [] : MessageStore.shared.cachedUIDs(accountID: account.id, folder: MailFolder.inboxPath)
+        )
         Log.spam.info("🛡️ [\(account.displayName, privacy: .private)] \(uids.count) ungeprüfte Mails seit \(sinceDate, privacy: .public)")
+        return (uids, usesKeywords)
+    }
 
-        guard !uids.isEmpty else { return .completed }
-
-        // 3. Absender und Spam-Header holen – PEEK, die Mails bleiben ungelesen
+    /// Holt Absender und Spam-Header der Mails – mit BODY.PEEK, die Mails
+    /// bleiben ungelesen.
+    ///
+    /// - Parameters:
+    ///   - uids: UIDs im ausgewählten Posteingang.
+    ///   - server: Angemeldete Verbindung.
+    /// - Returns: Kandidaten für den Filter.
+    /// - Throws: IMAP-Fehler.
+    nonisolated private static func fetchCandidates(
+        _ uids: [UInt32],
+        on server: SwiftMail.IMAPServer
+    ) async throws -> [SpamCandidate] {
         let infos = try await server.fetchMessageInfosBulk(
-            using: usesKeywords ? matches : UIDSet(uids),
+            using: uidSet(uids),
             options: .slim,
             headerFields: SpamHeaderParser.fieldNames
         )
-        let candidates = infos.compactMap { Self.candidate(from: $0) }
-
-        // 4. Entscheiden
-        let plan = SpamFilterPlanner.plan(
-            for: candidates, lists: lists, scoreLimit: scoreLimit
-        )
-
-        // 5. Ausführen – Keywords zuerst, dann verschieben
-        try await Self.apply(
-            plan, on: server, account: account, spamFolder: spamFolder, storesKeywords: usesKeywords
-        )
-
-        Log.spam.info("🛡️ [\(account.displayName, privacy: .private)] Fertig: \(plan.checked.count) geprüft, \(plan.moveToSpam.count) nach \(spamFolder, privacy: .public), \(plan.keep.count) behalten")
-        return .completed
+        return infos.compactMap { Self.candidate(from: $0) }
     }
 
     /// Legt den Spam-Ordner an, nachdem der Nutzer den Vorschlag bestätigt
@@ -430,8 +452,7 @@ final class SpamFilterService {
             return SpamMark.text(
                 sender: FilterAddress.sender(fromHeader: message.from),
                 verdict: message.headers.spamVerdict,
-                lists: lists,
-                scoreLimit: scoreLimit,
+                rules: SpamRules(lists: lists, scoreLimit: scoreLimit),
                 style: .detail
             )
         } catch {
@@ -463,6 +484,19 @@ final class SpamFilterService {
         )
     }
 
+    /// Ziel eines Filterlaufs: Verbindung, Postfach, Spam-Ordner und ob
+    /// der Server eigene Schlüsselwörter speichert.
+    nonisolated private struct FilterTarget {
+        /// Angemeldete Verbindung mit ausgewähltem Posteingang.
+        let server: SwiftMail.IMAPServer
+        /// Postfach.
+        let account: MailAccount
+        /// Spam-Ordner des Postfachs.
+        let spamFolder: String
+        /// `true`, wenn der Server eigene Schlüsselwörter speichert.
+        let storesKeywords: Bool
+    }
+
     /// Setzt die Entscheidung des Filters auf dem Server um.
     ///
     /// Verarbeitung: Zuerst `$MailwerkBlacklisted` und `$MailwerkChecked`
@@ -471,22 +505,13 @@ final class SpamFilterService {
     ///
     /// - Parameters:
     ///   - plan: Entscheidung des Filters.
-    ///   - server: Angemeldete Verbindung mit ausgewähltem Posteingang.
-    ///   - account: Postfach.
-    ///   - spamFolder: Spam-Ordner des Postfachs.
-    ///   - storesKeywords: `true`, wenn der Server eigene Schlüsselwörter
-    ///     speichert.
+    ///   - target: Verbindung, Postfach, Spam-Ordner, Schlüsselwörter.
     /// - Throws: IMAP-Fehler.
-    nonisolated private static func apply(
-        _ plan: SpamFilterPlan,
-        on server: SwiftMail.IMAPServer,
-        account: MailAccount,
-        spamFolder: String,
-        storesKeywords: Bool
-    ) async throws {
+    nonisolated private static func apply(_ plan: SpamFilterPlan, in target: FilterTarget) async throws {
         guard !plan.isEmpty else { return }
+        let server = target.server
 
-        if storesKeywords {
+        if target.storesKeywords {
             if !plan.blacklisted.isEmpty {
                 try await server.store(
                     flags: [SwiftMail.Flag.custom(SpamKeyword.blacklisted)],
@@ -505,13 +530,13 @@ final class SpamFilterService {
         guard !plan.moveToSpam.isEmpty else { return }
 
         let copyUID = try await server.move(
-            messages: uidSet(plan.moveToSpam), to: spamFolder
+            messages: uidSet(plan.moveToSpam), to: target.spamFolder
         )
         updateCache(
             movedUIDs: plan.moveToSpam,
             copyUID: copyUID,
-            account: account,
-            spamFolder: spamFolder
+            account: target.account,
+            spamFolder: target.spamFolder
         )
     }
 

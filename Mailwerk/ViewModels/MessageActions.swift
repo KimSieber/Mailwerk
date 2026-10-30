@@ -90,13 +90,7 @@ enum MessageActions {
     ///   - accountStore: Quelle für die Zugangsdaten.
     /// - Throws: `MailCredentialError` oder `MailActionService.ActionError`.
     static func setRead(_ isRead: Bool, for target: Target, accountStore: AccountStore) async throws {
-        try await MailActionService.setRead(
-            uid: target.uid,
-            isRead: isRead,
-            accountID: target.accountID,
-            accountStore: accountStore,
-            folder: target.folder
-        )
+        try await MailActionService.setRead(target.serverMessages, isRead: isRead, accountStore: accountStore)
         MessageStore.shared.updateUnread(messageID: target.id, isUnread: !isRead)
     }
 
@@ -108,13 +102,7 @@ enum MessageActions {
     ///   - accountStore: Quelle für die Zugangsdaten.
     /// - Throws: `MailCredentialError` oder `MailActionService.ActionError`.
     static func setFlagged(_ isFlagged: Bool, for target: Target, accountStore: AccountStore) async throws {
-        try await MailActionService.setFlagged(
-            uid: target.uid,
-            isFlagged: isFlagged,
-            accountID: target.accountID,
-            accountStore: accountStore,
-            folder: target.folder
-        )
+        try await MailActionService.setFlagged(target.serverMessages, isFlagged: isFlagged, accountStore: accountStore)
         MessageStore.shared.updateFlagged(messageID: target.id, isFlagged: isFlagged)
     }
 
@@ -131,12 +119,7 @@ enum MessageActions {
     static func delete(_ target: Target, accountStore: AccountStore) async throws {
         let interval = Log.beginInterval(Log.Interval.mailAction)
         defer { Log.endInterval(interval) }
-        try await MailActionService.deleteMessage(
-            uid: target.uid,
-            accountID: target.accountID,
-            accountStore: accountStore,
-            folder: target.folder
-        )
+        try await MailActionService.deleteMessages(target.serverMessages, accountStore: accountStore)
         MessageStore.shared.deleteMessage(id: target.id)
     }
 
@@ -154,13 +137,7 @@ enum MessageActions {
     static func move(_ target: Target, to path: String, accountStore: AccountStore) async throws {
         let interval = Log.beginInterval(Log.Interval.mailAction)
         defer { Log.endInterval(interval) }
-        try await MailActionService.moveMessage(
-            uid: target.uid,
-            toFolder: path,
-            accountID: target.accountID,
-            accountStore: accountStore,
-            folder: target.folder
-        )
+        try await MailActionService.moveMessages(target.serverMessages, to: path, accountStore: accountStore)
         MessageStore.shared.deleteMessage(id: target.id)
     }
 }
@@ -217,22 +194,15 @@ extension MessageActions {
     static func apply(_ change: StateChange, to targets: [Target], accountStore: AccountStore) async -> BatchOutcome {
         let interval = Log.beginInterval(Log.Interval.mailAction)
         defer { Log.endInterval(interval) }
-        return await runGrouped(targets) { group, accountID, folder in
-            let uids = group.map(\.uid)
+        return await runGrouped(targets) { group, messages in
             switch change {
             case .flagged(let value):
-                try await MailActionService.setFlagged(
-                    uids: uids, isFlagged: value, accountID: accountID,
-                    accountStore: accountStore, folder: folder
-                )
+                try await MailActionService.setFlagged(messages, isFlagged: value, accountStore: accountStore)
                 for target in group {
                     MessageStore.shared.updateFlagged(messageID: target.id, isFlagged: value)
                 }
             case .read(let value):
-                try await MailActionService.setRead(
-                    uids: uids, isRead: value, accountID: accountID,
-                    accountStore: accountStore, folder: folder
-                )
+                try await MailActionService.setRead(messages, isRead: value, accountStore: accountStore)
                 for target in group {
                     MessageStore.shared.updateUnread(messageID: target.id, isUnread: !value)
                 }
@@ -250,11 +220,8 @@ extension MessageActions {
     static func delete(_ targets: [Target], accountStore: AccountStore) async -> BatchOutcome {
         let interval = Log.beginInterval(Log.Interval.mailAction)
         defer { Log.endInterval(interval) }
-        return await runGrouped(targets) { group, accountID, folder in
-            try await MailActionService.deleteMessages(
-                uids: group.map(\.uid), accountID: accountID,
-                accountStore: accountStore, folder: folder
-            )
+        return await runGrouped(targets) { group, messages in
+            try await MailActionService.deleteMessages(messages, accountStore: accountStore)
             for target in group {
                 MessageStore.shared.deleteMessage(id: target.id)
             }
@@ -272,11 +239,8 @@ extension MessageActions {
     static func move(_ targets: [Target], to path: String, accountStore: AccountStore) async -> BatchOutcome {
         let interval = Log.beginInterval(Log.Interval.mailAction)
         defer { Log.endInterval(interval) }
-        return await runGrouped(targets) { group, accountID, folder in
-            try await MailActionService.moveMessages(
-                uids: group.map(\.uid), toFolder: path, accountID: accountID,
-                accountStore: accountStore, folder: folder
-            )
+        return await runGrouped(targets) { group, messages in
+            try await MailActionService.moveMessages(messages, to: path, accountStore: accountStore)
             for target in group {
                 MessageStore.shared.deleteMessage(id: target.id)
             }
@@ -290,17 +254,22 @@ extension MessageActions {
     ///
     /// - Parameters:
     ///   - targets: Betroffene Mails.
-    ///   - operation: Aktion an einer Gruppe (Mails, Postfach, Ordner).
+    ///   - operation: Aktion an einer Gruppe (Ziele und ihre Mails auf dem
+    ///     Server).
     /// - Returns: Gelungene Mails und gescheiterte Gruppen.
     private static func runGrouped(
         _ targets: [Target],
-        operation: ([Target], UUID, String) async throws -> Void
+        operation: ([Target], MailActionService.FolderMessages) async throws -> Void
     ) async -> BatchOutcome {
         var outcome = BatchOutcome()
         for group in groups(targets) {
             guard let first = group.first else { continue }
+            let messages = MailActionService.FolderMessages(
+                folder: FolderKey(accountID: first.accountID, folder: first.folder),
+                uids: group.map(\.uid)
+            )
             do {
-                try await operation(group, first.accountID, first.folder)
+                try await operation(group, messages)
                 outcome.succeeded += group
             } catch {
                 outcome.failures.append(
@@ -313,6 +282,11 @@ extension MessageActions {
 }
 
 extension MessageActions.Target {
+    /// Die Mail als Ziel einer Server-Aktion.
+    var serverMessages: MailActionService.FolderMessages {
+        MailActionService.FolderMessages(folder: FolderKey(accountID: accountID, folder: folder), uids: [uid])
+    }
+
     /// Ziel aus einem Listeneintrag.
     ///
     /// - Parameter item: Listeneintrag.

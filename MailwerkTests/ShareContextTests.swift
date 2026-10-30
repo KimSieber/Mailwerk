@@ -106,7 +106,7 @@ struct ShareContextTests {
             links: [link],
             title: "Beispielseite"
         )
-        let model = ComposeViewModel(accountStore: store, kind: .new, shared: shared)
+        let model = ComposeViewModel(accountStore: store, request: .init(kind: .new, shared: shared))
 
         #expect(model.accountID == second.id)
         #expect(model.subject == "Beispielseite")

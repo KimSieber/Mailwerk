@@ -19,6 +19,10 @@
 //  `maxTextBytes`, darüber gekürzt. Anhänge nur als Name und Größe,
 //  eingebettete Bilder (cid) nie.
 //
+//  Stand: `cacheData` liest Cache und Bilderverzeichnis, `snapshot` stellt
+//  daraus rein zusammen (Code-Review v0.3.1, Regel 4) – so ist die
+//  Zusammenstellung ohne Datenbank testbar.
+//
 //  Abgrenzung: Auswahl → WatchMailSelection; Versand → WatchBridge;
 //  Übertragungsform → WatchTransfer.
 //
@@ -44,54 +48,93 @@ enum WatchSnapshotBuilder {
 
     // MARK: - Stand
 
-    /// Stellt den Stand der Mails für die Watch zusammen.
+    /// Rahmen eines Stands – alles, was nicht aus dem Cache kommt.
+    struct Frame {
+        /// Postfächer mit eingeschaltetem Abruf.
+        let accounts: [MailAccount]
+        /// Filterlisten; `nil` = nicht lesbar.
+        let lists: FilterLists?
+        /// Score-Obergrenze.
+        let scoreLimit: Double
+        /// `true` direkt nach einem Abruf.
+        let isFresh: Bool
+        /// Ergebnisse mitgeschickter Aktionen.
+        var outcomes: [WatchActionOutcome] = []
+        /// Hinweise zu gescheiterten Abrufen.
+        var problems: [String] = []
+        /// Zeitpunkt (Tests).
+        var now = Date()
+    }
+
+    /// Was ein Stand aus Cache und Bilderverzeichnis braucht.
+    struct CacheData {
+        /// Mails der Posteingänge.
+        let inbox: [MessageListItem]
+        /// Mails der Spam-Ordner.
+        let spam: [MessageListItem]
+        /// Letzter Abruf des Posteingangs je Postfach; `nil` = noch nie.
+        let lastSyncs: [Date?]
+        /// Ungelesene Mails in allen Posteingängen.
+        let unreadInboxTotal: Int
+        /// `true`, wenn es zur Adresse ein Kontaktbild gibt.
+        let hasContactImage: (String) -> Bool
+        /// `true`, wenn es zur Domain ein Logo gibt.
+        let hasLogo: (String) -> Bool
+    }
+
+    /// Liest die Daten für einen Stand aus Cache und Bilderverzeichnis.
     ///
     /// - Parameters:
     ///   - accounts: Postfächer mit eingeschaltetem Abruf.
     ///   - spamFolders: Spam-Ordner dieser Postfächer.
-    ///   - lists: Filterlisten; `nil` = nicht lesbar.
-    ///   - scoreLimit: Score-Obergrenze.
-    ///   - isFresh: `true` direkt nach einem Abruf.
-    ///   - outcomes: Ergebnisse mitgeschickter Aktionen.
-    ///   - problems: Hinweise zu gescheiterten Abrufen.
-    ///   - now: Zeitpunkt (Tests).
-    /// - Returns: Stand für die Watch.
-    static func snapshot(
-        accounts: [MailAccount],
-        spamFolders: [FolderKey],
-        lists: FilterLists?,
-        scoreLimit: Double,
-        isFresh: Bool,
-        outcomes: [WatchActionOutcome] = [],
-        problems: [String] = [],
-        now: Date = Date()
-    ) -> WatchSnapshot {
+    /// - Returns: Daten für `snapshot`.
+    static func cacheData(accounts: [MailAccount], spamFolders: [FolderKey]) -> CacheData {
         let store = MessageStore.shared
         let accountIDs = accounts.map(\.id)
-        let colors = Dictionary(accounts.map { ($0.id, $0.colorHex) }) { first, _ in first }
+        return CacheData(
+            inbox: store.allMessages(accountIDs: accountIDs, folder: MailFolder.inboxPath),
+            spam: store.messages(in: spamFolders),
+            lastSyncs: accountIDs.map { store.lastSync(accountID: $0, folder: MailFolder.inboxPath) },
+            unreadInboxTotal: store.unreadInboxCount(accountIDs: accountIDs),
+            hasContactImage: { ContactImageDirectory.shared.thumbnailData(for: $0) != nil },
+            hasLogo: { store.senderIcon(domain: $0)?.imageData != nil }
+        )
+    }
 
-        let inbox = store.allMessages(accountIDs: accountIDs, folder: MailFolder.inboxPath)
-        let spam = store.messages(in: spamFolders)
-        let inboxIDs = Set(WatchMailSelection.inbox(inbox.map { candidate($0) }))
-        let spamIDs = Set(WatchMailSelection.spam(spam.map { candidate($0) }))
-
-        let mails = inbox.filter { inboxIDs.contains($0.id) }.map { mail(from: $0, box: .inbox, colors: colors) }
-            + spam.filter { spamIDs.contains($0.id) }.map { mail(from: $0, box: .spam, colors: colors) }
-
-        let syncs = accountIDs.map { store.lastSync(accountID: $0, folder: MailFolder.inboxPath) }
-        let lastServerSync = syncs.contains(where: { $0 == nil }) ? nil : syncs.compactMap { $0 }.min()
+    /// Stellt den Stand der Mails für die Watch zusammen.
+    ///
+    /// Verarbeitung: Auswahl der Mails nach `WatchMailSelection`, neueste
+    /// zuerst. Der letzte Abruf gilt nur, wenn jedes Postfach schon einmal
+    /// abgerufen wurde – dann der älteste. Reine Zusammenstellung; die Daten
+    /// liest `cacheData`.
+    ///
+    /// - Parameters:
+    ///   - frame: Postfächer, Listen, Anlass und Hinweise.
+    ///   - cache: Daten aus Cache und Bilderverzeichnis.
+    /// - Returns: Stand für die Watch.
+    static func snapshot(_ frame: Frame, cache: CacheData) -> WatchSnapshot {
+        let colors = Dictionary(frame.accounts.map { ($0.id, $0.colorHex) }) { first, _ in first }
+        let inboxIDs = Set(WatchMailSelection.inbox(cache.inbox.map { candidate($0) }))
+        let spamIDs = Set(WatchMailSelection.spam(cache.spam.map { candidate($0) }))
+        let mails = cache.inbox.filter { inboxIDs.contains($0.id) }
+            .map { mail(from: $0, box: .inbox, colors: colors, cache: cache) }
+            + cache.spam.filter { spamIDs.contains($0.id) }
+            .map { mail(from: $0, box: .spam, colors: colors, cache: cache) }
+        let lastServerSync = cache.lastSyncs.contains(where: { $0 == nil })
+            ? nil
+            : cache.lastSyncs.compactMap { $0 }.min()
 
         return WatchSnapshot(
-            createdAt: now,
-            isFresh: isFresh,
+            createdAt: frame.now,
+            isFresh: frame.isFresh,
             lastServerSync: lastServerSync,
-            hasAccounts: !accounts.isEmpty,
+            hasAccounts: !frame.accounts.isEmpty,
             mails: mails.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) },
-            unreadInboxTotal: store.unreadInboxCount(accountIDs: accountIDs),
-            lists: lists.map(WatchFilterLists.init),
-            scoreLimit: scoreLimit,
-            outcomes: outcomes,
-            problems: problems
+            unreadInboxTotal: cache.unreadInboxTotal,
+            lists: frame.lists.map(WatchFilterLists.init),
+            scoreLimit: frame.scoreLimit,
+            outcomes: frame.outcomes,
+            problems: frame.problems
         )
     }
 
@@ -110,13 +153,19 @@ enum WatchSnapshotBuilder {
     ///   - item: Listeneintrag.
     ///   - box: Posteingang oder Spam-Ordner.
     ///   - colors: Farbe je Postfach.
+    ///   - cache: Nachschlagen von Kontaktbild und Logo.
     /// - Returns: Mail für die Watch.
-    private static func mail(from item: MessageListItem, box: WatchBox, colors: [UUID: String?]) -> WatchMail {
+    private static func mail(
+        from item: MessageListItem,
+        box: WatchBox,
+        colors: [UUID: String?],
+        cache: CacheData
+    ) -> WatchMail {
         let party = MessageRowParty.make(for: item, showsRecipients: false)
         let key = avatarKey(
             forAddress: party.address,
-            hasContactImage: { ContactImageDirectory.shared.thumbnailData(for: $0) != nil },
-            hasLogo: { MessageStore.shared.senderIcon(domain: $0)?.imageData != nil }
+            hasContactImage: cache.hasContactImage,
+            hasLogo: cache.hasLogo
         )
         return mail(from: item, box: box, colorHex: colors[item.accountID] ?? nil, avatarKey: key)
     }

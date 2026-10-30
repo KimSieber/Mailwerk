@@ -103,8 +103,8 @@ final class ContactSuggestionService {
     /// Durchsucht die Kontakte nach Name und – sobald ein „@“ getippt ist –
     /// nach Adresse.
     ///
-    /// Verarbeitung: Nur gültige Adressen, die Name oder Adresse enthalten;
-    /// Doppelte entfallen; Treffer am Wortanfang zuerst, dann alphabetisch.
+    /// Verarbeitung: Liest die Kontakte; Auswahl und Reihenfolge bestimmt
+    /// `rank`.
     ///
     /// - Parameters:
     ///   - query: Bereinigte Eingabe.
@@ -140,24 +140,41 @@ final class ContactSuggestionService {
             contacts += byMail ?? []
         }
 
+        let candidates = contacts.map { contact in
+            (name: displayName(of: contact), addresses: contact.emailAddresses.map { $0.value as String })
+        }
+        return rank(candidates, query: query, limit: limit)
+    }
+
+    /// Wählt und ordnet Vorschläge aus Kontakten.
+    ///
+    /// Verarbeitung: Nur gültige Adressen, bei denen Name oder Adresse die
+    /// Eingabe enthält; Doppelte (ohne Groß-/Kleinschreibung) entfallen;
+    /// Treffer am Wortanfang zuerst, danach alphabetisch nach Name.
+    ///
+    /// - Parameters:
+    ///   - contacts: Name und Adressen je Kontakt.
+    ///   - query: Bereinigte Eingabe.
+    ///   - limit: Höchstzahl der Treffer.
+    /// - Returns: Name und Adresse je Treffer.
+    nonisolated static func rank(
+        _ contacts: [(name: String, addresses: [String])],
+        query: String,
+        limit: Int
+    ) -> [(name: String, address: String)] {
         let needle = query.lowercased()
         var seen = Set<String>()
         var result: [(name: String, address: String)] = []
-
         for contact in contacts {
-            let name = displayName(of: contact)
-            for entry in contact.emailAddresses {
-                let address = (entry.value as String)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            for raw in contact.addresses {
+                let address = raw.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard address.isValidEmail() else { continue }
-                guard name.lowercased().contains(needle)
+                guard contact.name.lowercased().contains(needle)
                     || address.lowercased().contains(needle) else { continue }
                 guard seen.insert(address.lowercased()).inserted else { continue }
-                result.append((name: name, address: address))
+                result.append((name: contact.name, address: address))
             }
         }
-
-        // Treffer am Wortanfang zuerst, danach alphabetisch
         return Array(
             result.sorted { lhs, rhs in
                 let lhsPrefix = startsWith(needle, lhs)

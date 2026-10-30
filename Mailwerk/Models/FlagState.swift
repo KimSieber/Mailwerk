@@ -60,6 +60,20 @@ nonisolated struct FlagState: Equatable {
         isForwarded = forwarded
     }
 
+    /// Flags aus gespeicherten Einzelwerten (z. B. aus dem Cache).
+    ///
+    /// - Parameters:
+    ///   - isUnread: Ohne `\Seen`.
+    ///   - isFlagged: Mit `\Flagged`.
+    ///   - isAnswered: Mit `\Answered`.
+    ///   - isForwarded: Mit `$Forwarded`.
+    init(isUnread: Bool, isFlagged: Bool, isAnswered: Bool, isForwarded: Bool) {
+        self.isUnread = isUnread
+        self.isFlagged = isFlagged
+        self.isAnswered = isAnswered
+        self.isForwarded = isForwarded
+    }
+
     /// Prüft, ob der gespeicherte Stand einer Mail diesen Flags entspricht.
     ///
     /// Verarbeitung: Vergleich in `CachedFlagState.matches` (dort getestet).

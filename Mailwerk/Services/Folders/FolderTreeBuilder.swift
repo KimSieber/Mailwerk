@@ -81,13 +81,12 @@ nonisolated enum FolderTreeBuilder {
             let segments = displaySegments(of: folder, namespacePrefix: namespacePrefix)
             guard let last = segments.last else { continue }
             serverNames[folder.id] = MailboxNameCodec.displayName(last)
-            insert(
-                folder,
+            let placement = Placement(
                 segments: segments,
                 underInbox: isNestedUnderInbox(folder, segments: segments, namespacePrefix: namespacePrefix),
-                into: root,
                 role: roles[folder.id] ?? .regular
             )
+            insert(folder, at: placement, into: root)
         }
 
         let frozen = root.children.values.map { $0.freeze() }
@@ -317,6 +316,16 @@ nonisolated enum FolderTreeBuilder {
         return true
     }
 
+    /// Wo und als was ein Ordner in den Baum kommt.
+    private struct Placement {
+        /// Segmente ohne Namespace-Präfix.
+        let segments: [String]
+        /// `true` = erste Ebene ist der Posteingang.
+        let underInbox: Bool
+        /// Rolle des Ordners.
+        let role: FolderRole
+    }
+
     /// Hängt einen Ordner entlang seiner Segmente in den Baum ein.
     ///
     /// Verarbeitung: Fehlende Zwischenebenen entstehen als nicht wählbare
@@ -325,17 +334,12 @@ nonisolated enum FolderTreeBuilder {
     ///
     /// - Parameters:
     ///   - folder: Ordner.
-    ///   - segments: Segmente ohne Namespace-Präfix.
-    ///   - underInbox: `true` = erste Ebene ist der Posteingang.
+    ///   - placement: Segmente, Lage unter dem Posteingang und Rolle.
     ///   - root: Wurzel des Baums.
-    ///   - role: Rolle des Ordners.
-    private static func insert(
-        _ folder: MailFolder,
-        segments: [String],
-        underInbox: Bool,
-        into root: Draft,
-        role: FolderRole
-    ) {
+    private static func insert(_ folder: MailFolder, at placement: Placement, into root: Draft) {
+        let segments = placement.segments
+        let underInbox = placement.underInbox
+        let role = placement.role
         var current = root
         for depth in 1...segments.count {
             let segment = segments[depth - 1]

@@ -102,28 +102,37 @@ nonisolated enum HTMLRichTextParser {
             if textStart < index {
                 builder.text(String(chars[textStart..<index]))
             }
-
-            if let end = skipSpecial(chars, from: index) {
-                index = end
-            } else if let tag = readTag(chars, from: index) {
-                index = tag.end
-                if !tag.isClosing, rawTextElements.contains(tag.name) {
-                    if tag.name == "style" { builder.isLossless = false }
-                    index = skipRawText(chars, from: index, name: tag.name)
-                } else {
-                    builder.handle(tag)
-                }
-            } else {
-                // Kein Tag – das „<“ ist gewöhnlicher Text
-                builder.text("<")
-                index += 1
-            }
+            index = consumeMarkup(chars, at: index, into: &builder)
             textStart = index
         }
         if textStart < chars.count {
             builder.text(String(chars[textStart..<chars.count]))
         }
         return builder.finish()
+    }
+
+    /// Verarbeitet, was an einem „<“ beginnt: Kommentar oder Doctype
+    /// überspringen, Tag auswerten, Inhalt von `script`/`style`/…
+    /// überspringen – oder das „<“ als Text übernehmen, wenn kein Tag folgt.
+    ///
+    /// - Parameters:
+    ///   - chars: Zeichen des HTML.
+    ///   - index: Position des „<“.
+    ///   - builder: Aufbau des Dokuments.
+    /// - Returns: Position, an der das Zerlegen weitergeht.
+    private static func consumeMarkup(_ chars: [Character], at index: Int, into builder: inout Builder) -> Int {
+        if let end = skipSpecial(chars, from: index) { return end }
+        guard let tag = readTag(chars, from: index) else {
+            // Kein Tag – das „<“ ist gewöhnlicher Text
+            builder.text("<")
+            return index + 1
+        }
+        if !tag.isClosing, rawTextElements.contains(tag.name) {
+            if tag.name == "style" { builder.isLossless = false }
+            return skipRawText(chars, from: tag.end, name: tag.name)
+        }
+        builder.handle(tag)
+        return tag.end
     }
 
     // MARK: Zerlegen
@@ -187,27 +196,10 @@ nonisolated enum HTMLRichTextParser {
         var attributes: [String: String] = [:]
         while i < chars.count, chars[i] != ">" {
             if chars[i].isWhitespace || chars[i] == "/" { i += 1; continue }
-            var attrName = ""
-            while i < chars.count, !chars[i].isWhitespace, chars[i] != "=", chars[i] != ">", chars[i] != "/" {
-                attrName.append(chars[i]); i += 1
-            }
-            while i < chars.count, chars[i].isWhitespace { i += 1 }
-            var value = ""
-            if i < chars.count, chars[i] == "=" {
-                i += 1
-                while i < chars.count, chars[i].isWhitespace { i += 1 }
-                if i < chars.count, chars[i] == "\"" || chars[i] == "'" {
-                    let quote = chars[i]; i += 1
-                    while i < chars.count, chars[i] != quote { value.append(chars[i]); i += 1 }
-                    if i < chars.count { i += 1 }
-                } else {
-                    while i < chars.count, !chars[i].isWhitespace, chars[i] != ">" {
-                        value.append(chars[i]); i += 1
-                    }
-                }
-            }
-            if !attrName.isEmpty {
-                attributes[attrName.lowercased()] = decodeEntities(value)
+            let attribute = readAttribute(chars, from: i)
+            i = attribute.end
+            if !attribute.name.isEmpty {
+                attributes[attribute.name.lowercased()] = decodeEntities(attribute.value)
             } else if i < chars.count, chars[i] != ">" {
                 i += 1   // unerwartetes Zeichen überspringen
             }
@@ -218,6 +210,50 @@ nonisolated enum HTMLRichTextParser {
             attributes: attributes,
             end: min(i + 1, chars.count)
         )
+    }
+
+    /// Liest ein Attribut eines Tags: Name und, falls ein „=“ folgt, Wert.
+    ///
+    /// - Parameters:
+    ///   - chars: Zeichen des HTML.
+    ///   - index: Position des ersten Zeichens des Namens.
+    /// - Returns: Name (ggf. leer), Rohwert (ohne Entitäten-Auflösung) und
+    ///   Position dahinter.
+    private static func readAttribute(_ chars: [Character], from index: Int) -> (name: String, value: String, end: Int) {
+        var i = index
+        var name = ""
+        while i < chars.count, !chars[i].isWhitespace, chars[i] != "=", chars[i] != ">", chars[i] != "/" {
+            name.append(chars[i]); i += 1
+        }
+        while i < chars.count, chars[i].isWhitespace { i += 1 }
+        guard i < chars.count, chars[i] == "=" else { return (name, "", i) }
+        i += 1
+        while i < chars.count, chars[i].isWhitespace { i += 1 }
+        let value = readAttributeValue(chars, from: i)
+        return (name, value.text, value.end)
+    }
+
+    /// Liest einen Attributwert – in doppelten, einfachen oder ohne
+    /// Anführungszeichen. Ein „>“ innerhalb von Anführungszeichen beendet
+    /// den Wert nicht.
+    ///
+    /// - Parameters:
+    ///   - chars: Zeichen des HTML.
+    ///   - index: Position des ersten Zeichens des Werts.
+    /// - Returns: Rohwert und Position dahinter.
+    private static func readAttributeValue(_ chars: [Character], from index: Int) -> (text: String, end: Int) {
+        var i = index
+        var value = ""
+        if i < chars.count, chars[i] == "\"" || chars[i] == "'" {
+            let quote = chars[i]; i += 1
+            while i < chars.count, chars[i] != quote { value.append(chars[i]); i += 1 }
+            if i < chars.count { i += 1 }
+        } else {
+            while i < chars.count, !chars[i].isWhitespace, chars[i] != ">" {
+                value.append(chars[i]); i += 1
+            }
+        }
+        return (value, i)
     }
 
     /// Überspringt den Inhalt eines Elements wie `script` bis zu seinem

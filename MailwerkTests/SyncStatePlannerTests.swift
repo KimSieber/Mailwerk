@@ -59,7 +59,7 @@ struct SyncStatePlannerTests {
     /// Fall 3: hineinkopierte, alt datierte Mail (neue UID) wird geladen.
     @Test func copiedOldMailIsLoaded() {
         let plan = SyncStatePlanner.arrivals(
-            serverUIDs: [1, 2, 3, 10], fromUID: 10, serverUIDNext: 11, known: [1, 2, 3]
+            serverUIDs: [1, 2, 3, 10], window: .init(fromUID: 10, serverUIDNext: 11), known: [1, 2, 3]
         )
         #expect(plan.toLoad == [10])
         #expect(plan.deferredCount == 0)
@@ -69,7 +69,7 @@ struct SyncStatePlannerTests {
     /// Fall 4: kopierte Mail und danach eine neue Mail – die neue fand schon die Datumssuche, die kopierte wird geladen.
     @Test func copiedMailFollowedByNewMailIsNotLost() {
         let plan = SyncStatePlanner.arrivals(
-            serverUIDs: [5, 10, 11], fromUID: 10, serverUIDNext: 12, known: [5, 11]
+            serverUIDs: [5, 10, 11], window: .init(fromUID: 10, serverUIDNext: 12), known: [5, 11]
         )
         #expect(plan.toLoad == [10])
         #expect(plan.nextUIDNext == 12)
@@ -79,7 +79,7 @@ struct SyncStatePlannerTests {
     @Test func historyBelowStoredUIDNextIsIgnored() {
         let history = Set<UInt32>(1...8_000)
         let plan = SyncStatePlanner.arrivals(
-            serverUIDs: history.union([8_001]), fromUID: 8_001, serverUIDNext: 8_002, known: []
+            serverUIDs: history.union([8_001]), window: .init(fromUID: 8_001, serverUIDNext: 8_002), known: []
         )
         #expect(plan.toLoad == [8_001])
     }
@@ -87,7 +87,7 @@ struct SyncStatePlannerTests {
     /// Mails, die nach dem SELECT eintrafen (UID ≥ UIDNEXT des Servers), gehören zum nächsten Abruf.
     @Test func arrivalsAfterSelectAreLeftForNextRun() {
         let plan = SyncStatePlanner.arrivals(
-            serverUIDs: [10, 11, 12], fromUID: 10, serverUIDNext: 11, known: []
+            serverUIDs: [10, 11, 12], window: .init(fromUID: 10, serverUIDNext: 11), known: []
         )
         #expect(plan.toLoad == [10])
         #expect(plan.nextUIDNext == 11)
@@ -96,7 +96,7 @@ struct SyncStatePlannerTests {
     /// Fall 5: in Mailwerk verschobene Mail liegt schon im Cache und wird nicht erneut geladen.
     @Test func alreadyCachedArrivalIsSkipped() {
         let plan = SyncStatePlanner.arrivals(
-            serverUIDs: [10], fromUID: 10, serverUIDNext: 11, known: [10]
+            serverUIDs: [10], window: .init(fromUID: 10, serverUIDNext: 11), known: [10]
         )
         #expect(plan.toLoad.isEmpty)
         #expect(plan.nextUIDNext == 11)
@@ -105,7 +105,7 @@ struct SyncStatePlannerTests {
     /// Nichts Neues → nichts laden, UIDNEXT übernehmen.
     @Test func noArrivalsAdvancesToServerUIDNext() {
         let plan = SyncStatePlanner.arrivals(
-            serverUIDs: [1, 2], fromUID: 3, serverUIDNext: 3, known: [1, 2]
+            serverUIDs: [1, 2], window: .init(fromUID: 3, serverUIDNext: 3), known: [1, 2]
         )
         #expect(plan.toLoad.isEmpty)
         #expect(plan.deferredCount == 0)
@@ -116,7 +116,7 @@ struct SyncStatePlannerTests {
     @Test func limitDefersRemainingArrivals() {
         let arrivals = Set<UInt32>(100..<350)          // 250 Neuankünfte
         let plan = SyncStatePlanner.arrivals(
-            serverUIDs: arrivals, fromUID: 100, serverUIDNext: 350, known: [], limit: 200
+            serverUIDs: arrivals, window: .init(fromUID: 100, serverUIDNext: 350), known: [], limit: 200
         )
         #expect(plan.toLoad.count == 200)
         #expect(plan.toLoad.first == 100)
@@ -130,7 +130,7 @@ struct SyncStatePlannerTests {
         let arrivals = Set<UInt32>(100..<350)
         let alreadyLoaded = Set<UInt32>(100..<300)
         let plan = SyncStatePlanner.arrivals(
-            serverUIDs: arrivals, fromUID: 300, serverUIDNext: 350, known: alreadyLoaded, limit: 200
+            serverUIDs: arrivals, window: .init(fromUID: 300, serverUIDNext: 350), known: alreadyLoaded, limit: 200
         )
         #expect(plan.toLoad.count == 50)
         #expect(plan.deferredCount == 0)
@@ -145,7 +145,7 @@ struct SyncStatePlannerTests {
     /// Grenze 0 lädt nichts und lässt den Zustand unverändert.
     @Test func zeroLimitKeepsPosition() {
         let plan = SyncStatePlanner.arrivals(
-            serverUIDs: [10, 11], fromUID: 10, serverUIDNext: 12, known: [], limit: 0
+            serverUIDs: [10, 11], window: .init(fromUID: 10, serverUIDNext: 12), known: [], limit: 0
         )
         #expect(plan.toLoad.isEmpty)
         #expect(plan.deferredCount == 2)
