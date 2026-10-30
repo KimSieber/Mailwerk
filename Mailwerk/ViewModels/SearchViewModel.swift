@@ -253,27 +253,52 @@ final class SearchViewModel {
         serverState = .searching
         serverHits = []
         serverTask = Task {
-            var hits: [MessageListItem] = []
-            var hasMore = false
-            var unreachable = 0
+            var outcomes: [Result<MailFetchService.ServerSearchResult, any Error>] = []
             for key in scope.folders {
                 if Task.isCancelled { return }
                 do {
                     let credentials = try accountStore.credentials(for: key.accountID)
-                    let result = try await MailFetchService.searchOnServer(
+                    outcomes.append(.success(try await MailFetchService.searchOnServer(
                         credentials, folder: key.folder, query: query, address: address
-                    )
-                    hits += result.hits
-                    hasMore = hasMore || result.hasMore
+                    )))
                 } catch {
-                    unreachable += 1
+                    outcomes.append(.failure(error))
                     Log.fetch.error("🔎 Serversuche fehlgeschlagen: \(error.localizedDescription, privacy: .public)")
                 }
             }
             guard !Task.isCancelled, expression == matchExpression else { return }
-            serverHits = hits.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
-            serverState = .done(hasMore: hasMore, unreachable: unreachable)
+            let combined = Self.combine(outcomes)
+            serverHits = combined.hits
+            serverState = combined.state
         }
+    }
+
+    /// Führt die Ergebnisse der Ordner einer Serversuche zusammen.
+    ///
+    /// Verarbeitung: Treffer aller Postfächer stehen gemeinsam nach Datum
+    /// (neueste zuerst, ohne Datum zuletzt). `hasMore` gilt, sobald ein
+    /// Ordner mehr Treffer hatte als gezeigt; jeder Fehler zählt als nicht
+    /// erreichbares Postfach.
+    ///
+    /// - Parameter outcomes: Ergebnis bzw. Fehler je durchsuchtem Ordner.
+    /// - Returns: Treffer und Stand „fertig“.
+    static func combine(
+        _ outcomes: [Result<MailFetchService.ServerSearchResult, any Error>]
+    ) -> (hits: [MessageListItem], state: ServerState) {
+        var hits: [MessageListItem] = []
+        var hasMore = false
+        var unreachable = 0
+        for outcome in outcomes {
+            switch outcome {
+            case .success(let result):
+                hits += result.hits
+                hasMore = hasMore || result.hasMore
+            case .failure:
+                unreachable += 1
+            }
+        }
+        let sorted = hits.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+        return (sorted, .done(hasMore: hasMore, unreachable: unreachable))
     }
 
     // MARK: - Intern

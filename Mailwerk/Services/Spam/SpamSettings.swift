@@ -59,10 +59,9 @@ final class SpamSettings {
     /// Liest die gespeicherten Werte und meldet sich für Änderungen von
     /// anderen Geräten an.
     init() {
-        isEnabled = store.object(forKey: Self.enabledKey) as? Bool ?? Self.defaultEnabled
-
-        let storedLimit = store.double(forKey: Self.scoreLimitKey)
-        scoreLimit = storedLimit > 0 ? storedLimit : SpamClassifier.defaultScoreLimit
+        isEnabled = Self.enabled(stored: store.object(forKey: Self.enabledKey))
+        scoreLimit = Self.validScoreLimit(store.double(forKey: Self.scoreLimitKey))
+            ?? SpamClassifier.defaultScoreLimit
 
         NotificationCenter.default.addObserver(
             self,
@@ -82,11 +81,32 @@ final class SpamSettings {
     @objc private func externalChange(_ notification: Notification) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            let enabled = store.object(forKey: Self.enabledKey) as? Bool ?? Self.defaultEnabled
+            let enabled = Self.enabled(stored: store.object(forKey: Self.enabledKey))
             if enabled != isEnabled { isEnabled = enabled }
 
-            let limit = store.double(forKey: Self.scoreLimitKey)
-            if limit > 0, limit != scoreLimit { scoreLimit = limit }
+            if let limit = Self.validScoreLimit(store.double(forKey: Self.scoreLimitKey)),
+               limit != scoreLimit {
+                scoreLimit = limit
+            }
         }
+    }
+
+    /// Gespeicherter Schalter des Filters.
+    ///
+    /// - Parameter stored: Wert aus iCloud; fehlt er oder ist er kein
+    ///   Wahrheitswert, gilt `defaultEnabled`.
+    /// - Returns: `true`, wenn der Filter läuft.
+    static func enabled(stored: Any?) -> Bool {
+        stored as? Bool ?? defaultEnabled
+    }
+
+    /// Gespeicherte Score-Obergrenze, sofern brauchbar.
+    ///
+    /// - Parameter stored: Wert aus iCloud; 0 bedeutet „nie gespeichert“.
+    /// - Returns: Grenze oder `nil`, wenn keine gespeichert ist (dann gilt
+    ///   beim Start der Standardwert, bei einer Änderung von außen bleibt
+    ///   der bisherige Wert).
+    static func validScoreLimit(_ stored: Double) -> Double? {
+        stored > 0 ? stored : nil
     }
 }

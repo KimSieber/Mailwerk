@@ -139,6 +139,15 @@ struct AddAccountView: View {
 
         colorSection
 
+        oauthSignInSection(provider)
+    }
+
+    /// Abschnitt „Anmeldung“ bei einem Anbieter: Knopf mit Fortschritt und
+    /// ggf. Fehlermeldung.
+    ///
+    /// - Parameter provider: Anbieter.
+    /// - Returns: Der Abschnitt.
+    private func oauthSignInSection(_ provider: OAuthProvider) -> some View {
         Section {
             Button {
                 Task { await signIn() }

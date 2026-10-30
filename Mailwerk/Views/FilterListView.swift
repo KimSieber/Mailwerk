@@ -441,10 +441,33 @@ struct FilterListView: View {
 
     // MARK: - Import
 
-    /// Liest die gewählte Datei und fragt vor dem Import nach.
+    /// Liest den Text einer gewählten Datei.
     ///
     /// Verarbeitung: Die Datei liegt außerhalb der App (z. B. iCloud Drive)
-    /// und wird nur für das Lesen freigegeben. Enthält sie nichts Neues,
+    /// und wird nur für das Lesen freigegeben. Ist sie nicht lesbar oder
+    /// keine Textdatei, erscheint eine Meldung.
+    ///
+    /// - Parameter url: Gewählte Datei.
+    /// - Returns: Text oder `nil` (Meldung ist dann gesetzt).
+    private func readImportFile(_ url: URL) -> String? {
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        do {
+            guard let text = FilterListImport.text(from: try Data(contentsOf: url)) else {
+                activeAlert = AlertItem(title: "Import", message: "Die Datei „\(url.lastPathComponent)“ ist keine lesbare Textdatei.")
+                return nil
+            }
+            return text
+        } catch {
+            activeAlert = .failure("Import", error)
+            return nil
+        }
+    }
+
+    /// Liest die gewählte Datei und fragt vor dem Import nach.
+    ///
+    /// Verarbeitung: Lesen übernimmt `readImportFile`, die Auswertung
+    /// `FilterListImport` (Plan, Texte). Enthält die Datei nichts Neues,
     /// erscheint gleich die Zusammenfassung; sonst nennt die Rückfrage die
     /// Zahl der neuen Einträge.
     ///
@@ -457,20 +480,7 @@ struct FilterListView: View {
             report(error)
             return
         }
-
-        let accessing = url.startAccessingSecurityScopedResource()
-        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-        let text: String
-        do {
-            guard let decoded = FilterListImport.text(from: try Data(contentsOf: url)) else {
-                activeAlert = AlertItem(title: "Import", message: "Die Datei „\(url.lastPathComponent)“ ist keine lesbare Textdatei.")
-                return
-            }
-            text = decoded
-        } catch {
-            activeAlert = .failure("Import", error)
-            return
-        }
+        guard let text = readImportFile(url) else { return }
 
         let plan = FilterListImport.plan(text: text, existing: entries)
         guard !plan.entries.isEmpty else {
@@ -484,12 +494,9 @@ struct FilterListView: View {
             return
         }
 
-        let count = plan.entries.count
         activeConfirmation = ConfirmationRequest(
             title: "In die \(listName) importieren?",
-            message: "„\(url.lastPathComponent)“: \(count == 1 ? "1 neuer Eintrag" : "\(count) neue Einträge")."
-                + (plan.alreadyPresent.isEmpty ? "" : " \(plan.alreadyPresent.count) schon vorhanden.")
-                + " Jeder Eintrag wird wie bei „Neuer Eintrag …“ geprüft.",
+            message: FilterListImport.confirmationMessage(for: plan, fileName: url.lastPathComponent),
             confirmLabel: "Importieren",
             isDestructive: false
         ) {

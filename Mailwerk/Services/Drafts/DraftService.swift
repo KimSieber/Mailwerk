@@ -24,7 +24,7 @@
 //
 //  Abhängigkeiten: SwiftMail, MailSendService (makeEmail, Bcc-Header),
 //  MailSession, MailActionService (Ordner anlegen), DraftFormat,
-//  MailboxNameCodec, MessageStore (Cache), Log.
+//  MailboxNameCodec, MailboxListing (Ordnerliste), MessageStore (Cache), Log.
 //
 
 import Foundation
@@ -152,16 +152,35 @@ enum DraftService {
     /// - Throws: Verbindungsfehler oder `DraftError.draftsFolderMissing`.
     private static func draftsFolderPath(_ imap: IMAPServer) async throws -> String {
         let mailboxes = try await imap.listMailboxes(wildcard: "*")
-        if let drafts = mailboxes.first(where: { $0.attributes.contains(.drafts) }) {
-            return drafts.name
+        let entries = mailboxes.map { mailbox in
+            MailboxListing.Entry(
+                path: mailbox.name,
+                delimiter: mailbox.hierarchyDelimiter,
+                specialUse: mailbox.attributes.contains(.drafts) ? .drafts : nil,
+                isSelectable: mailbox.isSelectable
+            )
         }
-        let byName = mailboxes.first { mailbox in
-            let lastSegment = mailbox.hierarchyDelimiter
-                .flatMap { mailbox.name.components(separatedBy: $0).last } ?? mailbox.name
+        guard let path = draftsFolder(in: entries) else { throw DraftError.draftsFolderMissing }
+        return path
+    }
+
+    /// Bestimmt den Entwürfe-Ordner aus der Ordnerliste.
+    ///
+    /// Verarbeitung: Zuerst der Ordner mit SPECIAL-USE `\Drafts`; meldet
+    /// der Server keinen, ein Ordner mit einem bekannten Namen
+    /// (`DraftFormat.draftsFolderNames`, letztes Pfadsegment, dekodiert,
+    /// ohne Groß-/Kleinschreibung).
+    ///
+    /// - Parameter entries: Ordner laut Server.
+    /// - Returns: Server-Pfad oder `nil`, wenn keiner passt.
+    static func draftsFolder(in entries: [MailboxListing.Entry]) -> String? {
+        if let drafts = entries.first(where: { $0.specialUse == .drafts }) {
+            return drafts.path
+        }
+        return entries.first { entry in
+            let lastSegment = MailboxListing.displayName(path: entry.path, delimiter: entry.delimiter)
             let readable = MailboxNameCodec.displayName(lastSegment)
             return DraftFormat.draftsFolderNames.contains(readable.lowercased())
-        }
-        guard let byName else { throw DraftError.draftsFolderMissing }
-        return byName.name
+        }?.path
     }
 }

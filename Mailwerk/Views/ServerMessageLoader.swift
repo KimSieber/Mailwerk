@@ -19,8 +19,8 @@
 //  Liste; solange er lädt, steht schon die Kopfleiste der Mailansicht
 //  (MacDetailHeaderBar) mit ausgegrauten Knöpfen.
 //
-//  Abhängigkeiten: MailFetchService, MessageStore, AccountStore
-//  (Zugangsdaten), NetworkMonitor, MessageDetailView, SpamFilterService,
+//  Abhängigkeiten: MailFetchService, MessageStore, MessageDetailContext
+//  (Postfächer, Spamfilter), NetworkMonitor, MessageDetailView,
 //  MessageListItem, AppTheme, MacDetailHeaderBar (nur Mac).
 //
 
@@ -30,20 +30,10 @@ import SwiftUI
 struct ServerMessageLoader: View {
     /// Treffer (Kopfdaten vom Server, Cache-ID wie nach dem Laden).
     let hit: MessageListItem
-    /// Quelle für Postfächer und Passwörter.
-    let accountStore: AccountStore
-    /// Spamfilter für Blockieren und Vertrauen.
-    let spamFilter: SpamFilterService
-    /// Score-Obergrenze für vertrauenswürdige Absender (externe Inhalte).
-    let scoreLimit: Double
-    /// Wird nach Änderungen an der Mail aufgerufen (Liste neu laden).
-    let onChange: () -> Void
+    /// Postfächer, Spamfilter und Rückmeldungen der Liste.
+    let context: MessageDetailContext
     /// Wird beim Verlassen aufgerufen, wenn die Mail geladen wurde.
     let onReturn: () -> Void
-    /// Suche nach einer Person in der Liste („Suchen nach …“ im Mailkopf).
-    var onSearchPerson: ((SearchPerson) -> Void)? = nil
-    /// `true` in Gesendet und Entwürfen (Kreis im Mailkopf zeigt den Empfänger).
-    var showsRecipients = false
     /// Zurück-Knopf der Mac-Kopfleiste (eine Spalte); `nil` = keiner.
     var onBack: (() -> Void)? = nil
 
@@ -60,12 +50,12 @@ struct ServerMessageLoader: View {
             if let message {
                 MessageDetailView(
                     message: message,
-                    accountStore: accountStore,
-                    spamFilter: spamFilter,
-                    scoreLimit: scoreLimit,
-                    onChange: onChange,
-                    onSearchPerson: onSearchPerson,
-                    showsRecipients: showsRecipients,
+                    accountStore: context.accountStore,
+                    spamFilter: context.spamFilter,
+                    scoreLimit: context.scoreLimit,
+                    onChange: context.onChange,
+                    onSearchPerson: context.onSearchPerson,
+                    showsRecipients: context.showsRecipients,
                     onBack: onBack
                 )
             } else if let failure {
@@ -79,10 +69,7 @@ struct ServerMessageLoader: View {
                     }
                     .disabled(!network.isOnline)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                #if os(macOS)
-                .safeAreaInset(edge: .top, spacing: 0) { placeholderHeader }
-                #endif
+                .detailPlaceholder { placeholderHeader }
             } else {
                 VStack(spacing: 12) {
                     ProgressView()
@@ -90,10 +77,7 @@ struct ServerMessageLoader: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                #if os(macOS)
-                .safeAreaInset(edge: .top, spacing: 0) { placeholderHeader }
-                #endif
+                .detailPlaceholder { placeholderHeader }
             }
         }
         // Auch Lade- und Hinweiszustand auf der getönten Fläche.
@@ -104,17 +88,18 @@ struct ServerMessageLoader: View {
         }
     }
 
-    #if os(macOS)
-    /// Kopfleiste mit ausgegrauten Knöpfen, solange die Mail lädt (Mac).
+    /// Kopfleiste mit ausgegrauten Knöpfen, solange die Mail lädt (nur Mac).
+    @ViewBuilder
     private var placeholderHeader: some View {
-        let account = accountStore.accounts.first { $0.id == hit.accountID }
-        return MacDetailHeaderBar(
+        #if os(macOS)
+        let account = context.accountStore.accounts.first { $0.id == hit.accountID }
+        MacDetailHeaderBar(
             placeholderFor: account?.displayName ?? "",
             accountColor: account?.colorHex.map { Color(hex: $0) },
             onBack: onBack
         )
+        #endif
     }
-    #endif
 
     /// Lädt die Mail und speichert sie im Cache.
     ///
@@ -134,7 +119,7 @@ struct ServerMessageLoader: View {
         }
         failure = nil
         do {
-            let credentials = try accountStore.credentials(for: hit.accountID)
+            let credentials = try context.accountStore.credentials(for: hit.accountID)
             let loaded = try await MailFetchService.loadMessage(
                 credentials, folder: hit.folder, uid: hit.uid
             )

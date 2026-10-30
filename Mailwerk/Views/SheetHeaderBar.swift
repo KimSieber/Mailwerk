@@ -158,21 +158,19 @@ extension HeaderCircleButton {
     /// - Parameters:
     ///   - title: Beschriftung, z. B. „Sichern“ oder „Fertig“.
     ///   - isEnabled: `false` = ausgegraut.
-    ///   - isBusy: `true` = Kreisel.
     ///   - usesReturn: `true` = Return löst aus.
     ///   - action: Aktion.
     /// - Returns: Blauer Kreis mit `checkmark`.
     static func confirm(
         _ title: String,
         isEnabled: Bool = true,
-        isBusy: Bool = false,
         usesReturn: Bool = true,
         action: @escaping () -> Void
     ) -> HeaderCircleButton {
         HeaderCircleButton(
             title: title, systemImage: "checkmark", style: .accent,
             help: usesReturn ? "\(title) (↩)" : title,
-            isBusy: isBusy, isEnabled: isEnabled,
+            isBusy: false, isEnabled: isEnabled,
             shortcut: usesReturn ? .defaultAction : nil, action: action
         )
     }

@@ -441,6 +441,43 @@ struct InboxView: View {
         )
     }
 
+    // MARK: - Mailansicht
+
+    /// Angaben für eine aus der Liste geöffnete Mail.
+    ///
+    /// - Parameter showsRecipients: `true` in Gesendet und Entwürfen.
+    /// - Returns: Postfächer, Spamfilter, Rückmeldung und Personensuche.
+    private func detailContext(showsRecipients: Bool) -> MessageDetailContext {
+        MessageDetailContext(
+            accountStore: accountStore,
+            spamFilter: viewModel.spamFilter,
+            scoreLimit: spamSettings.scoreLimit,
+            onChange: { viewModel.loadFromCache() },
+            onSearchPerson: { startPersonSearch($0) },
+            showsRecipients: showsRecipients
+        )
+    }
+
+    /// Angaben für eine von der Watch übergebene Mail (Blatt über der
+    /// Liste): ohne Personensuche, die Liste darunter ist verdeckt.
+    private var handoffDetailContext: MessageDetailContext {
+        MessageDetailContext(
+            accountStore: accountStore,
+            spamFilter: viewModel.spamFilter,
+            scoreLimit: spamSettings.scoreLimit,
+            onChange: { viewModel.loadFromCache() }
+        )
+    }
+
+    /// Ein Servertreffer wurde geladen und liegt jetzt im Cache: Er wird
+    /// zum lokalen Treffer.
+    ///
+    /// - Parameter hit: Geladener Treffer.
+    private func serverHitLoaded(_ hit: MessageListItem) {
+        search.removeServerHit(hit.id)
+        viewModel.loadFromCache()
+    }
+
     // MARK: - Abruf, Beobachter, Blätter
 
     /// Erster Abruf und Beobachter für Postfächer, Netz, Anmeldung und
@@ -450,30 +487,7 @@ struct InboxView: View {
     /// - Returns: Aufbau mit Abruf und Beobachtern.
     private func withListLifecycle<Content: View>(_ content: Content) -> some View {
         content
-            .task {
-                guard !hasLoadedOnce else { return }
-                hasLoadedOnce = true
-                // Kontaktbilder parallel zum Abruf: Die Systemabfrage zur
-                // Berechtigung soll den Abruf nicht aufhalten.
-                Task { await ContactImageDirectory.shared.start() }
-                // Fehlende Einträge im Suchindex schrittweise nachtragen.
-                // Die Ablage im Hintergrund anfassen – das erste Anfassen
-                // öffnet die Datenbank (Prüfbericht P-18).
-                Task.detached(priority: .utility) {
-                    await SearchIndexBuilder.run(store: MessageStore.shared)
-                }
-                // Web-Ansicht vorwärmen, sobald die Liste steht – die erste
-                // geöffnete Mail spart dann den Start des WebKit-Prozesses
-                // (MailWebViewPool, Prüfbericht P-12).
-                Task {
-                    try? await Task.sleep(for: .seconds(1))
-                    MailWebViewPool.shared.prewarm()
-                }
-                // Erst die Liste aus dem Cache zeigen, dann abrufen – sonst
-                // konkurrieren beide beim Start um den Hauptthread (P-18).
-                await viewModel.waitForFirstList()
-                await viewModel.refresh()
-            }
+            .task { await initialLoad() }
             .onChange(of: accountStore.accounts.map(\.id)) { oldIDs, newIDs in
                 // Neue Postfächer (beim ersten Start aus iCloud oder neu
                 // eingerichtet): Liste zeigen und alle Posteingänge abrufen.
@@ -523,6 +537,37 @@ struct InboxView: View {
                 handoffMessage = HandoffMessageRequest(id: id)
             }
     }
+
+    /// Erster Start der Liste: Hintergrundaufgaben anstoßen, Liste aus dem
+    /// Cache zeigen, dann abrufen – nur beim ersten Erscheinen.
+    ///
+    /// Verarbeitung: Kontaktbilder laden parallel zum Abruf, damit die
+    /// Systemabfrage zur Berechtigung den Abruf nicht aufhält. Fehlende
+    /// Einträge im Suchindex werden im Hintergrund nachgetragen – das erste
+    /// Anfassen der Ablage öffnet die Datenbank (Prüfbericht P-18). Die
+    /// Web-Ansicht wird vorgewärmt, sobald die Liste steht; die erste
+    /// geöffnete Mail spart dann den Start des WebKit-Prozesses (P-12).
+    /// Erst die Liste aus dem Cache, dann der Abruf – sonst konkurrieren
+    /// beide beim Start um den Hauptthread (P-18).
+    @MainActor
+    private func initialLoad() async {
+        guard !hasLoadedOnce else { return }
+        hasLoadedOnce = true
+        Task { await ContactImageDirectory.shared.start() }
+        Task.detached(priority: .utility) {
+            await SearchIndexBuilder.run(store: MessageStore.shared)
+        }
+        Task {
+            try? await Task.sleep(for: Self.webViewPrewarmDelay)
+            MailWebViewPool.shared.prewarm()
+        }
+        await viewModel.waitForFirstList()
+        await viewModel.refresh()
+    }
+
+    /// Wartezeit nach dem Start, bis die Web-Ansicht vorgewärmt wird – die
+    /// Liste soll zuerst stehen.
+    private static let webViewPrewarmDelay: Duration = .seconds(1)
 
     /// Beobachter für die gewählte Ansicht und die geöffnete Mail.
     ///
@@ -583,6 +628,14 @@ struct InboxView: View {
     /// - Parameter content: Aufbau.
     /// - Returns: Aufbau mit Blättern.
     private func withSheets<Content: View>(_ content: Content) -> some View {
+        withMessageSheets(withSettingsSheets(content))
+    }
+
+    /// Blätter für Postfächer, Spam-Einstellungen und „Über“ samt Rückfrage.
+    ///
+    /// - Parameter content: Aufbau.
+    /// - Returns: Aufbau mit Blättern.
+    private func withSettingsSheets<Content: View>(_ content: Content) -> some View {
         content
             .sheet(isPresented: $showingAccounts) {
                 AccountListView(accountStore: accountStore)
@@ -602,6 +655,15 @@ struct InboxView: View {
                     .countsAsOpenWindow()
             }
             #endif
+    }
+
+    /// Blätter rund um Mails: Verfassen, Antworten/Weiterleiten, Entwurf,
+    /// Übergabe von der Watch und Verschieben.
+    ///
+    /// - Parameter content: Aufbau.
+    /// - Returns: Aufbau mit Blättern.
+    private func withMessageSheets<Content: View>(_ content: Content) -> some View {
+        content
             .sheet(isPresented: $showingCompose) {
                 // Absender: Postfach des gezeigten Ordners; Sammelansichten
                 // (z. B. „Alle Eingänge“) haben keines → Standard-Postfach.
@@ -623,21 +685,7 @@ struct InboxView: View {
                 .countsAsOpenWindow()
             }
             .sheet(item: $handoffMessage) { request in
-                NavigationStack {
-                    MessageDetailLoader(
-                        messageID: request.id,
-                        accountStore: accountStore,
-                        spamFilter: viewModel.spamFilter,
-                        scoreLimit: spamSettings.scoreLimit,
-                        onChange: { viewModel.loadFromCache() }
-                    )
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Fertig") { handoffMessage = nil }
-                        }
-                    }
-                }
-                .countsAsOpenWindow()
+                handoffSheet(request)
             }
             .sheet(item: $draftToEdit) { request in
                 DraftComposeLoader(
@@ -652,19 +700,43 @@ struct InboxView: View {
                     .countsAsOpenWindow()
             }
             .sheet(item: $moveItem) { item in
-                Group {
-                    if let account = accountStore.accounts.first(where: { $0.id == item.accountID }) {
-                        FolderMoveSheet(
-                            account: account,
-                            currentFolder: item.folder,
-                            accountStore: accountStore
-                        ) { path in
-                            Task { await viewModel.move(item, to: path) }
-                        }
+                moveSheet(for: item)
+            }
+    }
+
+    /// Von der Watch übergebene Mail als Blatt mit „Fertig“.
+    ///
+    /// - Parameter request: Übergebene Mail.
+    /// - Returns: Blatt mit der Mailansicht.
+    private func handoffSheet(_ request: HandoffMessageRequest) -> some View {
+        NavigationStack {
+            MessageDetailLoader(messageID: request.id, context: handoffDetailContext)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Fertig") { handoffMessage = nil }
                     }
                 }
-                .countsAsOpenWindow()
+        }
+        .countsAsOpenWindow()
+    }
+
+    /// Ordnerauswahl zum Verschieben einer Mail.
+    ///
+    /// - Parameter item: Zu verschiebende Mail.
+    /// - Returns: Blatt mit der Ordnerauswahl ihres Postfachs.
+    private func moveSheet(for item: MessageListItem) -> some View {
+        Group {
+            if let account = accountStore.accounts.first(where: { $0.id == item.accountID }) {
+                FolderMoveSheet(
+                    account: account,
+                    currentFolder: item.folder,
+                    accountStore: accountStore
+                ) { path in
+                    Task { await viewModel.move(item, to: path) }
+                }
             }
+        }
+        .countsAsOpenWindow()
     }
 
     // MARK: - Liste
@@ -1007,12 +1079,7 @@ struct InboxView: View {
         if let id = selectedMessageID {
             MessageDetailLoader(
                 messageID: id,
-                accountStore: accountStore,
-                spamFilter: viewModel.spamFilter,
-                scoreLimit: spamSettings.scoreLimit,
-                onChange: { viewModel.loadFromCache() },
-                onSearchPerson: { startPersonSearch($0) },
-                showsRecipients: showsRecipients,
+                context: detailContext(showsRecipients: showsRecipients),
                 onBack: onBack,
                 placeholderAccountID: selectedMessageItem?.accountID
             )
@@ -1022,17 +1089,8 @@ struct InboxView: View {
         } else if let hit = selectedServerHit {
             ServerMessageLoader(
                 hit: hit,
-                accountStore: accountStore,
-                spamFilter: viewModel.spamFilter,
-                scoreLimit: spamSettings.scoreLimit,
-                onChange: { viewModel.loadFromCache() },
-                onReturn: {
-                    // Jetzt im Cache: wird zum lokalen Treffer.
-                    search.removeServerHit(hit.id)
-                    viewModel.loadFromCache()
-                },
-                onSearchPerson: { startPersonSearch($0) },
-                showsRecipients: showsRecipients,
+                context: detailContext(showsRecipients: showsRecipients),
+                onReturn: { serverHitLoaded(hit) },
                 onBack: onBack
             )
             .id(hit.id)
@@ -1154,12 +1212,7 @@ struct InboxView: View {
         if let id = selectedMessageID {
             MessageDetailLoader(
                 messageID: id,
-                accountStore: accountStore,
-                spamFilter: viewModel.spamFilter,
-                scoreLimit: spamSettings.scoreLimit,
-                onChange: { viewModel.loadFromCache() },
-                onSearchPerson: { startPersonSearch($0) },
-                showsRecipients: showsRecipients,
+                context: detailContext(showsRecipients: showsRecipients),
                 onToggleFullscreen: {
                     withAnimation(.snappy(duration: 0.25)) {
                         isDetailFullscreen.toggle()
@@ -1449,60 +1502,75 @@ struct InboxView: View {
                 ServerSearchRow(isSearching: true, isOnline: network.isOnline, action: {})
             case .done(let hasMore, let unreachable):
                 ForEach(search.serverHits) { hit in
-                    #if os(macOS)
-                    // Mac: Der Treffer öffnet sich in der Mailansicht
-                    // neben der Liste (kein NavigationStack).
-                    Button {
-                        openServerHit(hit)
-                    } label: {
-                        rowContent(for: hit, colorHex: colors[hit.accountID], showsRecipients: showsRecipients)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    #else
-                    NavigationLink {
-                        ServerMessageLoader(
-                            hit: hit,
-                            accountStore: accountStore,
-                            spamFilter: viewModel.spamFilter,
-                            scoreLimit: spamSettings.scoreLimit,
-                            onChange: { viewModel.loadFromCache() },
-                            onReturn: {
-                                // Jetzt im Cache: wird zum lokalen Treffer.
-                                search.removeServerHit(hit.id)
-                                viewModel.loadFromCache()
-                            },
-                            onSearchPerson: { startPersonSearch($0) },
-                            showsRecipients: showsRecipients
-                        )
-                    } label: {
-                        rowContent(for: hit, colorHex: colors[hit.accountID], showsRecipients: showsRecipients)
-                    }
-                    #endif
+                    serverHitRow(hit, colorHex: colors[hit.accountID], showsRecipients: showsRecipients)
                 }
-                if search.serverHits.isEmpty {
-                    Text("Keine weiteren Treffer auf dem Server")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-                if hasMore {
-                    Text("Weitere Treffer – Suche verfeinern")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-                if unreachable > 0 {
-                    Button("Nicht alle Postfächer erreichbar – erneut versuchen") {
-                        search.searchServer()
-                    }
-                    .font(.footnote)
-                    .foregroundStyle(network.isOnline ? Color.accentColor : Color.secondary)
-                    .disabled(!network.isOnline)
-                }
+                serverSearchNotes(hasMore: hasMore, unreachable: unreachable)
             }
         } header: {
             Text("Auf dem Server")
         }
         .cardRowBackground()
+    }
+
+    /// Zeile eines Treffers der Serversuche. Auf dem Mac öffnet er sich in
+    /// der Mailansicht neben der Liste (kein NavigationStack), sonst per
+    /// Push; geladen wird er erst beim Öffnen (`ServerMessageLoader`).
+    ///
+    /// - Parameters:
+    ///   - hit: Treffer.
+    ///   - colorHex: Farbe des Postfachs; `nil` = keine.
+    ///   - showsRecipients: `true` in Gesendet und Entwürfen.
+    /// - Returns: Die Zeile.
+    @ViewBuilder
+    private func serverHitRow(_ hit: MessageListItem, colorHex: String?, showsRecipients: Bool) -> some View {
+        #if os(macOS)
+        Button {
+            openServerHit(hit)
+        } label: {
+            rowContent(for: hit, colorHex: colorHex, showsRecipients: showsRecipients)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        #else
+        NavigationLink {
+            ServerMessageLoader(
+                hit: hit,
+                context: detailContext(showsRecipients: showsRecipients),
+                onReturn: { serverHitLoaded(hit) }
+            )
+        } label: {
+            rowContent(for: hit, colorHex: colorHex, showsRecipients: showsRecipients)
+        }
+        #endif
+    }
+
+    /// Hinweise unter den Servertreffern: keine weiteren Treffer, Suche
+    /// verfeinern, nicht erreichbare Postfächer (mit „erneut versuchen“).
+    ///
+    /// - Parameters:
+    ///   - hasMore: Es gab mehr Treffer als gezeigt.
+    ///   - unreachable: Anzahl nicht erreichbarer Postfächer.
+    /// - Returns: Die Hinweise.
+    @ViewBuilder
+    private func serverSearchNotes(hasMore: Bool, unreachable: Int) -> some View {
+        if search.serverHits.isEmpty {
+            Text("Keine weiteren Treffer auf dem Server")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        if hasMore {
+            Text("Weitere Treffer – Suche verfeinern")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        if unreachable > 0 {
+            Button("Nicht alle Postfächer erreichbar – erneut versuchen") {
+                search.searchServer()
+            }
+            .font(.footnote)
+            .foregroundStyle(network.isOnline ? Color.accentColor : Color.secondary)
+            .disabled(!network.isOnline)
+        }
     }
 
     // MARK: - Mehrfachauswahl
@@ -1770,94 +1838,107 @@ struct InboxView: View {
         showsRecipients: Bool,
         opensDraft: Bool
     ) -> some View {
-        Group {
-            if viewModel.isSelecting {
-                // Im Auswahlmodus kein Link: Ein Tipp wählt aus statt zu
-                // öffnen. Die Auswahl selbst zeichnet die Liste (`listSelection`).
-                rowContent(for: message, colorHex: colorHex, showsRecipients: showsRecipients)
-            } else if opensDraft {
+        rowLink(for: message, colorHex: colorHex, showsRecipients: showsRecipients, opensDraft: opensDraft)
+            .swipeActions(edge: .leading, allowsFullSwipe: true) {
                 Button {
-                    draftToEdit = DraftEditRequest(id: message.id)
+                    Task { await viewModel.toggleRead(message) }
                 } label: {
-                    rowContent(for: message, colorHex: colorHex, showsRecipients: showsRecipients)
-                        .contentShape(Rectangle())
+                    Label(
+                        message.isUnread ? "Gelesen" : "Ungelesen",
+                        systemImage: message.isUnread ? "envelope.open" : "envelope.badge"
+                    )
                 }
-                .buttonStyle(.plain)
-            } else if usesColumns {
-                // Kein eigener Knopf: Die Liste wählt die Zeile aus
-                // (`columnSelection`) – per Tipp wie per Pfeiltaste.
+                .tint(.blue)
+            }
+            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                Button {
+                    Task { await viewModel.toggleFlag(message) }
+                } label: {
+                    Label(
+                        message.isFlagged ? "Entflaggen" : "Flaggen",
+                        systemImage: message.isFlagged ? "flag.slash" : "flag"
+                    )
+                }
+                .tint(.orange)
+            }
+            .contextMenu {
+                MessageMenuItems(
+                    context: MessageMenuContext(message),
+                    showsSelect: true,
+                    onAction: { handleMenuAction($0, for: message) }
+                ) {
+                    EmptyView()
+                }
+            }
+            // Ziehen auf einen Ordner nur, wo die feste Ordnerleiste daneben
+            // stehen kann (Spaltengerüst von iPad und Mac), und nicht im
+            // Auswahlmodus.
+            .modifier(MessageDragSource(
+                messageID: message.id,
+                isEnabled: usesColumns && !viewModel.isSelecting
+            ))
+            .disabled(viewModel.processingMessageIDs.contains(message.id))
+    }
+
+    /// Inhalt einer Zeile je nach Lage: im Auswahlmodus ohne Link, im
+    /// Entwürfe-Ordner als Knopf (Verfassen-Fenster), im Spaltengerüst
+    /// ohne eigenen Knopf (die Liste wählt aus), sonst als Link zur Mail.
+    ///
+    /// - Parameters:
+    ///   - message: Listeneintrag.
+    ///   - colorHex: Farbe des Postfachs; `nil` = keine.
+    ///   - showsRecipients: `true` in Gesendet und Entwürfen.
+    ///   - opensDraft: `true` im Entwürfe-Ordner.
+    /// - Returns: Inhalt der Zeile.
+    @ViewBuilder
+    private func rowLink(
+        for message: MessageListItem,
+        colorHex: String?,
+        showsRecipients: Bool,
+        opensDraft: Bool
+    ) -> some View {
+        if viewModel.isSelecting {
+            // Im Auswahlmodus kein Link: Ein Tipp wählt aus statt zu
+            // öffnen. Die Auswahl selbst zeichnet die Liste (`listSelection`).
+            rowContent(for: message, colorHex: colorHex, showsRecipients: showsRecipients)
+        } else if opensDraft {
+            Button {
+                draftToEdit = DraftEditRequest(id: message.id)
+            } label: {
                 rowContent(for: message, colorHex: colorHex, showsRecipients: showsRecipients)
                     .contentShape(Rectangle())
-                    #if os(iOS)
-                    // Normale Schriftfarben auch in der ausgewählten Zeile:
-                    // Das System stellt die Schrift sonst auf Weiß um,
-                    // passend zu seinem kräftigen Auswahlhintergrund –
-                    // unsere Karte hinterlegt aber hellblau
-                    // (`cardRowBackground`). Die Zeile färbt mit Stufen
-                    // (primär, sekundär); sie stehen hier fest auf den
-                    // Textfarben des Systems, statt sich von der Auswahl
-                    // abzuleiten.
-                    .foregroundStyle(
-                        Color(uiColor: .label),
-                        Color(uiColor: .secondaryLabel),
-                        Color(uiColor: .tertiaryLabel)
-                    )
-                    #endif
-            } else {
-                NavigationLink {
-                    MessageDetailLoader(
-                        messageID: message.id,
-                        accountStore: accountStore,
-                        spamFilter: viewModel.spamFilter,
-                        scoreLimit: spamSettings.scoreLimit,
-                        onChange: { viewModel.loadFromCache() },
-                        onSearchPerson: { startPersonSearch($0) },
-                        showsRecipients: showsRecipients
-                    )
-                } label: {
-                    rowContent(for: message, colorHex: colorHex, showsRecipients: showsRecipients)
-                }
             }
-        }
-        .swipeActions(edge: .leading, allowsFullSwipe: true) {
-            Button {
-                Task { await viewModel.toggleRead(message) }
-            } label: {
-                Label(
-                    message.isUnread ? "Gelesen" : "Ungelesen",
-                    systemImage: message.isUnread ? "envelope.open" : "envelope.badge"
+            .buttonStyle(.plain)
+        } else if usesColumns {
+            // Kein eigener Knopf: Die Liste wählt die Zeile aus
+            // (`columnSelection`) – per Tipp wie per Pfeiltaste.
+            rowContent(for: message, colorHex: colorHex, showsRecipients: showsRecipients)
+                .contentShape(Rectangle())
+                #if os(iOS)
+                // Normale Schriftfarben auch in der ausgewählten Zeile:
+                // Das System stellt die Schrift sonst auf Weiß um,
+                // passend zu seinem kräftigen Auswahlhintergrund –
+                // unsere Karte hinterlegt aber hellblau
+                // (`cardRowBackground`). Die Zeile färbt mit Stufen
+                // (primär, sekundär); sie stehen hier fest auf den
+                // Textfarben des Systems, statt sich von der Auswahl
+                // abzuleiten.
+                .foregroundStyle(
+                    Color(uiColor: .label),
+                    Color(uiColor: .secondaryLabel),
+                    Color(uiColor: .tertiaryLabel)
                 )
-            }
-            .tint(.blue)
-        }
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            Button {
-                Task { await viewModel.toggleFlag(message) }
-            } label: {
-                Label(
-                    message.isFlagged ? "Entflaggen" : "Flaggen",
-                    systemImage: message.isFlagged ? "flag.slash" : "flag"
+                #endif
+        } else {
+            NavigationLink {
+                MessageDetailLoader(
+                    messageID: message.id,
+                    context: detailContext(showsRecipients: showsRecipients)
                 )
-            }
-            .tint(.orange)
-        }
-        .contextMenu {
-            MessageMenuItems(
-                context: MessageMenuContext(message),
-                showsSelect: true,
-                onAction: { handleMenuAction($0, for: message) }
-            ) {
-                EmptyView()
+            } label: {
+                rowContent(for: message, colorHex: colorHex, showsRecipients: showsRecipients)
             }
         }
-        // Ziehen auf einen Ordner nur, wo die feste Ordnerleiste daneben
-        // stehen kann (Spaltengerüst von iPad und Mac), und nicht im
-        // Auswahlmodus.
-        .modifier(MessageDragSource(
-            messageID: message.id,
-            isEnabled: usesColumns && !viewModel.isSelecting
-        ))
-        .disabled(viewModel.processingMessageIDs.contains(message.id))
     }
 
     /// Inhalt einer Zeile: Absenderbild, Namen, Datum, Betreff.
@@ -2446,18 +2527,8 @@ private struct UndoBar: View {
 private struct MessageDetailLoader: View {
     /// Cache-ID der zu öffnenden Mail.
     let messageID: String
-    /// Quelle für Postfächer und Passwörter.
-    let accountStore: AccountStore
-    /// Spamfilter für Blockieren und Vertrauen.
-    let spamFilter: SpamFilterService
-    /// Score-Obergrenze für vertrauenswürdige Absender (externe Inhalte).
-    let scoreLimit: Double
-    /// Wird nach Änderungen an der Mail aufgerufen (Liste neu laden).
-    let onChange: () -> Void
-    /// Suche nach einer Person in der Liste („Suchen nach …“ im Mailkopf).
-    var onSearchPerson: ((SearchPerson) -> Void)? = nil
-    /// `true` in Gesendet und Entwürfen (Kreis im Mailkopf zeigt den Empfänger).
-    var showsRecipients = false
+    /// Postfächer, Spamfilter und Rückmeldungen der Liste.
+    let context: MessageDetailContext
     /// Schaltet zwischen Vollbild und Spaltenansicht (iPad).
     var onToggleFullscreen: (() -> Void)? = nil
     /// `true` im Vollbild; steuert das Symbol der Schaltfläche.
@@ -2481,12 +2552,12 @@ private struct MessageDetailLoader: View {
             if let message {
                 MessageDetailView(
                     message: message,
-                    accountStore: accountStore,
-                    spamFilter: spamFilter,
-                    scoreLimit: scoreLimit,
-                    onChange: onChange,
-                    onSearchPerson: onSearchPerson,
-                    showsRecipients: showsRecipients,
+                    accountStore: context.accountStore,
+                    spamFilter: context.spamFilter,
+                    scoreLimit: context.scoreLimit,
+                    onChange: context.onChange,
+                    onSearchPerson: context.onSearchPerson,
+                    showsRecipients: context.showsRecipients,
                     onToggleFullscreen: onToggleFullscreen,
                     isFullscreen: isFullscreen,
                     stepping: stepping,
@@ -2498,16 +2569,10 @@ private struct MessageDetailLoader: View {
                     systemImage: "envelope",
                     description: Text("Sie wurde inzwischen gelöscht oder verschoben.")
                 )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                #if os(macOS)
-                .safeAreaInset(edge: .top, spacing: 0) { placeholderHeader }
-                #endif
+                .detailPlaceholder { placeholderHeader }
             } else {
                 ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    #if os(macOS)
-                    .safeAreaInset(edge: .top, spacing: 0) { placeholderHeader }
-                    #endif
+                    .detailPlaceholder { placeholderHeader }
             }
         }
         // Auch Lade- und Hinweiszustand auf der getönten Fläche.
@@ -2515,19 +2580,21 @@ private struct MessageDetailLoader: View {
         .task { await load() }
     }
 
-    #if os(macOS)
-    /// Kopfleiste mit ausgegrauten Knöpfen, solange die Mail lädt bzw. fehlt.
+    /// Kopfleiste mit ausgegrauten Knöpfen, solange die Mail lädt bzw.
+    /// fehlt (nur Mac).
+    @ViewBuilder
     private var placeholderHeader: some View {
+        #if os(macOS)
         let account = placeholderAccountID.flatMap { id in
-            accountStore.accounts.first { $0.id == id }
+            context.accountStore.accounts.first { $0.id == id }
         }
-        return MacDetailHeaderBar(
+        MacDetailHeaderBar(
             placeholderFor: account?.displayName ?? "",
             accountColor: account?.colorHex.map { Color(hex: $0) },
             onBack: onBack
         )
+        #endif
     }
-    #endif
 
     /// Lädt die Mail einmalig aus dem Cache – im Hintergrund.
     ///

@@ -326,6 +326,16 @@ struct EditAccountView: View {
     /// - Returns: Die Abschnitte.
     @ViewBuilder
     private func oauthSections(_ provider: OAuthProvider) -> some View {
+        oauthAccountSection(provider)
+        oauthStatusSection(provider)
+        sentCopySection
+    }
+
+    /// Abschnitt „Konto“ eines Postfachs mit Anmeldung per OAuth 2.
+    ///
+    /// - Parameter provider: Anbieter (für den Hinweis zum Benutzernamen).
+    /// - Returns: Der Abschnitt.
+    private func oauthAccountSection(_ provider: OAuthProvider) -> some View {
         Section {
             LabeledInputField(label: "Bezeichnung", example: "z. B. Outlook",
                               text: $displayName)
@@ -350,7 +360,13 @@ struct EditAccountView: View {
             }
         }
         .cardRowBackground()
+    }
 
+    /// Abschnitt „Anmeldung“: Stand, „Erneut anmelden“ und dessen Ergebnis.
+    ///
+    /// - Parameter provider: Anbieter.
+    /// - Returns: Der Abschnitt.
+    private func oauthStatusSection(_ provider: OAuthProvider) -> some View {
         Section {
             if signInState.isSignInRequired(account.id) {
                 Label {
@@ -391,7 +407,10 @@ struct EditAccountView: View {
             Text("Mailwerk meldet sich mit einer Freigabe von \(provider.name) an, nicht mit dem Passwort. Nach einer Passwortänderung oder wenn die Anmeldung abgelaufen ist, hier erneut anmelden.")
         }
         .cardRowBackground()
+    }
 
+    /// Abschnitt „Versand“: Kopie in „Gesendet“ ablegen.
+    private var sentCopySection: some View {
         Section {
             Toggle("Kopie in „Gesendet“ ablegen", isOn: $savesSentCopy)
                 // Einzelner Schalter: auf dem Mac als Schalter statt Häkchen.

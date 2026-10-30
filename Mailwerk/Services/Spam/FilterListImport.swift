@@ -78,6 +78,19 @@ nonisolated enum FilterListImport {
         return plan
     }
 
+    /// Text der Rückfrage vor dem Import.
+    ///
+    /// - Parameters:
+    ///   - plan: Was übernommen würde.
+    ///   - fileName: Name der gewählten Datei.
+    /// - Returns: z. B. „„liste.txt“: 3 neue Einträge. 1 schon vorhanden. …“
+    static func confirmationMessage(for plan: Plan, fileName: String) -> String {
+        let count = plan.entries.count
+        return "„\(fileName)“: \(count == 1 ? "1 neuer Eintrag" : "\(count) neue Einträge")."
+            + (plan.alreadyPresent.isEmpty ? "" : " \(plan.alreadyPresent.count) schon vorhanden.")
+            + " Jeder Eintrag wird wie bei „Neuer Eintrag …“ geprüft."
+    }
+
     /// Ergebnis eines Imports.
     struct Outcome: Equatable {
         /// Anzahl übernommener Einträge.
