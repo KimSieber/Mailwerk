@@ -1,6 +1,9 @@
 //
 //  AboutView.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 29.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: „Über Mailwerk“ – App-Icon, Name, Version mit Build-Nummer,
 //  Urheberzeile, Kontaktadresse, Webseite und der Zugang zu den
@@ -56,7 +59,7 @@ struct AboutContent: View {
         VStack(spacing: 14) {
             AppIconImage(size: 96)
 
-            VStack(spacing: 6) {
+            VStack(spacing: AppSpacing.small) {
                 Text(AppInfo.name)
                     .font(.title2.weight(.bold))
                 Text(AppInfo.versionText)
@@ -66,9 +69,9 @@ struct AboutContent: View {
             }
 
             Divider()
-                .padding(.vertical, 4)
+                .padding(.vertical, AppSpacing.xSmall)
 
-            VStack(spacing: 10) {
+            VStack(spacing: AppSpacing.medium) {
                 Text(AppInfo.copyright)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -82,7 +85,7 @@ struct AboutContent: View {
             }
         }
         .multilineTextAlignment(.center)
-        .padding(24)
+        .padding(AppSpacing.section)
         .frame(maxWidth: 420)
         .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
@@ -161,7 +164,7 @@ struct AboutView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 20) {
+                VStack(spacing: AppSpacing.xxLarge) {
                     AboutContent(onContact: contact)
                     NavigationLink {
                         LicenseListView()
@@ -198,7 +201,7 @@ struct AboutView: View {
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(.tertiary)
         }
-        .padding(16)
+        .padding(AppSpacing.xLarge)
         .frame(maxWidth: 420)
         .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .contentShape(Rectangle())
@@ -232,7 +235,7 @@ struct AboutWindowView: View {
 
     /// Karte auf Nebelblau, darunter der Link zu den Lizenzen.
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: AppSpacing.xLarge) {
             AboutContent(onContact: contact)
             Button("Open-Source-Lizenzen …") {
                 showingLicenses = true
@@ -242,7 +245,7 @@ struct AboutWindowView: View {
         // Oben Platz für die Fensterknöpfe (Fenster ohne Titelleiste).
         .padding(.horizontal, 28)
         .padding(.top, 36)
-        .padding(.bottom, 24)
+        .padding(.bottom, AppSpacing.section)
         .frame(width: 400)
         .background(AppTheme.background.ignoresSafeArea())
         .sheet(isPresented: $showingLicenses) {

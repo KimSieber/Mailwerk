@@ -1,6 +1,9 @@
 //
 //  SpamKeyword.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.09.2026
+//  Geändert: 11.10.2026
 //
 //  Zweck: Eigene IMAP-Keywords des Spamfilters. Sie liegen auf dem Server
 //  und halten den Verarbeitungsstand für alle Geräte gemeinsam fest.

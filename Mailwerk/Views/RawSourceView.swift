@@ -1,6 +1,9 @@
 //
 //  RawSourceView.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 12.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Blatt „Originalquelle“ – zeigt die Mail mit allen Kopfzeilen
 //  sowie dem vollständigen Text- und HTML-Inhalt als reinen Text in
@@ -128,8 +131,8 @@ struct RawSourceView: View {
     /// - Parameter text: Durchsuchte Quelle.
     /// - Returns: Die Suchleiste.
     private func searchBar(in text: String) -> some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 6) {
+        HStack(spacing: AppSpacing.regular) {
+            HStack(spacing: AppSpacing.small) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
@@ -149,9 +152,9 @@ struct RawSourceView: View {
                     .accessibilityLabel("Suche leeren")
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, AppSpacing.regular)
+            .padding(.vertical, AppSpacing.small)
+            .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: AppCornerRadius.regular))
             if let searchStatus {
                 Text(searchStatus)
                     .font(.caption)
@@ -166,7 +169,7 @@ struct RawSourceView: View {
             .disabled(query.isEmpty)
         }
         .padding(.horizontal)
-        .padding(.vertical, 8)
+        .padding(.vertical, AppSpacing.regular)
         // Eine geänderte Eingabe beginnt die Suche neu.
         .onChange(of: query) {
             searchedQuery = nil

@@ -1,6 +1,9 @@
 //
 //  LabeledInputField.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 11.10.2026
+//  Geändert: 11.10.2026
 //
 //  Zweck: Eingabezeile für Formulare mit fester Beschriftung links und dem
 //  Eingabefeld rechts, das ein Beispiel als Platzhalter zeigt – etwa

@@ -1,6 +1,9 @@
 //
 //  ListBottomBar.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 17.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Untere Leiste der Mailliste auf iPhone/iPad – bewusst eigene
 //  Gestaltung als Markenzeichen von Mailwerk: eine Glas-Kapsel mit
@@ -90,7 +93,7 @@ struct ListBottomBar<Sort: View>: View {
                 .opacity(isComposeEnabled ? 1 : 0.35)
                 .accessibilityLabel("Neue Nachricht")
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, AppSpacing.regular)
             .frame(width: ListBottomBarMetrics.capsuleSize.width, height: ListBottomBarMetrics.capsuleSize.height)
             .glassEffect(.regular.interactive(), in: Capsule())
 
@@ -109,7 +112,7 @@ struct ListBottomBar<Sort: View>: View {
             .accessibilityLabel("Suchen")
         }
         .frame(height: ListBottomBarMetrics.searchDiameter + 4)
-        .padding(.bottom, 6)
+        .padding(.bottom, AppSpacing.small)
     }
 }
 

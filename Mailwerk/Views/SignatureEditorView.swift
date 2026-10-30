@@ -1,6 +1,9 @@
 //
 //  SignatureEditorView.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 13.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Pflege-Seite für die Signatur eines Postfachs (aus „Postfach
 //  bearbeiten“ geöffnet). Von oben nach unten:
@@ -105,7 +108,7 @@ struct SignatureEditorView: View {
     /// Aufbau der Seite.
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: AppSpacing.xxLarge) {
                 Picker("Art der Signatur", selection: kindBinding) {
                     Text("Einfach").tag(SignatureKind.simple)
                     Text("HTML").tag(SignatureKind.html)
@@ -164,7 +167,7 @@ struct SignatureEditorView: View {
 
     /// Editor für die einfache Signatur samt Formatierungsleiste und Logo-Knopf.
     private var simpleEditor: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: AppSpacing.small) {
             Text("Signatur").font(.headline)
             VStack(spacing: 0) {
                 RichTextEditor(text: $text, controller: controller, minHeight: 140)
@@ -181,8 +184,8 @@ struct SignatureEditorView: View {
                     .accessibilityLabel("Logo einsetzen")
                 })
             }
-            .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 8))
-            .background(RoundedRectangle(cornerRadius: 8).stroke(.separator))
+            .background(AppTheme.card, in: RoundedRectangle(cornerRadius: AppCornerRadius.regular))
+            .background(RoundedRectangle(cornerRadius: AppCornerRadius.regular).stroke(.separator))
             Text("Das Logo erscheint an der Stelle der Schreibmarke (Knopf mit dem Bild-Symbol).")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -191,7 +194,7 @@ struct SignatureEditorView: View {
 
     /// Code-Feld bzw. Vorschau für die HTML-Signatur.
     private var htmlEditor: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: AppSpacing.small) {
             HStack {
                 Text("HTML-Code").font(.headline)
                 Spacer()
@@ -212,8 +215,8 @@ struct SignatureEditorView: View {
                         .frame(height: max(80, previewHeight))
                 }
             }
-            .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 8))
-            .background(RoundedRectangle(cornerRadius: 8).stroke(.separator))
+            .background(AppTheme.card, in: RoundedRectangle(cornerRadius: AppCornerRadius.regular))
+            .background(RoundedRectangle(cornerRadius: AppCornerRadius.regular).stroke(.separator))
             if logoData != nil, !SignatureRules.containsLogo(code) {
                 Text("Das Logo erscheint erst, wenn der Code den Platzhalter <img src=\"logo\"> enthält.")
                     .font(.footnote)
@@ -224,17 +227,17 @@ struct SignatureEditorView: View {
 
     /// Auswahl, Vorschau und Entfernen des Logos.
     private var logoSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: AppSpacing.regular) {
             Text("Logo").font(.headline)
-            HStack(alignment: .center, spacing: 12) {
+            HStack(alignment: .center, spacing: AppSpacing.large) {
                 if let logoData, let image = DecodedImage.image(from: logoData) {
                     image
                         .resizable()
                         .scaledToFit()
                         .frame(maxWidth: 120, maxHeight: 60)
-                        .padding(6)
-                        .background(Color.white, in: RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(.separator))
+                        .padding(AppSpacing.small)
+                        .background(Color.white, in: RoundedRectangle(cornerRadius: AppCornerRadius.small))
+                        .overlay(RoundedRectangle(cornerRadius: AppCornerRadius.small).stroke(.separator))
                 } else {
                     Text("Kein Logo")
                         .foregroundStyle(.secondary)

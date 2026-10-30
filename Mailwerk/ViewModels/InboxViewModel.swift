@@ -1,6 +1,9 @@
 //
 //  InboxViewModel.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Zustand und Abläufe der Nachrichtenliste – welche Ansicht
 //  gewählt ist (alle Posteingänge, Ungelesen, Gekennzeichnet, Spam, ein
@@ -349,7 +352,7 @@ final class InboxViewModel {
     /// Abruf ausbleibt, falls das Lesen aus dem Cache nie fertig würde.
     ///
     /// - Parameter timeout: Höchste Wartezeit.
-    func waitForFirstList(timeout: Duration = .seconds(3)) async {
+    func waitForFirstList(timeout: Duration = firstListTimeout) async {
         guard !hasAppliedFirstList else { return }
         await withCheckedContinuation { continuation in
             firstListWaiters.append(continuation)
@@ -1015,6 +1018,9 @@ final class InboxViewModel {
 
     /// Höchstzahl gleichzeitig abgerufener Postfächer (P-21).
     static let maxConcurrentRefreshes = 3
+
+    /// Höchste Wartezeit auf die erste Liste aus dem Cache beim Start.
+    nonisolated static let firstListTimeout: Duration = .seconds(3)
     /// Höchstzahl gleichzeitig abgerufener Postfächer je IMAP-Server (P-21).
     static let maxRefreshesPerHost = 2
     /// Mindestabstand zwischen zwei Neuladungen der Liste während des Abrufs.

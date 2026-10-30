@@ -1,6 +1,9 @@
 //
 //  MailServerFactory.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 23.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Zentrale und einzige Stelle, an der IMAP- und SMTP-Verbindungen
 //  erzeugt werden. Erzwingt verschlüsselte Verbindungen:
@@ -28,7 +31,7 @@ import SwiftMail
 nonisolated enum MailServerFactory {
 
     /// Ports, auf denen TLS von Beginn an gesprochen wird.
-    private static let implicitTLSPorts: Set<Int> = [993, 465]
+    private static let implicitTLSPorts: Set<Int> = [MailPorts.imaps, MailPorts.smtps]
 
     /// Mindestversion für alle TLS-Verbindungen.
     private static let minimumTLSVersion: MailTLSMinimumVersion = .tlsv12
@@ -38,12 +41,16 @@ nonisolated enum MailServerFactory {
     /// der Nutzer soll nach spätestens rund zwei Minuten eine klare Meldung
     /// bekommen, statt dass der Versand scheinbar hängt.
     private static let smtpSubmissionTimeouts = SMTPSubmissionTimeouts(
-        mailFromResponse: 60,
-        recipientResponse: 60,
-        dataResponse: 60,
-        contentUpload: 120,
-        contentResponse: 120
+        mailFromResponse: smtpCommandTimeoutSeconds,
+        recipientResponse: smtpCommandTimeoutSeconds,
+        dataResponse: smtpCommandTimeoutSeconds,
+        contentUpload: smtpContentTimeoutSeconds,
+        contentResponse: smtpContentTimeoutSeconds
     )
+    /// Zeitbudget je SMTP-Befehl (MAIL FROM, RCPT TO, DATA) in Sekunden.
+    private static let smtpCommandTimeoutSeconds: TimeInterval = 60
+    /// Zeitbudget für Übertragung und Bestätigung des Inhalts in Sekunden.
+    private static let smtpContentTimeoutSeconds: TimeInterval = 120
 
     /// Transportsicherheit für einen Port – niemals `.plainText` oder `.automatic`.
     ///

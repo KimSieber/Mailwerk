@@ -1,6 +1,9 @@
 //
 //  WatchMailSelection.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 20.10.2026
+//  Geändert: 24.10.2026
 //
 //  Zweck: Welche Mails auf der Apple Watch liegen – die Begrenzung des
 //  Speichers dort.

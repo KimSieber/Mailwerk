@@ -1,6 +1,9 @@
 //
 //  FilterListRules.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.09.2026
+//  Geändert: 18.10.2026
 //
 //  Zweck: Gemeinsame Regeln beider Repository-Varianten: Normalisieren der
 //  Eingabe, Zusammenführen doppelter Datensätze aus der Synchronisierung

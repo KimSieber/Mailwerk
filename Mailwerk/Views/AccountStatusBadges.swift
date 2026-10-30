@@ -1,6 +1,9 @@
 //
 //  AccountStatusBadges.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Die Kennzeichen eines Postfachs vor seinem Namen, einheitlich
 //  in der Postfachliste und in der Ordnerleiste – in fester Reihenfolge:
@@ -110,7 +113,7 @@ private struct BadgeExplanationBubble: View {
 
     /// Titel fett, darunter die Erklärung.
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: AppSpacing.small) {
             Text(title)
                 .font(.headline)
             Text(message)
@@ -154,7 +157,7 @@ private struct BadgeExplanation: ViewModifier {
     func body(content: Content) -> some View {
         #if os(iOS)
         content
-            .padding(8)
+            .padding(AppSpacing.regular)
             .contentShape(Rectangle())
             .padding(-8)
             .highPriorityGesture(TapGesture().onEnded { isShowing = true })
@@ -232,7 +235,7 @@ extension View {
 // MARK: - Vorschau
 
 #Preview {
-    HStack(spacing: 6) {
+    HStack(spacing: AppSpacing.small) {
         AccountStatusBadges(needsSignIn: true, isUnreachable: true, isPaused: true, font: .headline)
         Text("Postfach").font(.headline)
     }

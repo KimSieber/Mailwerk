@@ -1,6 +1,9 @@
 //
 //  UndoOffer.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 12.10.2026
+//  Geändert: 17.10.2026
 //
 //  Zweck: Angebot „Rückgängig“ nach einer Änderung von Kennzeichnung oder
 //  Gelesen-Status in der Liste – welche Änderung, an welchen Mails, Text

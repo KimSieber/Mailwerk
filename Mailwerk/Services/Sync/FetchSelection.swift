@@ -1,6 +1,9 @@
 //
 //  FetchSelection.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 13.10.2026
+//  Geändert: 13.10.2026
 //
 //  Zweck: Regeln für den Abruf je Postfach. Ein Postfach lässt sich je
 //  Gerät „ausschalten“ (pausieren):

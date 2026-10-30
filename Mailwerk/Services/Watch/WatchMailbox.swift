@@ -1,6 +1,9 @@
 //
 //  WatchMailbox.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 20.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Zustand der Mails auf der Apple Watch – die letzte Lieferung des
 //  iPhones und darauf die Aktionen, die der Server noch nicht bestätigt

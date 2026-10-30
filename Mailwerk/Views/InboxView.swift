@@ -1,6 +1,9 @@
 //
 //  InboxView.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Hauptansicht mit der Nachrichtenliste. Zeigt die gewählte
 //  Ansicht (alle Posteingänge, Ungelesen, Gekennzeichnet, Spam, ein
@@ -861,18 +864,18 @@ struct InboxView: View {
                 // Neues Angebot = neuer Balken, der Lauf beginnt von vorn.
                 .id(offer.id)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
-                .padding(.bottom, 10)
-                .padding(.horizontal, 12)
+                .padding(.bottom, AppSpacing.medium)
+                .padding(.horizontal, AppSpacing.large)
             }
         }
-        .animation(.snappy(duration: 0.25), value: viewModel.undoOffer?.id)
+        .animation(AppAnimation.standard, value: viewModel.undoOffer?.id)
         // Untere Leiste bzw. Befehlsleiste im Auswahlmodus – schwebt
         // über der Liste am unteren Rand.
         .safeAreaInset(edge: .bottom, spacing: 0) {
             bottomInset
         }
-        .animation(.snappy(duration: 0.25), value: viewModel.isSelecting)
-        .animation(.snappy(duration: 0.25), value: search.isPresented)
+        .animation(AppAnimation.standard, value: viewModel.isSelecting)
+        .animation(AppAnimation.standard, value: search.isPresented)
     }
 
     // MARK: - Spaltengerüst (iPad)
@@ -984,7 +987,7 @@ struct InboxView: View {
         switch MacColumnLayout.folderButtonAction(width: macWindowWidth) {
         case .toggleSidebar:
             showingFolders = false
-            withAnimation(.snappy(duration: 0.25)) { macSidebarEnabled.toggle() }
+            withAnimation(AppAnimation.standard) { macSidebarEnabled.toggle() }
         case .toggleDrawer:
             showingFolders.toggle()
         }
@@ -1010,7 +1013,7 @@ struct InboxView: View {
             toggleSidebar: { toggleFolders() },
             isSidebarVisible: isSidebarVisible,
             selectAll: InboxCommandActions.enabled(!viewModel.visibleMessages.isEmpty && !showsDrafts) {
-                withAnimation(.snappy(duration: 0.25)) {
+                withAnimation(AppAnimation.standard) {
                     viewModel.isSelecting = true
                     if !viewModel.isAllSelected { viewModel.toggleSelectAll() }
                 }
@@ -1108,7 +1111,7 @@ struct InboxView: View {
                 isAllSelected: viewModel.isAllSelected,
                 count: viewModel.selectedIDs.count,
                 onToggleAll: { viewModel.toggleSelectAll() },
-                onDone: { withAnimation(.snappy(duration: 0.25)) { viewModel.endSelection() } }
+                onDone: { withAnimation(AppAnimation.standard) { viewModel.endSelection() } }
             )
             : nil
         return MacListHeaderBar(
@@ -1214,7 +1217,7 @@ struct InboxView: View {
                 messageID: id,
                 context: detailContext(showsRecipients: showsRecipients),
                 onToggleFullscreen: {
-                    withAnimation(.snappy(duration: 0.25)) {
+                    withAnimation(AppAnimation.standard) {
                         isDetailFullscreen.toggle()
                     }
                 },
@@ -1271,7 +1274,7 @@ struct InboxView: View {
                 }
             },
             exitFullscreen: InboxCommandActions.enabled(isDetailFullscreen && selectedMessageID != nil && !showingFolders) {
-                withAnimation(.snappy(duration: 0.25)) { isDetailFullscreen = false }
+                withAnimation(AppAnimation.standard) { isDetailFullscreen = false }
             }
         )
     }
@@ -1301,7 +1304,7 @@ struct InboxView: View {
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Fertig") {
-                    withAnimation(.snappy(duration: 0.25)) { viewModel.endSelection() }
+                    withAnimation(AppAnimation.standard) { viewModel.endSelection() }
                 }
             }
         } else {
@@ -1662,7 +1665,7 @@ struct InboxView: View {
             #endif
             .onChange(of: selectedMessageID) { _, id in
                 guard let id else { return }
-                withAnimation(.snappy(duration: 0.2)) { proxy.scrollTo(id) }
+                withAnimation(AppAnimation.quick) { proxy.scrollTo(id) }
             }
         }
     }
@@ -1727,7 +1730,7 @@ struct InboxView: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
+                    .padding(.vertical, AppSpacing.small)
                     .modifier(ColumnRowInsets(isActive: columns))
             }
             .cardRowBackground()
@@ -1982,7 +1985,7 @@ struct InboxView: View {
     private func handleMenuAction(_ action: MessageMenuAction, for item: MessageListItem) {
         switch action {
         case .select:
-            withAnimation(.snappy(duration: 0.25)) {
+            withAnimation(AppAnimation.standard) {
                 viewModel.beginSelection(with: item.id)
             }
         case .reply(let kind):
@@ -2145,7 +2148,7 @@ private struct InboxTitle: View {
     var body: some View {
         #if os(iOS)
         VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 6) {
+            HStack(spacing: AppSpacing.small) {
                 if let color = accountColor {
                     Circle()
                         .fill(color)
@@ -2160,7 +2163,7 @@ private struct InboxTitle: View {
             if let syncState {
                 // Minütlich neu berechnen, damit „vor 5 Minuten" mitläuft.
                 TimelineView(.periodic(from: .now, by: 60)) { _ in
-                    HStack(spacing: 4) {
+                    HStack(spacing: AppSpacing.xSmall) {
                         if isLoading {
                             ProgressView()
                                 .controlSize(.mini)
@@ -2213,7 +2216,7 @@ private struct PersonSuggestionRow: View {
 
     /// Name und Adresse in einer Zeile.
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: AppSpacing.small) {
             Image(systemName: "person.crop.circle")
                 .foregroundStyle(.secondary)
             if let name = person.name {
@@ -2233,7 +2236,7 @@ private struct PersonSuggestionRow: View {
 private struct InitialLoadingView: View {
     /// Fortschrittsanzeige mit Hinweis.
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: AppSpacing.xLarge) {
             ProgressView()
                 .controlSize(.large)
             Text("Postfächer werden abgerufen …")
@@ -2330,13 +2333,13 @@ private struct OlderMessagesRow: View {
                     .foregroundStyle(.secondary)
             } else {
                 Button(action: action) {
-                    HStack(spacing: 10) {
+                    HStack(spacing: AppSpacing.medium) {
                         if isLoading {
                             ProgressView()
                         } else {
                             Image(systemName: "clock.arrow.circlepath")
                         }
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: AppSpacing.tiny) {
                             Text(isLoading ? "Ältere Nachrichten werden geladen …" : "Ältere Nachrichten laden")
                             if !isOnline {
                                 Text("Offline – nicht verfügbar")
@@ -2358,7 +2361,7 @@ private struct OlderMessagesRow: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 6)
+        .padding(.vertical, AppSpacing.small)
     }
 }
 
@@ -2377,14 +2380,14 @@ private struct ServerSearchRow: View {
     /// Schaltfläche mit Symbol und zwei Zeilen.
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
+            HStack(spacing: AppSpacing.medium) {
                 if isSearching {
                     ProgressView()
                 } else {
                     CloudSearchSymbol()
                         .foregroundStyle(isOnline ? Color.accentColor : Color.secondary)
                 }
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: AppSpacing.tiny) {
                     Text(isSearching ? "Suche auf dem Server …" : "Auf dem Server weitersuchen")
                         .foregroundStyle(isOnline && !isSearching ? Color.accentColor : Color.secondary)
                     Text(isOnline ? "Treffer werden nur angezeigt, nicht gespeichert" : "Offline – nicht verfügbar")
@@ -2398,7 +2401,7 @@ private struct ServerSearchRow: View {
         .buttonStyle(.plain)
         .disabled(isSearching || !isOnline)
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 6)
+        .padding(.vertical, AppSpacing.small)
     }
 }
 
@@ -2451,18 +2454,18 @@ private struct UndoBar: View {
     /// Balken mit ablaufender Füllung.
     var body: some View {
         Button(action: onUndo) {
-            HStack(spacing: 12) {
+            HStack(spacing: AppSpacing.large) {
                 Image(systemName: systemImage)
                     .font(.body.weight(.semibold))
                 Text(text)
                     .font(.subheadline)
                     .lineLimit(1)
-                Spacer(minLength: 8)
+                Spacer(minLength: AppSpacing.regular)
                 Text("Rückgängig")
                     .font(.subheadline.weight(.bold))
             }
             .foregroundStyle(.white)
-            .padding(.horizontal, 20)
+            .padding(.horizontal, AppSpacing.xxLarge)
             .frame(height: 52)
             .frame(maxWidth: .infinity)
             .background(alignment: .leading) {
@@ -2493,7 +2496,7 @@ private struct UndoBar: View {
                     if value.translation.height > 30 {
                         onDismiss()
                     } else {
-                        withAnimation(.snappy(duration: 0.2)) { dragOffset = 0 }
+                        withAnimation(AppAnimation.quick) { dragOffset = 0 }
                     }
                 }
         )

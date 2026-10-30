@@ -1,6 +1,9 @@
 //
 //  InlineImageLoader.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 12.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Lädt eingebettete Bilder einer Mail nach, wenn ihr HTML Bilder
 //  anspricht (`cid:`), deren Daten im Cache fehlen. Das betrifft Mails über

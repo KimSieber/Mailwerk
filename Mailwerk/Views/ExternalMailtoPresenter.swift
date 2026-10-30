@@ -1,6 +1,9 @@
 //
 //  ExternalMailtoPresenter.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.10.2026
+//  Geändert: 18.10.2026
 //
 //  Zweck: Öffnet für einen mailto:-Link von außen das Verfassen-Fenster
 //  bzw. zeigt den Hinweis „Bitte zuerst ein Postfach einrichten“, und

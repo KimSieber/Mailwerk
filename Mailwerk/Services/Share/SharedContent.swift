@@ -1,6 +1,9 @@
 //
 //  SharedContent.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 14.10.2026
+//  Geändert: 14.10.2026
 //
 //  Zweck: Inhalte, die eine andere App über „Teilen“ an Mailwerk übergibt,
 //  und die Regeln, wie daraus eine neue Mail wird:

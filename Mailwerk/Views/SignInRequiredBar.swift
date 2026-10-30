@@ -1,6 +1,9 @@
 //
 //  SignInRequiredBar.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 17.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Schmaler Hinweis über der Mailliste, wenn die Anmeldung eines
 //  Postfachs abgelaufen ist: „Anmeldung für ‚…‘ abgelaufen – Neu
@@ -29,14 +32,14 @@ struct SignInRequiredBar: View {
     /// Ganze Leiste als Knopf: Warnzeichen, Text, „Neu anmelden“.
     var body: some View {
         Button(action: onRenew) {
-            HStack(spacing: 8) {
+            HStack(spacing: AppSpacing.regular) {
                 SignInRequiredBadge(font: .subheadline)
                 Text("Anmeldung für „\(accountName)“ abgelaufen")
                     .font(.subheadline)
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Spacer(minLength: 4)
+                Spacer(minLength: AppSpacing.xSmall)
                 if isRenewing {
                     ProgressView()
                         .controlSize(.small)
@@ -46,8 +49,8 @@ struct SignInRequiredBar: View {
                         .foregroundStyle(.red)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.horizontal, AppSpacing.xLarge)
+            .padding(.vertical, AppSpacing.regular)
             .frame(maxWidth: .infinity)
             .background(Color.red.opacity(0.12))
             .contentShape(Rectangle())

@@ -1,6 +1,9 @@
 //
 //  AttachmentFilename.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 22.10.2026
+//  Geändert: 25.10.2026
 //
 //  Zweck: Dateiname eines Anhangs mit passender Endung. Manche Mails
 //  liefern Anhänge ohne Endung („Kundendokumente“), aber mit Typangabe

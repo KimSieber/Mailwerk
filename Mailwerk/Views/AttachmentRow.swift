@@ -1,6 +1,9 @@
 //
 //  AttachmentRow.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 19.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Zeile eines Anhangs in der Mailansicht – Typ-Symbol, Dateiname,
 //  Größe, Teilen-Knopf (wenn die Daten geladen sind) und Ladezustand.
@@ -32,13 +35,13 @@ struct AttachmentRow: View {
     /// Zeile mit Symbol, Name, Größe und Teilen- bzw. Ladeanzeige.
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 12) {
+            HStack(spacing: AppSpacing.large) {
                 Image(systemName: iconName(for: attachment.contentType))
                     .font(.title2)
                     .foregroundStyle(attachment.data != nil ? .blue : .secondary)
                     .frame(width: 32)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: AppSpacing.tiny) {
                     // Mit passender Endung, wie die Datei beim Öffnen und
                     // Teilen heißt (AttachmentFilename).
                     Text(attachment.completedFilename)
@@ -71,7 +74,7 @@ struct AttachmentRow: View {
                         .foregroundStyle(.blue)
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, AppSpacing.xSmall)
         }
         .buttonStyle(.plain)
         #if os(macOS)
@@ -148,8 +151,8 @@ private struct AttachmentDragSource: ViewModifier {
                 AttachmentTransferable.itemProvider(for: attachment)
             } preview: {
                 Label(attachment.completedFilename, systemImage: systemImage)
-                    .padding(8)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    .padding(AppSpacing.regular)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AppCornerRadius.regular))
             }
         } else {
             content

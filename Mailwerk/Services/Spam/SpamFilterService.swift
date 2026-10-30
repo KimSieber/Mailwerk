@@ -1,6 +1,9 @@
 //
 //  SpamFilterService.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Führt den Spamfilter eines Postfachs aus und setzt die
 //  Spam-Aktionen an einzelnen Mails um.

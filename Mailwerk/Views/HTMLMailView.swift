@@ -1,6 +1,9 @@
 //
 //  HTMLMailView.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Zeigt den HTML-Teil einer Mail in einem WKWebView an und meldet
 //  dessen Höhe, damit die umgebende Ansicht den Rahmen anpassen kann.

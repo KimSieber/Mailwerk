@@ -1,6 +1,9 @@
 //
 //  FilterEntry.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.09.2026
+//  Geändert: 24.10.2026
 //
 //  Zweck: Datenmodell der Black- und Whitelist – Listen- und Eintragsart,
 //  Wert-Typ für Oberfläche und Tests, Fehler der Listenpflege und das

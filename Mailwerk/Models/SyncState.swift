@@ -1,6 +1,9 @@
 //
 //  SyncState.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 29.09.2026
+//  Geändert: 11.10.2026
 //
 //  Zweck: Stand einer Ansicht – wann ihr Inhalt zuletzt erfolgreich vom
 //  Server abgerufen wurde. Grundlage für die Zeile „Aktualisiert: …“ im

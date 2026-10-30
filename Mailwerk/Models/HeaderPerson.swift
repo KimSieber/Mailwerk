@@ -1,6 +1,9 @@
 //
 //  HeaderPerson.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 16.10.2026
+//  Geändert: 29.10.2026
 //
 //  Zweck: Eine Person im Kopf der Mailansicht (Von, An, Kopie, Antwort an)
 //  – zerlegt aus der formatierten Adresse der Mail in Namen und Adresse.

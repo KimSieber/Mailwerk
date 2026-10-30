@@ -1,6 +1,9 @@
 //
 //  ComposeViewModel.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 23.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Zustand und Ablauf des Verfassen-Fensters für neue Mails,
 //  Antworten, Allen antworten und Weiterleiten.

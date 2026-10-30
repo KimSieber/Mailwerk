@@ -1,6 +1,9 @@
 //
 //  SenderIconRecord.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 11.10.2026
+//  Geändert: 11.10.2026
 //
 //  Zweck: Gespeichertes Logo einer Domain samt Zeitpunkt der letzten
 //  Prüfung – und die Regel, wann erneut geladen wird.

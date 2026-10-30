@@ -1,6 +1,9 @@
 //
 //  RemoteContentPolicy.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 11.10.2026
+//  Geändert: 11.10.2026
 //
 //  Zweck: Regeln für externe Inhalte in HTML-Mails (Bilder, Stylesheets,
 //  Schriften, Medien von fremden Servern). Externe Inhalte verraten dem

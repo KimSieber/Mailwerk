@@ -1,6 +1,9 @@
 //
 //  MailPrinter.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 29.09.2026
+//  Geändert: 11.10.2026
 //
 //  Zweck: Druckt eine HTML-Mail über einen temporären WKWebView.
 //

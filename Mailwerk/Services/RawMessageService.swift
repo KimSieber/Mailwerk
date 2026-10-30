@@ -1,6 +1,9 @@
 //
 //  RawMessageService.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 12.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Holt die Originalquelle einer Mail vom Server – genau so, wie
 //  sie übertragen wurde – und bereitet sie zur Anzeige auf.
@@ -54,7 +57,7 @@ enum RawMessageService {
     static func availability(
         sizeBytes: Int,
         isOnline: Bool,
-        limit: Int = MailFetchService.autoDownloadThreshold
+        limit: Int = MailFetchService.autoDownloadThresholdBytes
     ) -> Availability {
         if !isOnline { return .offline }
         return sizeBytes > limit ? .tooLarge : .available

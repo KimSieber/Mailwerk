@@ -1,6 +1,9 @@
 //
 //  MessageDetailView.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Ansicht einer einzelnen Mail – Kopfdaten, Inhalt (HTML oder
 //  Text), Anhänge mit Vorschau, Teilen und Nachladen sowie das
@@ -427,7 +430,7 @@ struct MessageDetailView: View {
         if message.htmlBody != nil && !isRemoteContentDecided {
             Color.clear.frame(height: 100)
         } else {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: AppSpacing.regular) {
                 // Externe Inhalte zuerst (Sicherheitsthema); eine
                 // übersetzte Anzeige hat kein HTML und damit auch keine
                 // externen Inhalte mehr, der Hinweis entfällt dann.

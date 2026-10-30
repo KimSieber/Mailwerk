@@ -1,6 +1,9 @@
 //
 //  SpamSettings.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Einstellungen des Spamfilters – an/aus und Score-Obergrenze für
 //  Whitelist-Treffer. Liegen wie die Postfächer im iCloud-Key-Value-Store

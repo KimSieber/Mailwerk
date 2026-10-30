@@ -1,6 +1,9 @@
 //
 //  ConnectionErrorClassifier.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 29.09.2026
+//  Geändert: 11.10.2026
 //
 //  Zweck: Unterscheidet Verbindungsfehler (kein Netz, Server nicht
 //  erreichbar, Verbindung abgebrochen) von echten Fehlern (Anmeldung,

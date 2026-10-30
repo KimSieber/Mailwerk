@@ -1,6 +1,9 @@
 //
 //  MailAppearance.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 12.10.2026
+//  Geändert: 12.10.2026
 //
 //  Zweck: Entscheidet, ob eine HTML-Mail im Dunkelmodus hell dargestellt
 //  wird. Regel wie in Apple Mail: Bringt die Mail eigene Farben mit

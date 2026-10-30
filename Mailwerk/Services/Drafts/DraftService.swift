@@ -1,6 +1,9 @@
 //
 //  DraftService.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 13.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Legt einen Entwurf im Ordner „Entwürfe“ des Absende-Postfachs ab
 //  (IMAP APPEND mit den Kennzeichen „Entwurf“ und „gelesen“) und legt den

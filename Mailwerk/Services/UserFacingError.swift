@@ -1,6 +1,9 @@
 //
 //  UserFacingError.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 10.10.2026
+//  Geändert: 10.10.2026
 //
 //  Zweck: Kennzeichnet Fehler, deren Meldung sich direkt an den Nutzer
 //  richtet (z. B. ungültiger Ordnername, fehlendes Passwort). Dienste,

@@ -1,6 +1,9 @@
 //
 //  OAuthTokenResponse.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 17.10.2026
+//  Geändert: 17.10.2026
 //
 //  Zweck: Antwort des Token-Endpunkts lesen – Tokens samt Ablaufzeit bei
 //  Erfolg, sonst den Fehler des Anbieters richtig einordnen.

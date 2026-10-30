@@ -1,6 +1,9 @@
 //
 //  KeywordSupport.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 17.10.2026
+//  Geändert: 17.10.2026
 //
 //  Zweck: Entscheidet, ob ein IMAP-Server in einem Ordner eigene
 //  Schlüsselwörter (Keywords wie `$MailwerkChecked`) dauerhaft speichert.

@@ -1,6 +1,9 @@
 //
 //  ContactImageDirectory.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 11.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Kontaktbilder für die Mailliste – Zuordnung von E-Mail-Adresse
 //  zu Vorschaubild aus den Systemkontakten.

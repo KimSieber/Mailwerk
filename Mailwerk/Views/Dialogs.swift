@@ -1,6 +1,9 @@
 //
 //  Dialogs.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 10.10.2026
+//  Geändert: 13.10.2026
 //
 //  Zweck: Einheitliche Meldungen und Rückfragen für alle Ansichten.
 //

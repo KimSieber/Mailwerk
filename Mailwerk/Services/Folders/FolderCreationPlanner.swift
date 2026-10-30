@@ -1,6 +1,9 @@
 //
 //  FolderCreationPlanner.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 30.09.2026
+//  Geändert: 10.10.2026
 //
 //  Zweck: Prüft den Namen eines neuen Ordners und bestimmt seinen
 //  Server-Pfad.

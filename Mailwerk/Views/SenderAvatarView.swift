@@ -1,6 +1,9 @@
 //
 //  SenderAvatarView.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 11.10.2026
+//  Geändert: 11.10.2026
 //
 //  Zweck: Runder Kreis links in der Listenzeile – Kontaktbild, sonst Logo
 //  der Absenderdomain auf weißem Grund, sonst Initialen auf einer festen

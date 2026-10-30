@@ -1,6 +1,9 @@
 //
 //  MessageMenu.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 12.10.2026
+//  Geändert: 24.10.2026
 //
 //  Zweck: Gemeinsames Aktionsmenü einer Mail. Dasselbe Menü erscheint in
 //  der Mailansicht (Drei-Punkte-Menü) und in der Liste (Kontextmenü per

@@ -1,6 +1,9 @@
 //
 //  AppTheme.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 17.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Erscheinungsbild der App an einer Stelle – die getönte
 //  Hintergrundfläche (hell Nebelblau, dunkel Nachtblau) und die Farbe der
@@ -23,6 +26,9 @@
 //  keine Tönung, sondern liegen auf der Kartenfarbe – Mails sollen so
 //  aussehen wie beim Empfänger. Gläserne Elemente (Symbolleisten, Knöpfe)
 //  bleiben Apple-Standard und nehmen die Fläche von selbst auf.
+//
+//  Abstände, Eckenradien und Bewegungen stehen als feste Stufen in
+//  `AppSpacing`, `AppCornerRadius` und `AppAnimation`.
 //
 //  Abhängigkeiten: SwiftUI, UIKit (iOS) bzw. AppKit (macOS),
 //  PlatformColor (RichTextEditor).
@@ -72,6 +78,54 @@ nonisolated enum AppThemePalette {
     static func hex(_ rgb: UInt32) -> String {
         String(format: "#%06X", rgb & 0xFFFFFF)
     }
+}
+
+// MARK: - Abstände, Rundungen, Bewegung
+
+/// Abstände der Oberfläche (Punkt) – eine feste Stufenfolge statt
+/// einzelner Zahlen in jeder Ansicht (Code-Review v0.3.1, Regel 9). Wer das
+/// Erscheinungsbild ändern will, ändert es hier für alle Ansichten.
+nonisolated enum AppSpacing {
+    /// 2 pt – zwischen eng zusammengehörenden Zeilen (Name und Adresse).
+    static let tiny: CGFloat = 2
+    /// 4 pt – Symbol und Text, eng gesetzte Zeilen.
+    static let xSmall: CGFloat = 4
+    /// 6 pt – Zeilenabstand in Listen und Kopfzeilen.
+    static let small: CGFloat = 6
+    /// 8 pt – Standardabstand zwischen Elementen.
+    static let regular: CGFloat = 8
+    /// 10 pt – Abstand zwischen Gruppen in einer Zeile.
+    static let medium: CGFloat = 10
+    /// 12 pt – Innenabstand von Leisten und Karten.
+    static let large: CGFloat = 12
+    /// 16 pt – Abstand zwischen Abschnitten.
+    static let xLarge: CGFloat = 16
+    /// 20 pt – Rand großer Flächen.
+    static let xxLarge: CGFloat = 20
+    /// 24 pt – Abstand zwischen großen Blöcken.
+    static let section: CGFloat = 24
+}
+
+/// Eckenradien von Karten, Feldern und Markierungen (Punkt).
+nonisolated enum AppCornerRadius {
+    /// 6 pt – Markierungen, Marken, kleine Felder.
+    static let small: CGFloat = 6
+    /// 8 pt – Eingabefelder und Rahmen.
+    static let regular: CGFloat = 8
+    /// 10 pt – Karten.
+    static let medium: CGFloat = 10
+    /// 12 pt – große Karten und Blätter.
+    static let large: CGFloat = 12
+}
+
+/// Bewegungen der Oberfläche – überall gleich schnell.
+enum AppAnimation {
+    /// Standard für Ein- und Ausblenden von Leisten, Spalten, Auswahl.
+    static let standard: Animation = .snappy(duration: 0.25)
+    /// Kurz – Aufklappen, Rückfedern, Scrollen zu einer Zeile.
+    static let quick: Animation = .snappy(duration: 0.2)
+    /// Seitliche Schublade (Ordnerleiste auf dem iPhone).
+    static let drawer: Animation = .snappy(duration: 0.28)
 }
 
 // MARK: - Farben

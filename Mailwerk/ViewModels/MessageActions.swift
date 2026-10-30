@@ -1,6 +1,9 @@
 //
 //  MessageActions.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 10.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Aktionen an einer einzelnen Mail – gelesen/ungelesen,
 //  kennzeichnen, löschen, verschieben – jeweils auf dem Server UND im

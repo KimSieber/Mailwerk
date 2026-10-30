@@ -1,6 +1,9 @@
 //
 //  AccountListView.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Postfachverwaltung – Liste der Postfächer mit Farbe, Name und
 //  E-Mail-Adresse; Hinzufügen, Bearbeiten (Tipp) und Entfernen (Wischen);
@@ -164,13 +167,13 @@ struct AccountListView: View {
             Button {
                 showingAddAccount = true
             } label: {
-                HStack(spacing: 10) {
+                HStack(spacing: AppSpacing.medium) {
                     Image(systemName: "plus.circle.fill")
                     Text("Postfach hinzufügen")
                 }
                 .foregroundStyle(Color.accentColor)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
+                .padding(.vertical, AppSpacing.small)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -187,18 +190,18 @@ struct AccountListView: View {
     private var accountSection: some View {
         Section {
             ForEach(accountStore.accounts) { account in
-                HStack(spacing: 10) {
+                HStack(spacing: AppSpacing.medium) {
                     Button {
                         editingAccount = account
                     } label: {
-                        HStack(spacing: 10) {
+                        HStack(spacing: AppSpacing.medium) {
                             if let colorHex = account.colorHex {
                                 Circle()
                                     .fill(Color(hex: colorHex))
                                     .frame(width: Self.colorDotSize, height: Self.colorDotSize)
                             }
                             VStack(alignment: .leading) {
-                                HStack(spacing: 6) {
+                                HStack(spacing: AppSpacing.small) {
                                     AccountStatusBadges(
                                         needsSignIn: OAuthSignInState.shared.isSignInRequired(account.id),
                                         isUnreachable: AccountFetchState.shared.isUnreachable(account.id),
@@ -267,7 +270,7 @@ struct AccountListView: View {
             Picker(selection: defaultAccountBinding) {
                 defaultAccountOptions
             } label: {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: AppSpacing.xSmall) {
                     Text("Standard-Postfach")
                     Text(Self.defaultAccountHint)
                         .font(.footnote)

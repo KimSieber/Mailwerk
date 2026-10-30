@@ -1,6 +1,9 @@
 //
 //  PlatformInputModifiers.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 27.09.2026
+//  Geändert: 11.10.2026
 //
 //  Zweck: Einheitliche Eingabe-Einstellungen für Textfelder auf allen
 //  Plattformen. Automatische Großschreibung und Tastaturtypen gibt es nur

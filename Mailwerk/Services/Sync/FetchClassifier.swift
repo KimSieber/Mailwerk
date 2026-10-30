@@ -1,6 +1,9 @@
 //
 //  FetchClassifier.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 30.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Ordnet die Kopfdaten eines Abrufs dem Cache zu: Welche Mails
 //  sind neu und müssen geladen werden, bei welchen bekannten Mails haben

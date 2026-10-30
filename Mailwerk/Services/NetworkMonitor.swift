@@ -1,6 +1,9 @@
 //
 //  NetworkMonitor.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 29.09.2026
+//  Geändert: 10.10.2026
 //
 //  Zweck: Meldet, ob das Gerät eine Netzverbindung hat. Ohne Netz
 //  versucht die App keinen Abruf und zeigt keine Fehlermeldung; kommt das

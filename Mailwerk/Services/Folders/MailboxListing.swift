@@ -1,6 +1,9 @@
 //
 //  MailboxListing.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 30.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Bereitet die Ordnerliste des Servers (LIST) zu `MailFolder`s auf –
 //  Anzeigename, Sonderordner, Auswahl und Reihenfolge.

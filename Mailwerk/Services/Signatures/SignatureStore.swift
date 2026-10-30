@@ -1,6 +1,9 @@
 //
 //  SignatureStore.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 13.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Zentrale Stelle für die Signaturen aller Postfächer. Hält den
 //  aktuellen Stand für die Oberfläche bereit, speichert und entfernt

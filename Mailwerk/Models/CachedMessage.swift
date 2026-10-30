@@ -1,6 +1,9 @@
 //
 //  CachedMessage.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.09.2026
+//  Geändert: 24.10.2026
 //
 //  Zweck: Datenmodell einer im lokalen Cache gespeicherten Nachricht samt
 //  ihrer Kopfdaten (Adressen, Threading, Spam-Angabe des Servers) und

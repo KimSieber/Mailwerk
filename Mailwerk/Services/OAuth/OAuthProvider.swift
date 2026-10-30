@@ -1,6 +1,9 @@
 //
 //  OAuthProvider.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 17.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Anbieter-Konfiguration für die Anmeldung per OAuth 2 – wo das
 //  Anmeldefenster liegt, wo Tokens getauscht werden, unter welcher
@@ -94,9 +97,9 @@ nonisolated struct OAuthProvider: Equatable, Sendable {
             "offline_access"
         ],
         imapHost: "outlook.office365.com",
-        imapPort: 993,
+        imapPort: MailPorts.imaps,
         smtpHost: "smtp-mail.outlook.com",
-        smtpPort: 587
+        smtpPort: MailPorts.submission
     )
 
     /// Liefert die Konfiguration zu einer Kennung.

@@ -1,6 +1,9 @@
 //
 //  SearchText.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 15.10.2026
+//  Geändert: 24.10.2026
 //
 //  Zweck: Bereitet den Inhalt einer Nachricht für den Suchindex auf und
 //  bildet aus einer Eingabe den Suchausdruck. Regeln:

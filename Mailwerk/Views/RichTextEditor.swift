@@ -1,6 +1,9 @@
 //
 //  RichTextEditor.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 23.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Formatierbarer Texteditor für das Verfassen von Mails. Kapselt
 //  UITextView (iOS) bzw. NSTextView (macOS) – beide auf Basis von

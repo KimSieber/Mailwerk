@@ -1,6 +1,9 @@
 //
 //  AccountColor.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 20.09.2026
+//  Geändert: 11.10.2026
 //
 //  Zweck: Feste Farbpalette, mit der ein Postfach in der Liste markiert
 //  wird (farbiger Streifen am Zeilenrand), samt deutschem Anzeigenamen

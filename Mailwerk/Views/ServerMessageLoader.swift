@@ -1,6 +1,9 @@
 //
 //  ServerMessageLoader.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 15.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Öffnet einen Suchtreffer vom Server. Der Treffer liegt noch
 //  nicht im Cache; beim Öffnen wird die Mail auf dem gewohnten Weg
@@ -71,7 +74,7 @@ struct ServerMessageLoader: View {
                 }
                 .detailPlaceholder { placeholderHeader }
             } else {
-                VStack(spacing: 12) {
+                VStack(spacing: AppSpacing.large) {
                     ProgressView()
                     Text("Nachricht wird geladen …")
                         .font(.subheadline)

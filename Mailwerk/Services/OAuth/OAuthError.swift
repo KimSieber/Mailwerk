@@ -1,6 +1,9 @@
 //
 //  OAuthError.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 17.10.2026
+//  Geändert: 17.10.2026
 //
 //  Zweck: Fehler der Anmeldung per OAuth 2 mit verständlichen deutschen
 //  Meldungen.

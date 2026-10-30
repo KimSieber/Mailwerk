@@ -1,6 +1,9 @@
 //
 //  FilterListCloudEvents.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 27.09.2026
+//  Geändert: 11.10.2026
 //
 //  Zweck: Meldet, wenn der iCloud-Abgleich Änderungen an den Filterlisten
 //  von einem anderen Gerät übernommen hat.

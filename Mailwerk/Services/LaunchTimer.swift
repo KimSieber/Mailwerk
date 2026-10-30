@@ -1,6 +1,9 @@
 //
 //  LaunchTimer.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 25.10.2026
+//  Geändert: 25.10.2026
 //
 //  Zweck: Misst die Zeit vom Start der App bis zur ersten angezeigten
 //  Mailliste („Start bis Liste“, v0.2.3d, Prüfbericht P-18). Der Wert

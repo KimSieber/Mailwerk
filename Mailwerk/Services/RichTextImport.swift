@@ -1,6 +1,9 @@
 //
 //  RichTextImport.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 12.10.2026
+//  Geändert: 12.10.2026
 //
 //  Zweck: Holt HTML zurück in den formatierten Editor – Gegenstück zu
 //  RichTextHTML. Gebraucht für Signaturen (gespeichertes HTML wieder

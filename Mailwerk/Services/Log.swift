@@ -1,6 +1,9 @@
 //
 //  Log.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 10.10.2026
+//  Geändert: 25.10.2026
 //
 //  Zweck: Protokoll der App über `os.Logger` – eine Kategorie je Bereich,
 //  filterbar in der Xcode-Konsole und in der App „Konsole“ (Subsystem =

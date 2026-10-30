@@ -1,13 +1,16 @@
 //
 //  WatchWire.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 20.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Übertragungsform zwischen iPhone und Apple Watch – Kodieren
 //  (binäre Property-List), Packen (LZFSE) und Stückeln.
 //
 //  Stückeln: Eine Nachricht über WatchConnectivity darf nur rund 64 KB
 //  groß sein. Jede Lieferung wird deshalb gepackt und in Stücke von
-//  höchstens `maxChunkSize` Byte geteilt. Das erste Stück kommt als
+//  höchstens `maxChunkSizeBytes` Byte geteilt. Das erste Stück kommt als
 //  Antwort bzw. Nachricht, die übrigen holt die Watch einzeln
 //  (`WatchRequest.chunk`). Eine Lieferung kann damit beliebig groß sein.
 //
@@ -44,7 +47,7 @@ nonisolated enum WatchWire {
 
     /// Größte Datenmenge je Stück. Mit Rand unter der Grenze von
     /// WatchConnectivity (rund 64 KB je Nachricht).
-    static let maxChunkSize = 48_000
+    static let maxChunkSizeBytes = 48_000
 
     /// Kodiert einen Wert als binäre Property-List.
     ///
@@ -100,7 +103,7 @@ nonisolated enum WatchWire {
     ///   - token: Kennung der Lieferung.
     ///   - maxSize: Größte Datenmenge je Stück.
     /// - Returns: Stücke in ihrer Reihenfolge.
-    static func split(_ blob: Data, token: UUID, maxSize: Int = maxChunkSize) -> [WatchChunk] {
+    static func split(_ blob: Data, token: UUID, maxSize: Int = maxChunkSizeBytes) -> [WatchChunk] {
         let size = max(1, maxSize)
         let count = max(1, (blob.count + size - 1) / size)
         return (0..<count).map { index in

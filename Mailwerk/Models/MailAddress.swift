@@ -1,6 +1,9 @@
 //
 //  MailAddress.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 23.09.2026
+//  Geändert: 29.10.2026
 //
 //  Zweck: Eine einzelne E-Mail-Adresse mit optionalem Namen – das
 //  Empfänger-Modell für Composer, ReplyBuilder und Versand.

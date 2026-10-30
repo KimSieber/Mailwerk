@@ -1,6 +1,9 @@
 //
 //  FolderSidebarView.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 28.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Inhalt der Ordnerleiste. Oben die Sammelansichten über alle
 //  Postfächer – „Alle Eingänge“, „Ungelesen“ (mit Zahl), „Mit
@@ -101,13 +104,13 @@ struct FolderSidebarView: View {
                 collectionRow(.spam)
 
                 Divider()
-                    .padding(.vertical, 8)
+                    .padding(.vertical, AppSpacing.regular)
 
                 if accounts.isEmpty {
                     Text("Kein Postfach eingerichtet.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-                        .padding(.horizontal, 10)
+                        .padding(.horizontal, AppSpacing.medium)
                 } else {
                     ForEach(accounts) { account in
                         AccountFolderSection(
@@ -140,8 +143,8 @@ struct FolderSidebarView: View {
                     }
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.horizontal, AppSpacing.medium)
+            .padding(.vertical, AppSpacing.regular)
         }
         .refreshable {
             await catalog.reload(accounts, paused: pausedAccountIDs)
@@ -327,7 +330,7 @@ private struct AccountFolderSection: View {
             header
             if isExpanded {
                 content
-                    .padding(.bottom, 6)
+                    .padding(.bottom, AppSpacing.small)
             }
         }
     }
@@ -344,9 +347,9 @@ private struct AccountFolderSection: View {
     /// eigene Beschreibung würde sie sonst verdecken.
     private var header: some View {
         Button {
-            withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
+            withAnimation(AppAnimation.quick) { isExpanded.toggle() }
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: AppSpacing.medium) {
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
@@ -371,8 +374,8 @@ private struct AccountFolderSection: View {
                         .controlSize(.small)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 10)
+            .padding(.horizontal, AppSpacing.medium)
+            .padding(.vertical, AppSpacing.medium)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -418,10 +421,10 @@ private struct AccountFolderSection: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .padding(.leading, FolderRow.baseIndent)
-                .padding(.vertical, 6)
+                .padding(.vertical, AppSpacing.small)
 
         case .failed(let message):
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: AppSpacing.small) {
                 Text("Ordner konnten nicht geladen werden.")
                     .font(.footnote)
                 Text(message)
@@ -431,7 +434,7 @@ private struct AccountFolderSection: View {
                     .font(.footnote)
             }
             .padding(.leading, FolderRow.baseIndent)
-            .padding(.vertical, 6)
+            .padding(.vertical, AppSpacing.small)
 
         case .loaded(let tree):
             if tree.isEmpty {
@@ -439,7 +442,7 @@ private struct AccountFolderSection: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.leading, FolderRow.baseIndent)
-                    .padding(.vertical, 6)
+                    .padding(.vertical, AppSpacing.small)
             } else {
                 let accountColor = account.colorHex.map { Color(hex: $0) } ?? Color.secondary
                 ForEach(tree.indented()) { entry in
@@ -503,7 +506,7 @@ private struct FolderRow: View {
     /// Aufbau: Markierung, Ordnername, Kontextmenü.
     var body: some View {
         Button(action: onSelect) {
-            HStack(spacing: 10) {
+            HStack(spacing: AppSpacing.medium) {
                 if isSelected {
                     Circle()
                         .fill(accountColor)
@@ -516,14 +519,14 @@ private struct FolderRow: View {
             }
             .font(.subheadline)
             .padding(.leading, Self.baseIndent - 16 + CGFloat(entry.depth) * Self.levelIndent)
-            .padding(.trailing, 10)
+            .padding(.trailing, AppSpacing.medium)
             .padding(.vertical, 7)
             .background {
                 if isDropTargeted {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    RoundedRectangle(cornerRadius: AppCornerRadius.small, style: .continuous)
                         .fill(Color.accentColor.opacity(0.25))
                 } else if isSelected {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    RoundedRectangle(cornerRadius: AppCornerRadius.small, style: .continuous)
                         .fill(Color.accentColor.opacity(0.10))
                 }
             }
@@ -630,7 +633,7 @@ struct SidebarRow: View {
     /// Aufbau: Symbol, Titel, Zahl, Hinterlegung bei Auswahl.
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 12) {
+            HStack(spacing: AppSpacing.large) {
                 Image(systemName: systemImage)
                     .foregroundStyle(Color.accentColor)
                     .frame(width: 22)
@@ -642,15 +645,15 @@ struct SidebarRow: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
+                        .padding(.vertical, AppSpacing.tiny)
                         .background(Color.accentColor, in: Capsule())
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 10)
+            .padding(.horizontal, AppSpacing.medium)
+            .padding(.vertical, AppSpacing.medium)
             .background {
                 if isSelected {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: AppCornerRadius.regular, style: .continuous)
                         .fill(Color.accentColor.opacity(0.12))
                 }
             }

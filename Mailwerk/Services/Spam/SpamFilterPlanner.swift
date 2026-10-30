@@ -1,6 +1,9 @@
 //
 //  SpamFilterPlanner.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Fasst die Einzelentscheidungen eines Filterlaufs zu einem
 //  Arbeitsplan zusammen: welche Nachrichten bekommen welches Keyword,

@@ -1,6 +1,9 @@
 //
 //  KeychainService.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.09.2026
+//  Geändert: 17.10.2026
 //
 //  Zweck: Schlanker Wrapper um die Keychain Services API zur sicheren
 //  Ablage der Zugangsdaten eines Postfachs, referenziert über die

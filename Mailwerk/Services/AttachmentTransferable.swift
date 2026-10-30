@@ -1,6 +1,9 @@
 //
 //  AttachmentTransferable.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 27.10.2026
+//  Geändert: 27.10.2026
 //
 //  Zweck: Stellt einen Anhang als Datei zum Herausziehen (Drag & Drop)
 //  bereit – aus der Mailansicht in den Finder, auf den Schreibtisch oder

@@ -1,6 +1,9 @@
 //
 //  AccountFetchState.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.10.2026
+//  Geändert: 24.10.2026
 //
 //  Zweck: Merkt sich, welche Postfächer beim letzten Abruf den Server
 //  nicht erreicht haben (Verbindungsfehler, z. B. Zeitüberschreitung),

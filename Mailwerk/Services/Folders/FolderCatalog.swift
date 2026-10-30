@@ -1,6 +1,9 @@
 //
 //  FolderCatalog.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 28.09.2026
+//  Geändert: 25.10.2026
 //
 //  Zweck: Hält die Ordnerbäume aller Postfächer für die Seitenleiste.
 //

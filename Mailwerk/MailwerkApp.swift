@@ -1,6 +1,9 @@
 //
 //  MailwerkApp.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.09.2026
+//  Geändert: 29.10.2026
 //
 //  Zweck: Einstiegspunkt der App. Richtet den gemeinsamen Speicher für
 //  Filterlisten und Signaturen ein (bevorzugt mit iCloud-Abgleich, sonst

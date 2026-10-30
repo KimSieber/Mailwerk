@@ -1,6 +1,9 @@
 //
 //  SenderIconFetcher.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 11.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Lädt das Logo (Favicon) einer Domain aus dem Netz und bereitet
 //  es als kleines PNG auf.
@@ -40,6 +43,15 @@ import UniformTypeIdentifiers
 
 /// Laden und Aufbereiten von Absenderlogos.
 nonisolated enum SenderIconFetcher {
+    /// Zeitbudget je Anfrage (Sekunden) – Logos sind Beiwerk, die Liste
+    /// soll nicht auf langsame Server warten.
+    static let requestTimeoutSeconds: TimeInterval = 10
+    /// Zeitbudget für den ganzen Abruf einer Datei (Sekunden).
+    static let resourceTimeoutSeconds: TimeInterval = 20
+    /// Angenommene Kantenlänge eines apple-touch-icon ohne `sizes`-Angabe.
+    static let touchIconAssumedSize = 180
+    /// Angenommene Kantenlänge eines `<link rel="icon">` ohne `sizes`-Angabe.
+    static let linkIconAssumedSize = 32
 
     /// Ergebnis eines Abrufs.
     enum Outcome: Equatable, Sendable {
@@ -77,8 +89,8 @@ nonisolated enum SenderIconFetcher {
         configuration.httpCookieAcceptPolicy = .never
         configuration.urlCache = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.timeoutIntervalForRequest = 10
-        configuration.timeoutIntervalForResource = 20
+        configuration.timeoutIntervalForRequest = requestTimeoutSeconds
+        configuration.timeoutIntervalForResource = resourceTimeoutSeconds
         return URLSession(configuration: configuration, delegate: SenderIconRedirectGuard(), delegateQueue: nil)
     }
 
@@ -233,7 +245,7 @@ nonisolated enum SenderIconFetcher {
             else { continue }
 
             let declared = largestSize(in: attributes["sizes"])
-            candidates.append((url, declared ?? (isTouch ? 180 : 32)))
+            candidates.append((url, declared ?? (isTouch ? touchIconAssumedSize : linkIconAssumedSize)))
         }
 
         var seen = Set<URL>()

@@ -1,6 +1,9 @@
 //
 //  SpamFolderResolver.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Findet den Spam-Ordner eines Postfachs. Jedes Postfach hat seinen
 //  eigenen – verschoben wird immer innerhalb desselben Kontos.

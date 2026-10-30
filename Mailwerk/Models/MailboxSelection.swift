@@ -1,6 +1,9 @@
 //
 //  MailboxSelection.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 28.09.2026
+//  Geändert: 16.10.2026
 //
 //  Zweck: Welche Ansicht die Mail-Liste zeigt – alle Posteingänge, die
 //  ungelesenen Mails der Posteingänge, die gekennzeichneten Mails, die

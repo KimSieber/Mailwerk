@@ -1,6 +1,9 @@
 //
 //  FetchFailedBadge.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Kennzeichen „Postfach nicht erreichbar“ vor dem Namen eines
 //  Postfachs – ein gelbes Warndreieck mit schwarzem Ausrufezeichen.
@@ -39,7 +42,7 @@ struct FetchFailedBadge: View {
 // MARK: - Vorschau
 
 #Preview {
-    HStack(spacing: 6) {
+    HStack(spacing: AppSpacing.small) {
         FetchFailedBadge(font: .headline)
         Text("GMX").font(.headline)
     }

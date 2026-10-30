@@ -1,6 +1,9 @@
 //
 //  MailLink.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 30.09.2026
+//  Geändert: 11.10.2026
 //
 //  Zweck: Entscheidet, was ein getippter Link in einer HTML-Mail auslöst,
 //  und zerlegt mailto:-Links (RFC 6068) für eine neue Mail in Mailwerk.

@@ -1,6 +1,9 @@
 //
 //  FilterListExporter.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.09.2026
+//  Geändert: 18.10.2026
 //
 //  Zweck: Gibt eine Liste als Text aus – eine Angabe je Zeile, Domains in
 //  der Schreibweise `*firma.de` (Domain samt Subdomains). So verstehen es

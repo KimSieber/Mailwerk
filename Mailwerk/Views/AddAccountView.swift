@@ -1,6 +1,9 @@
 //
 //  AddAccountView.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Formular zum Einrichten eines Postfachs. Zuerst wählt der Nutzer
 //  die Art:
@@ -126,7 +129,7 @@ struct AddAccountView: View {
         } header: {
             Text("Konto")
         } footer: {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: AppSpacing.xSmall) {
                 Text("Die Bezeichnung dient nur zur Anzeige in Mailwerk, der Absendername erscheint beim Empfänger vor der Adresse. Den Benutzernamen nur eintragen, wenn du dich bei \(provider.name) mit einer anderen Adresse anmeldest als mit der E-Mail-Adresse.")
                 if !viewModel.emailAddress.isEmpty && !viewModel.hasValidEmailAddress {
                     Text("Die E-Mail-Adresse ist ungültig.")
@@ -153,7 +156,7 @@ struct AddAccountView: View {
                 Task { await signIn() }
             } label: {
                 if let progress = viewModel.signInProgress {
-                    HStack(spacing: 8) {
+                    HStack(spacing: AppSpacing.regular) {
                         ProgressView()
                         Text(progress)
                     }
@@ -199,7 +202,7 @@ struct AddAccountView: View {
         } header: {
             Text("Konto")
         } footer: {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: AppSpacing.xSmall) {
                 Text("Die Bezeichnung dient nur zur Anzeige in Mailwerk, der Absendername erscheint beim Empfänger vor der Adresse. Den Benutzernamen nur eintragen, wenn sich der Anbieter nicht mit der E-Mail-Adresse anmeldet.")
                 if !viewModel.emailAddress.isEmpty && !viewModel.hasValidEmailAddress {
                     Text("Die E-Mail-Adresse ist ungültig.")

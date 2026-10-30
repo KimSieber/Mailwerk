@@ -1,6 +1,9 @@
 //
 //  DraftComposeLoader.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 14.10.2026
+//  Geändert: 27.10.2026
 //
 //  Zweck: Öffnet einen gesicherten Entwurf im Verfassen-Fenster. Lädt den
 //  Entwurf samt Anhängen aus dem Cache, holt fehlende eingebettete Bilder

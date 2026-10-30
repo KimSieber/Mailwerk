@@ -1,6 +1,9 @@
 //
 //  WatchSnapshotBuilder.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 20.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Stellt auf dem iPhone zusammen, was die Apple Watch bekommt – den
 //  Stand der Mails (Auswahl nach WatchMailSelection, Kopf fertig

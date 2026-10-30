@@ -87,7 +87,7 @@ struct WatchWireTests {
 
     /// Ein volles Stück bleibt unter der Grenze von WatchConnectivity.
     @Test func encodedChunkStaysBelowMessageLimit() throws {
-        let blob = Data(repeating: 7, count: WatchWire.maxChunkSize * 2)
+        let blob = Data(repeating: 7, count: WatchWire.maxChunkSizeBytes * 2)
         let chunk = WatchWire.split(blob, token: UUID())[0]
         #expect(try WatchWire.encode(chunk).count < 65_000)
     }

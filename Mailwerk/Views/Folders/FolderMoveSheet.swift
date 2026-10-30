@@ -1,6 +1,9 @@
 //
 //  FolderMoveSheet.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 30.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Dialog „In Ordner verschieben“ – der Ordnerbaum des Postfachs
 //  der Mail mit derselben Anzeige wie die Seitenleiste (`FolderLabel`,
@@ -112,7 +115,7 @@ struct FolderMoveSheet: View {
         } label: {
             HStack(spacing: 0) {
                 FolderLabel(node: entry.node, isEnabled: isTarget)
-                Spacer(minLength: 8)
+                Spacer(minLength: AppSpacing.regular)
                 if entry.node.id == currentFolder {
                     Text("aktuell")
                         .font(.caption)

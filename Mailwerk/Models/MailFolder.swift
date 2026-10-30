@@ -1,6 +1,9 @@
 //
 //  MailFolder.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 28.09.2026
+//  Geändert: 10.10.2026
 //
 //  Zweck: Ein IMAP-Ordner, wie ihn der Server beim LIST meldet – flach,
 //  mit vollständigem Pfad – sowie die Ordnerliste eines Postfachs. Den

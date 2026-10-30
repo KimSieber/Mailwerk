@@ -1,6 +1,9 @@
 //
 //  MacListHeaderBar.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 27.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Kopf der Mailliste auf dem Mac – ein gewöhnlicher View statt
 //  Einträgen der System-Symbolleiste. Dadurch fasst macOS keine Knöpfe
@@ -105,21 +108,21 @@ struct MacListHeaderBar<SortMenu: View, SettingsMenu: View>: View {
 
             if search.isPresented {
                 MacSearchField(search: search, focusTrigger: searchFocusTrigger)
-                    .padding(.bottom, 10)
+                    .padding(.bottom, AppSpacing.medium)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, AppSpacing.xLarge)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(AppTheme.background)
-        .animation(.snappy(duration: 0.25), value: search.isPresented)
+        .animation(AppAnimation.standard, value: search.isPresented)
     }
 
     // MARK: - Zeile 1
 
     /// Knöpfe 1–5 links, Einstellungen rechts außen.
     private var buttonRow: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: AppSpacing.medium) {
             HeaderCircleButton(
                 title: "Ordner",
                 systemImage: "sidebar.left",
@@ -162,7 +165,7 @@ struct MacListHeaderBar<SortMenu: View, SettingsMenu: View>: View {
                 isEnabled: canCompose,
                 action: onCompose
             )
-            Spacer(minLength: 8)
+            Spacer(minLength: AppSpacing.regular)
             Menu {
                 settingsMenu()
             } label: {
@@ -200,7 +203,7 @@ struct MacListHeaderBar<SortMenu: View, SettingsMenu: View>: View {
 
     /// Titel der Ansicht und darunter die Standzeile.
     private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: AppSpacing.tiny) {
             HStack(spacing: 7) {
                 if let accountColor {
                     Circle()

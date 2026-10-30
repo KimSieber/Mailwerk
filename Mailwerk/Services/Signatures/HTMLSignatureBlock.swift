@@ -1,6 +1,9 @@
 //
 //  HTMLSignatureBlock.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 13.10.2026
+//  Geändert: 14.10.2026
 //
 //  Zweck: Eine HTML-Signatur beim Verfassen – der eigene Block unter dem
 //  Mailtext, in dem sich Text ändern und löschen lässt, ohne die

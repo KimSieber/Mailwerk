@@ -1,6 +1,9 @@
 //
 //  DecodedImage.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 11.10.2026
+//  Geändert: 24.10.2026
 //
 //  Zweck: Erzeugt aus Bilddaten (JPEG, PNG …) ein SwiftUI-Bild – auf iOS
 //  über UIKit, auf dem Mac über AppKit. Gemeinsam genutzt von

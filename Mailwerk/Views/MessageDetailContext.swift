@@ -1,6 +1,9 @@
 //
 //  MessageDetailContext.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 30.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Was jede Mailansicht aus der Liste mitbekommt – Postfächer,
 //  Spamfilter, Score-Obergrenze, Rückmeldung nach Änderungen, Suche nach

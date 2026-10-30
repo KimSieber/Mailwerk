@@ -1,6 +1,9 @@
 //
 //  SelectionActionBar.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 12.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Schwebende Befehlsleiste am unteren Rand im Auswahlmodus der
 //  Liste – vier Symbole ohne Text in einer Glas-Kapsel: Kennzeichnung,
@@ -42,7 +45,7 @@ struct SelectionActionBar: View {
 
     /// Vier Symbole in einer schwebenden Glas-Kapsel.
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: AppSpacing.xSmall) {
             barButton(flagEntry, isEnabled: hasSelection, action: onFlag)
             barButton(readEntry, isEnabled: hasSelection, action: onRead)
             barButton(
@@ -57,10 +60,10 @@ struct SelectionActionBar: View {
                 action: onDelete
             )
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, AppSpacing.regular)
+        .padding(.vertical, AppSpacing.xSmall)
         .glassEffect(.regular.interactive(), in: Capsule())
-        .padding(.bottom, 8)
+        .padding(.bottom, AppSpacing.regular)
     }
 
     /// Löschen in der Leiste: Papierkorb-Symbol, Bezeichnung wie im Menü.

@@ -1,6 +1,9 @@
 //
 //  FilterListRepository.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Zugriff auf die Black- und Whitelist. Einzige Stelle, die den
 //  Speicherort kennt – heute iCloud (CloudKit), später vielleicht eine

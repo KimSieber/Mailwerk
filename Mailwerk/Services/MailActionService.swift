@@ -1,6 +1,9 @@
 //
 //  MailActionService.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 20.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: IMAP-Aktionen an Mails und Ordnern – Gelesen und Kennzeichnung
 //  setzen, Mails löschen und verschieben, Ordner anlegen und löschen,

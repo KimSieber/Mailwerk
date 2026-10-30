@@ -1,6 +1,9 @@
 //
 //  SyncWindow.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 30.09.2026
+//  Geändert: 10.10.2026
 //
 //  Zweck: Zeitfenster des Caches je Ordner. Standard sind die letzten
 //  30 Tage; „Ältere Nachrichten laden“ schiebt den Fensterbeginn

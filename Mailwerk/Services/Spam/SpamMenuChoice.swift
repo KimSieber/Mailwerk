@@ -1,6 +1,9 @@
 //
 //  SpamMenuChoice.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 20.10.2026
+//  Geändert: 24.10.2026
 //
 //  Zweck: Die Spam-Aktionen einer Mail ohne Oberfläche – welche Abschnitte
 //  das Untermenü „Spam / Vertrauen“ zeigt (Adresse, Domain und – nur bei

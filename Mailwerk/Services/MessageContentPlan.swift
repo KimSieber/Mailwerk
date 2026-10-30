@@ -1,6 +1,9 @@
 //
 //  MessageContentPlan.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 08.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Legt anhand der Struktur einer Mail (BODYSTRUCTURE) fest, welche
 //  Teile vom Server geladen werden, und setzt Text und HTML aus den

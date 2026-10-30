@@ -1,6 +1,9 @@
 //
 //  RawMessageFormatter.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 12.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Bereitet die Rohdaten einer Mail (so, wie sie übertragen wurde)
 //  als lesbaren Text für die Ansicht „Originalquelle“ auf. Gedacht für die

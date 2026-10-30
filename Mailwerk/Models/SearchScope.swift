@@ -1,6 +1,9 @@
 //
 //  SearchScope.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 15.10.2026
+//  Geändert: 24.10.2026
 //
 //  Zweck: Bereich einer Suche – immer die gerade gezeigte Ansicht:
 //  - „Alle Eingänge“: die Posteingänge aller Postfächer mit

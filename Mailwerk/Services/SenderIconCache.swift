@@ -1,6 +1,9 @@
 //
 //  SenderIconCache.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 11.10.2026
+//  Geändert: 24.10.2026
 //
 //  Zweck: Liefert der Mailliste das Logo zur Adresse einer Zeile und sorgt
 //  dafür, dass fehlende oder abgelaufene Logos im Hintergrund geladen

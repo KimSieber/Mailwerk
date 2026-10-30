@@ -1,6 +1,9 @@
 //
 //  PlatformSheetSize.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 27.09.2026
+//  Geändert: 27.10.2026
 //
 //  Zweck: Mindestgröße für Sheets auf macOS.
 //

@@ -1,6 +1,9 @@
 //
 //  AppInfo.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 29.10.2026
+//  Geändert: 29.10.2026
 //
 //  Zweck: Feste Angaben zur App für „Über Mailwerk“ – Name, Version mit
 //  Build-Nummer, Urheberzeile, Kontaktadresse und Webseite.

@@ -1,6 +1,9 @@
 //
 //  MailConnectionTester.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Prüft IMAP- und SMTP-Zugang, ohne dauerhaft verbunden zu
 //  bleiben – für „Verbindung testen“ bei der Postfach-Einrichtung und nach

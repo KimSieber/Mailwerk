@@ -1,6 +1,9 @@
 //
 //  SideDrawer.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 28.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Leiste, die von links über den Inhalt fährt. Der Inhalt dahinter
 //  wird abgedunkelt; ein Tipp darauf oder die Escape-Taste schließt die
@@ -77,7 +80,7 @@ private struct SideDrawerModifier<Drawer: View>: ViewModifier {
                                 .transition(reduceMotion ? .opacity : .move(edge: .leading))
                         }
                     }
-                    .animation(.snappy(duration: 0.28), value: isPresented)
+                    .animation(AppAnimation.drawer, value: isPresented)
                 }
             }
     }

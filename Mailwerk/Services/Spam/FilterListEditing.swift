@@ -1,6 +1,9 @@
 //
 //  FilterListEditing.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 17.10.2026
+//  Geändert: 18.10.2026
 //
 //  Zweck: Bearbeiten eines Eintrags der White- oder Blacklist, z. B. eine
 //  Adresse mit Subdomain auf die reine Domain kürzen.

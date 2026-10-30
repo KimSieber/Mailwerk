@@ -1,6 +1,9 @@
 //
 //  InlineImages.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 12.10.2026
+//  Geändert: 12.10.2026
 //
 //  Zweck: Regeln für eingebettete Bilder einer Mail (Inline-Teile, im HTML
 //  per `cid:` angesprochen, z. B. Logos in Signaturen oder Bilder in

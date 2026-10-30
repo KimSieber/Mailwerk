@@ -1,6 +1,9 @@
 //
 //  SpamSettingsView.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.09.2026
+//  Geändert: 27.10.2026
 //
 //  Zweck: Einstellungen des Spamfilters: Schalter, Score-Obergrenze und
 //  Zugang zur Pflege der beiden Listen.

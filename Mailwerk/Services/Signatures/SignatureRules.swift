@@ -1,6 +1,9 @@
 //
 //  SignatureRules.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 13.10.2026
+//  Geändert: 14.10.2026
 //
 //  Zweck: Regeln rund um Signaturen, die ohne Oberfläche und Speicher
 //  auskommen:

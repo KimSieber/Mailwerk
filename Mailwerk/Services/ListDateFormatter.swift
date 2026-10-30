@@ -1,6 +1,9 @@
 //
 //  ListDateFormatter.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 11.10.2026
+//  Geändert: 24.10.2026
 //
 //  Zweck: Datum einer Mail in der Mailliste – heute nur die Uhrzeit
 //  („17:06“), sonst Wochentag, volles Datum mit vierstelliger Jahreszahl

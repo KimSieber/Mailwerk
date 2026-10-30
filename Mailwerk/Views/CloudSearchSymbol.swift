@@ -1,6 +1,9 @@
 //
 //  CloudSearchSymbol.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 27.10.2026
+//  Geändert: 27.10.2026
 //
 //  Zweck: Zusammengesetztes Symbol „Wolke mit Lupe“ für den Knopf „Auf
 //  dem Server weitersuchen“ – auf allen Plattformen.

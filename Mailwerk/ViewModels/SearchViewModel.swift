@@ -1,6 +1,9 @@
 //
 //  SearchViewModel.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 15.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Zustand und Abläufe der Suche in der Nachrichtenliste.
 //  - Lokale Suche im Cache: Teilzeichenfolge ab drei Zeichen (Leerzeichen

@@ -1,6 +1,9 @@
 //
 //  OAuthAuthorization.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 17.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Anfragen der Anmeldung per OAuth 2 („Authorization Code“ mit
 //  PKCE) aufbauen und die Rückkehr aus dem Anmeldefenster prüfen.
@@ -29,6 +32,10 @@ import FoundationNetworking
 /// Eine laufende Anmeldung: Adresse des Anmeldefensters samt der Werte,
 /// die bis zur Rückkehr in der App bleiben.
 nonisolated struct OAuthAuthorization: Equatable, Sendable {
+    /// Länge des Zufallswerts `state` in Byte (128 Bit).
+    static let stateByteCount = 16
+    /// Zeitbudget einer Token-Anfrage beim Anbieter in Sekunden.
+    static let tokenRequestTimeoutSeconds: TimeInterval = 30
     /// Anbieter.
     let provider: OAuthProvider
     /// Prüfwert und Abbild (PKCE).
@@ -48,7 +55,7 @@ nonisolated struct OAuthAuthorization: Equatable, Sendable {
     /// - Throws: `OAuthError.randomUnavailable`.
     static func start(provider: OAuthProvider, loginHint: String?) throws -> OAuthAuthorization {
         let pkce = try OAuthPKCE.make()
-        let state = try OAuthPKCE.randomString(byteCount: 16)
+        let state = try OAuthPKCE.randomString(byteCount: Self.stateByteCount)
         let url = authorizationURL(provider: provider, pkce: pkce, state: state, loginHint: loginHint)
         return OAuthAuthorization(provider: provider, pkce: pkce, state: state, url: url)
     }
@@ -170,7 +177,7 @@ nonisolated struct OAuthAuthorization: Equatable, Sendable {
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 30
+        request.timeoutInterval = Self.tokenRequestTimeoutSeconds
         request.httpBody = Data(formEncoded(parameters).utf8)
         return request
     }

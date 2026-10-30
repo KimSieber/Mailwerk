@@ -1,6 +1,9 @@
 //
 //  MacDetailHeaderBar.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 27.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Kopfleiste über der Mailansicht auf dem Mac – ein gewöhnlicher
 //  View statt Einträgen der System-Symbolleiste, damit beim Mailwechsel
@@ -69,7 +72,7 @@ struct MacDetailHeaderBar<ActionMenu: View>: View {
     /// und wird bei Bedarf gekürzt – die Knöpfe überdeckt er nie.
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
+            HStack(spacing: AppSpacing.regular) {
                 leadingButtons
                     .frame(width: Self.trailingWidth, alignment: .leading)
                 Spacer(minLength: 0)
@@ -79,14 +82,14 @@ struct MacDetailHeaderBar<ActionMenu: View>: View {
                 trailingButtons
                     .frame(width: Self.trailingWidth, alignment: .trailing)
             }
-            HStack(spacing: 8) {
+            HStack(spacing: AppSpacing.regular) {
                 leadingButtons
                 accountLabel
                     .frame(maxWidth: .infinity)
                 trailingButtons
             }
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, AppSpacing.large)
         .frame(height: Self.height)
         .frame(maxWidth: .infinity)
         .background(AppTheme.background)
@@ -109,7 +112,7 @@ struct MacDetailHeaderBar<ActionMenu: View>: View {
 
     /// Antworten, Allen antworten, Weiterleiten und das Aktionsmenü.
     private var trailingButtons: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: AppSpacing.medium) {
             HeaderCircleButton(
                 title: "Antworten",
                 systemImage: "arrowshape.turn.up.left",
@@ -147,7 +150,7 @@ struct MacDetailHeaderBar<ActionMenu: View>: View {
 
     /// Farbpunkt und Name des Postfachs, mittig.
     private var accountLabel: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: AppSpacing.small) {
             if let accountColor {
                 Circle()
                     .fill(accountColor)

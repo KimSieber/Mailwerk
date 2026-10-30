@@ -1,6 +1,9 @@
 //
 //  AttachmentManager.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 19.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Stellt Anhänge für Vorschau, Teilen und Weiterleiten bereit.
 //

@@ -1,6 +1,9 @@
 //
 //  ContentView.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.09.2026
+//  Geändert: 27.10.2026
 //
 //  Zweck: Wurzelansicht der App. Reicht die beim Start angelegten,
 //  langlebigen Objekte an die Hauptansicht weiter und öffnet für

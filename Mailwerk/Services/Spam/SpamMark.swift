@@ -1,6 +1,9 @@
 //
 //  SpamMark.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Kurzer Text zur Spam-Einschätzung einer Mail, in zwei
 //  Darstellungen:

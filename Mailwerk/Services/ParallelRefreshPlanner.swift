@@ -1,6 +1,9 @@
 //
 //  ParallelRefreshPlanner.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 25.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Verteilt den Abruf der Postfächer auf begrenzt parallele
 //  Abläufe (Paket v0.2.3e, Prüfbericht P-21). Bisher wurden die Postfächer

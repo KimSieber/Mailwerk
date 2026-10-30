@@ -1,6 +1,9 @@
 //
 //  ComposeView.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 23.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Verfassen-Fenster für neue Mails, Antworten und Weiterleitungen.
 //  Aufbau von oben nach unten: Absender, An, Cc (immer sichtbar), Bcc auf
@@ -281,18 +284,18 @@ struct ComposeView: View {
 
     /// Absender, Empfänger, Betreff und Anhänge.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: AppSpacing.regular) {
             senderRow
             Divider()
             RecipientField(label: "An", addresses: $model.to)
             Divider()
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .top, spacing: AppSpacing.regular) {
                 RecipientField(label: "Cc", addresses: $model.cc)
                 if !model.showBcc {
                     Button("Bcc") { model.showBcc = true }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
-                        .padding(.top, 6)
+                        .padding(.top, AppSpacing.small)
                 }
             }
             if model.showBcc {
@@ -300,7 +303,7 @@ struct ComposeView: View {
                 RecipientField(label: "Bcc", addresses: $model.bcc)
             }
             Divider()
-            HStack(spacing: 8) {
+            HStack(spacing: AppSpacing.regular) {
                 Text("Betreff")
                     .foregroundStyle(.secondary)
                 TextField("", text: $model.subject)
@@ -310,13 +313,13 @@ struct ComposeView: View {
                 attachmentList
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, AppSpacing.large)
+        .padding(.vertical, AppSpacing.regular)
     }
 
     /// Absenderzeile mit Postfachauswahl.
     private var senderRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: AppSpacing.regular) {
             Text("Von")
                 .foregroundStyle(.secondary)
                 .frame(width: 34, alignment: .leading)
@@ -333,7 +336,7 @@ struct ComposeView: View {
                     }
                 }
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: AppSpacing.small) {
                     if let hex = model.selectedAccount?.colorHex {
                         Circle().fill(Color(hex: hex)).frame(width: 10, height: 10)
                     }
@@ -351,9 +354,9 @@ struct ComposeView: View {
 
     /// Liste der eigenen Anhänge samt Größe und Entfernen-Knopf.
     private var attachmentList: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: AppSpacing.xSmall) {
             ForEach(Array(model.attachments.enumerated()), id: \.offset) { _, attachment in
-                HStack(spacing: 8) {
+                HStack(spacing: AppSpacing.regular) {
                     Image(systemName: "paperclip")
                         .foregroundStyle(.secondary)
                     Text(attachment.filename)
@@ -411,7 +414,7 @@ struct ComposeView: View {
                     onChange: { model.updateHTMLSignature($0) },
                     onRemove: { model.removeHTMLSignature() }
                 )
-                .padding(.bottom, 8)
+                .padding(.bottom, AppSpacing.regular)
             }
 
             if let quoted = model.quotedHTML {
@@ -426,8 +429,8 @@ struct ComposeView: View {
                     )
                     .font(.subheadline)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .padding(.horizontal, AppSpacing.large)
+                .padding(.vertical, AppSpacing.small)
             }
         }
     }

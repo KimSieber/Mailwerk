@@ -1,6 +1,9 @@
 //
 //  OpenSourceLicenses.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 29.10.2026
+//  Geändert: 29.10.2026
 //
 //  Zweck: Verzeichnis der Open-Source-Komponenten, die in Mailwerk
 //  stecken, samt ihrer Lizenztexte – für „Über Mailwerk“ →

@@ -1,6 +1,9 @@
 //
 //  MessageDetailHeader.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 12.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Kopfbereich der Mailansicht – Betreff mit Kennzeichen, Absender,
 //  Empfänger, Kopie, „Antwort an“ und Datum (rechts daneben die
@@ -71,7 +74,7 @@ struct MessageDetailHeader: View {
 
     /// Betreff, Kennzeichnung, Personen und Datum.
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: AppSpacing.large) {
             HStack {
                 Text(translatedSubject ?? message.subject)
                     .font(.title2)
@@ -83,12 +86,12 @@ struct MessageDetailHeader: View {
                 }
             }
             // Wie in Apple Mail: der Kreis links neben Personen und Datum.
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: AppSpacing.medium) {
                 if let avatar {
                     SenderAvatarView(avatar: avatar)
                 }
-                VStack(alignment: .leading, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: AppSpacing.regular) {
+                    VStack(alignment: .leading, spacing: AppSpacing.xSmall) {
                         peopleRow("Von", HeaderPerson.list([message.from]))
                         peopleRow("An", HeaderPerson.list(toAddresses))
                         peopleRow("Kopie", HeaderPerson.list(message.headers.ccList))
@@ -108,7 +111,7 @@ struct MessageDetailHeader: View {
                 if let date = message.date {
                     Text(date, format: .dateTime.weekday(.abbreviated).day(.twoDigits).month(.twoDigits).year().hour(.defaultDigits(amPM: .omitted)).minute(.twoDigits))
                 }
-                Spacer(minLength: 8)
+                Spacer(minLength: AppSpacing.regular)
                 if let spamMark {
                     Text(spamMark)
                         .lineLimit(1)
@@ -135,10 +138,10 @@ struct MessageDetailHeader: View {
     @ViewBuilder
     private func peopleRow(_ label: String, _ people: [HeaderPerson]) -> some View {
         if !people.isEmpty {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: AppSpacing.small) {
                 Text("\(label):")
                     .foregroundStyle(.secondary)
-                FlowLayout(spacing: 8, lineSpacing: 4) {
+                FlowLayout(spacing: AppSpacing.regular, lineSpacing: 4) {
                     ForEach(people) { person in
                         HeaderPersonMenu(
                             person: person,
@@ -197,7 +200,7 @@ struct HeaderPersonMenu: View {
                 Text(verbatim: person.address)
             }
         } label: {
-            HStack(spacing: 2) {
+            HStack(spacing: AppSpacing.tiny) {
                 Text(verbatim: person.title)
                     .foregroundStyle(Color.accentColor)
                 Image(systemName: "chevron.right")
@@ -232,12 +235,12 @@ struct RemoteContentNotice: View {
 
     /// Symbol, Hinweis und Knopf in einer Zeile.
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: AppSpacing.regular) {
             Image(systemName: "eye.slash")
                 .foregroundStyle(.secondary)
             Text("Externe Inhalte blockiert")
                 .foregroundStyle(.secondary)
-            Spacer(minLength: 8)
+            Spacer(minLength: AppSpacing.regular)
             Button("Laden") {
                 onLoad()
             }
@@ -277,12 +280,12 @@ struct TranslationNotice: View {
 
     /// Symbol, Hinweis und ein Knopf je Zustand, in einer Zeile.
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: AppSpacing.regular) {
             Image(systemName: "character.bubble")
                 .foregroundStyle(.secondary)
             switch state {
             case .offer(let languageName):
-                Spacer(minLength: 8)
+                Spacer(minLength: AppSpacing.regular)
                 Button("\(languageName) übersetzen") {
                     onTranslate()
                 }
@@ -291,13 +294,13 @@ struct TranslationNotice: View {
             case .translating:
                 Text("Wird übersetzt …")
                     .foregroundStyle(.secondary)
-                Spacer(minLength: 8)
+                Spacer(minLength: AppSpacing.regular)
                 ProgressView()
                     .controlSize(.small)
             case .translated:
                 Text("Übersetzt")
                     .foregroundStyle(.secondary)
-                Spacer(minLength: 8)
+                Spacer(minLength: AppSpacing.regular)
                 Button("Original anzeigen") {
                     onShowOriginal()
                 }
@@ -306,7 +309,7 @@ struct TranslationNotice: View {
             case .failed(let message):
                 Text(message)
                     .foregroundStyle(.secondary)
-                Spacer(minLength: 8)
+                Spacer(minLength: AppSpacing.regular)
                 Button("Erneut versuchen") {
                     onTranslate()
                 }

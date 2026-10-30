@@ -1,6 +1,9 @@
 //
 //  MailSession.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 10.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Zugangsdaten und Anmeldung an einer Stelle. Jede Server-Aktion
 //  (Abruf, Kennzeichnen, Verschieben, Ordner, Spamfilter, Anhang

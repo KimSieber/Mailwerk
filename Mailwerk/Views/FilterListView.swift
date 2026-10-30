@@ -1,6 +1,9 @@
 //
 //  FilterListView.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Pflege einer der beiden Filterlisten.
 //  - „Neuer Eintrag …“ (erste Zeile) öffnet ein Pop-up; mehrere Angaben auf

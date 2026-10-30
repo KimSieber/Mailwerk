@@ -1,6 +1,9 @@
 //
 //  AccountStore.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Verwaltet die Postfach-Konfigurationen und das Standard-Postfach
 //  für neue Mails. Beides liegt im iCloud Key-Value-Store und ist damit

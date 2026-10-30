@@ -1,6 +1,9 @@
 //
 //  WatchBridge.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 20.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Anbindung der Apple Watch auf dem iPhone (WatchConnectivity).
 //  Die Watch darf unter watchOS nicht selbst mit den Mailservern sprechen;
@@ -66,7 +69,11 @@ final class WatchBridge {
     static let shared = WatchBridge()
 
     /// Wie lange Stücke einer Lieferung zum Abholen bereitliegen.
-    static let deliveryLifetime: TimeInterval = 300
+    static let deliveryLifetimeSeconds: TimeInterval = 300
+
+    /// Höchstzahl gemerkter Ergebnisse von Watch-Aktionen; darüber wird
+    /// der Speicher geleert, damit er nicht unbegrenzt wächst.
+    static let maxRememberedActions = 500
     /// Schlüssel der an die Watch gelieferten Inhalte in den UserDefaults.
     private static let deliveredBodiesKey = "WatchBridge.deliveredBodies"
 
@@ -326,7 +333,7 @@ final class WatchBridge {
     private func record(_ result: WatchActionOutcome.Result, for action: WatchAction, into outcomes: inout [WatchActionOutcome]) {
         completed[action.id] = result
         outcomes.append(WatchActionOutcome(actionID: action.id, result: result))
-        if completed.count > 500 {
+        if completed.count > Self.maxRememberedActions {
             completed = [:]
         }
     }
@@ -395,7 +402,7 @@ final class WatchBridge {
 
     /// Entfernt abgelaufene Lieferungen.
     private func purgeDeliveries() {
-        let limit = Date().addingTimeInterval(-Self.deliveryLifetime)
+        let limit = Date().addingTimeInterval(-Self.deliveryLifetimeSeconds)
         deliveries = deliveries.filter { $0.value.createdAt > limit }
     }
 

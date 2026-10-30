@@ -1,6 +1,9 @@
 //
 //  FormattingToolbar.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 23.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Formatierungsleiste für den RichTextEditor. Zeigt an, welche
 //  Formate an der Cursorposition aktiv sind, und schaltet sie um: Fett,
@@ -100,8 +103,8 @@ struct FormattingToolbar<Leading: View, Trailing: View>: View {
     /// Waagerecht scrollbare Leiste mit Glas-Gruppen.
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            GlassEffectContainer(spacing: 8) {
-                HStack(spacing: 8) {
+            GlassEffectContainer(spacing: AppSpacing.regular) {
+                HStack(spacing: AppSpacing.regular) {
                     // Reihenfolge nach Häufigkeit: das Seltenste ganz rechts,
                     // dort muss auf dem iPhone gescrollt werden.
                     group {
@@ -138,8 +141,8 @@ struct FormattingToolbar<Leading: View, Trailing: View>: View {
                         group { trailing }
                     }
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
+                .padding(.horizontal, AppSpacing.medium)
+                .padding(.vertical, AppSpacing.small)
             }
         }
         .scrollBounceBehavior(.basedOnSize)
@@ -228,9 +231,9 @@ struct FormattingToolbar<Leading: View, Trailing: View>: View {
     /// - Parameter content: Knöpfe der Gruppe.
     /// - Returns: Gruppe mit Glas-Hintergrund.
     private func group<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        HStack(spacing: 2) { content() }
-            .padding(.horizontal, 4)
-            .padding(.vertical, 2)
+        HStack(spacing: AppSpacing.tiny) { content() }
+            .padding(.horizontal, AppSpacing.xSmall)
+            .padding(.vertical, AppSpacing.tiny)
             .glassEffect(.regular.interactive(), in: .capsule)
     }
 

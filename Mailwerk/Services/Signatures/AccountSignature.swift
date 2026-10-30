@@ -1,6 +1,9 @@
 //
 //  AccountSignature.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 13.10.2026
+//  Geändert: 13.10.2026
 //
 //  Zweck: Speichermodell einer Signatur für SwiftData – ein Datensatz je
 //  Postfach, über CloudKit auf alle Geräte abgeglichen. Das Logo liegt

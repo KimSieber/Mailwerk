@@ -1,6 +1,9 @@
 //
 //  MessageRow.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 11.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Eine Zeile der Mailliste in drei Zeilen:
 //  1. Kennzeichen (beantwortet, weitergeleitet, gekennzeichnet, Anhang)
@@ -59,11 +62,11 @@ struct MessageRow: View, Equatable {
 
     /// Aufbau der Zeile.
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: AppSpacing.medium) {
             stripe
             RowSenderAvatar(party: party, showsImage: showsImage)
-                .padding(.top, 2)
-            VStack(alignment: .leading, spacing: 2) {
+                .padding(.top, AppSpacing.tiny)
+            VStack(alignment: .leading, spacing: AppSpacing.tiny) {
                 statusLine
                 nameLine
                 Text(message.subject)
@@ -93,7 +96,7 @@ struct MessageRow: View, Equatable {
 
     /// Zeile 1: Kennzeichen und Spam-Einschätzung links, Datum rechts.
     private var statusLine: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: AppSpacing.small) {
             if message.isAnswered {
                 Image(systemName: "arrowshape.turn.up.left.fill")
                     .foregroundStyle(.secondary)
@@ -122,7 +125,7 @@ struct MessageRow: View, Equatable {
                     .lineLimit(1)
                     .accessibilityLabel("Spam-Einschätzung \(spamMark)")
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: AppSpacing.regular)
             // Ohne Datum bleibt die Stelle leer – die aktuelle Zeit
             // würde ein falsches Datum vortäuschen.
             if let date = message.date {
@@ -138,7 +141,7 @@ struct MessageRow: View, Equatable {
     /// Zeile 2: Name, dahinter klein und grau die Adresse bzw. „+n“.
     /// Der Name hat Vorrang; gekürzt wird zuerst der Zusatz.
     private var nameLine: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: AppSpacing.small) {
             Text(party.title)
                 .font(.body.weight(message.isUnread ? .bold : .regular))
                 .lineLimit(1)

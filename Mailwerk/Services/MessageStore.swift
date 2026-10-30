@@ -1,6 +1,9 @@
 //
 //  MessageStore.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Lokale SQLite-Ablage für Nachrichten, Anhänge und den Stand
 //  je Ordner (letzter Abruf mit Sync-Zustand, Zeitfenster, Ordnerliste).
@@ -542,7 +545,7 @@ nonisolated final class MessageStore: @unchecked Sendable {
     }
 
     /// Letzte Fehlermeldung der Datenbank.
-    private var errMsg: String {
+    private var errorMessage: String {
         String(cString: sqlite3_errmsg(db))
     }
 
@@ -886,7 +889,7 @@ nonisolated final class MessageStore: @unchecked Sendable {
         defer { sqlite3_finalize(stmt) }
         while sqlite3_step(stmt) == SQLITE_ROW {
             // Spalte 1 von PRAGMA table_info ist der Spaltenname
-            if str(stmt, 1) == column { return true }
+            if columnText(stmt, 1) == column { return true }
         }
         return false
     }
@@ -969,7 +972,7 @@ nonisolated final class MessageStore: @unchecked Sendable {
             return MessageDisplayHints(
                 hasRemoteContent: sqlite3_column_int(stmt, 1) != 0,
                 usesOwnColors: sqlite3_column_int(stmt, 2) != 0,
-                languageCode: optStr(stmt, 3)
+                languageCode: optionalColumnText(stmt, 3)
             )
         }
     }
@@ -1188,7 +1191,7 @@ nonisolated final class MessageStore: @unchecked Sendable {
             sqlite3_bind_double(stmt, 3, date.timeIntervalSince1970)
         }) { stmt in
             CachedFlagState(
-                id: str(stmt, 0),
+                id: columnText(stmt, 0),
                 uid: UInt32(sqlite3_column_int64(stmt, 1)),
                 isUnread: sqlite3_column_int(stmt, 2) == 1,
                 isFlagged: sqlite3_column_int(stmt, 3) == 1,
@@ -1240,7 +1243,7 @@ nonisolated final class MessageStore: @unchecked Sendable {
                 bind(stmt, 2, folder)
                 sqlite3_bind_int(stmt, 3, Int32(Self.currentHeadersVersion))
             }) { stmt in
-                str(stmt, 0)
+                columnText(stmt, 0)
             })
         }
     }
@@ -1657,7 +1660,7 @@ nonisolated final class MessageStore: @unchecked Sendable {
                 bind(stmt, 1, accountID.uuidString)
                 bind(stmt, 2, folder)
             }) { stmt in
-                str(stmt, 0)
+                columnText(stmt, 0)
             })
         }
     }
@@ -1736,7 +1739,7 @@ nonisolated final class MessageStore: @unchecked Sendable {
             defer { sqlite3_finalize(stmt) }
             bind(stmt, 1, accountID.uuidString)
             guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-            return try? JSONDecoder().decode(FolderListing.self, from: Data(str(stmt, 0).utf8))
+            return try? JSONDecoder().decode(FolderListing.self, from: Data(columnText(stmt, 0).utf8))
         }
     }
 
@@ -1956,7 +1959,7 @@ nonisolated final class MessageStore: @unchecked Sendable {
             FROM message WHERE id = ?
             """
         guard let stmt = prepare(readSQL) else {
-            throw StoreError.prepare(context: "writeSearchEntry \(messageID)", message: errMsg)
+            throw StoreError.prepare(context: "writeSearchEntry \(messageID)", message: errorMessage)
         }
         defer { sqlite3_finalize(stmt) }
         bind(stmt, 1, messageID)
@@ -1964,14 +1967,14 @@ nonisolated final class MessageStore: @unchecked Sendable {
 
         let rowID = sqlite3_column_int64(stmt, 0)
         let entry = SearchText.Entry(
-            subject: str(stmt, 1),
+            subject: columnText(stmt, 1),
             people: SearchText.people(
-                from: str(stmt, 2),
-                to: decodeList(optStr(stmt, 3)),
-                cc: decodeList(optStr(stmt, 4))
+                from: columnText(stmt, 2),
+                to: decodeList(optionalColumnText(stmt, 3)),
+                cc: decodeList(optionalColumnText(stmt, 4))
             ),
-            body: SearchText.body(text: optStr(stmt, 5), html: optStr(stmt, 6)),
-            attachments: optStr(stmt, 7) ?? ""
+            body: SearchText.body(text: optionalColumnText(stmt, 5), html: optionalColumnText(stmt, 6)),
+            attachments: optionalColumnText(stmt, 7) ?? ""
         )
 
         try execute("DELETE FROM message_search WHERE rowid = ?",
@@ -2004,7 +2007,7 @@ nonisolated final class MessageStore: @unchecked Sendable {
         guard let stmt = prepare("""
             SELECT rowid, "from", toJSON, ccJSON FROM message WHERE id = ?
             """) else {
-            throw StoreError.prepare(context: "writeSearchPeople \(messageID)", message: errMsg)
+            throw StoreError.prepare(context: "writeSearchPeople \(messageID)", message: errorMessage)
         }
         bind(stmt, 1, messageID)
         guard sqlite3_step(stmt) == SQLITE_ROW else {
@@ -2013,9 +2016,9 @@ nonisolated final class MessageStore: @unchecked Sendable {
         }
         let rowID = sqlite3_column_int64(stmt, 0)
         let people = SearchText.people(
-            from: str(stmt, 1),
-            to: decodeList(optStr(stmt, 2)),
-            cc: decodeList(optStr(stmt, 3))
+            from: columnText(stmt, 1),
+            to: decodeList(optionalColumnText(stmt, 2)),
+            cc: decodeList(optionalColumnText(stmt, 3))
         )
         sqlite3_finalize(stmt)
 
@@ -2053,7 +2056,7 @@ nonisolated final class MessageStore: @unchecked Sendable {
             sqlite3_bind_int(stmt, 1, Int32(limit))
             var ids: [String] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
-                ids.append(str(stmt, 0))
+                ids.append(columnText(stmt, 0))
             }
             sqlite3_finalize(stmt)
             guard !ids.isEmpty else { return 0 }
@@ -2094,7 +2097,7 @@ nonisolated final class MessageStore: @unchecked Sendable {
                 let next = bind(stmt, folders: scope.folders, from: 1)
                 bind(stmt, next, match)
             }) { stmt in
-                str(stmt, 0)
+                columnText(stmt, 0)
             })
         }
     }
@@ -2120,8 +2123,8 @@ nonisolated final class MessageStore: @unchecked Sendable {
             // jede nur einmal entschlüsseln.
             var decoded = Set<String>()
             while sqlite3_step(stmt) == SQLITE_ROW {
-                addresses.insert(str(stmt, 0))
-                for json in [optStr(stmt, 1), optStr(stmt, 2)].compactMap({ $0 }) where decoded.insert(json).inserted {
+                addresses.insert(columnText(stmt, 0))
+                for json in [optionalColumnText(stmt, 1), optionalColumnText(stmt, 2)].compactMap({ $0 }) where decoded.insert(json).inserted {
                     addresses.formUnion(decodeList(json))
                 }
             }
@@ -2256,7 +2259,7 @@ nonisolated final class MessageStore: @unchecked Sendable {
         bind bindValues: (OpaquePointer?) -> Void = { _ in }
     ) throws {
         guard let stmt = cachedStatement(sql) else {
-            throw StoreError.prepare(context: context, message: errMsg)
+            throw StoreError.prepare(context: context, message: errorMessage)
         }
         defer {
             sqlite3_reset(stmt)
@@ -2265,7 +2268,7 @@ nonisolated final class MessageStore: @unchecked Sendable {
         bindValues(stmt)
         let code = sqlite3_step(stmt)
         guard code == SQLITE_DONE else {
-            throw StoreError.step(context: context, code: code, message: errMsg)
+            throw StoreError.step(context: context, code: code, message: errorMessage)
         }
     }
 
@@ -2295,7 +2298,7 @@ nonisolated final class MessageStore: @unchecked Sendable {
     /// - Throws: `StoreError.exec`.
     private func execOrThrow(_ sql: String) throws {
         guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
-            throw StoreError.exec(sql: sql, message: errMsg)
+            throw StoreError.exec(sql: sql, message: errorMessage)
         }
     }
 
@@ -2309,23 +2312,23 @@ nonisolated final class MessageStore: @unchecked Sendable {
         let dateVal = sqlite3_column_type(s, 7) != SQLITE_NULL
             ? sqlite3_column_double(s, 7) : nil
         let headers = CachedMessageHeaders(
-            toList: decodeList(optStr(s, 17)),
-            ccList: decodeList(optStr(s, 18)),
-            replyToList: decodeList(optStr(s, 19)),
-            rfcMessageID: optStr(s, 20),
-            rfcInReplyTo: optStr(s, 21),
-            rfcReferences: optStr(s, 22),
+            toList: decodeList(optionalColumnText(s, 17)),
+            ccList: decodeList(optionalColumnText(s, 18)),
+            replyToList: decodeList(optionalColumnText(s, 19)),
+            rfcMessageID: optionalColumnText(s, 20),
+            rfcInReplyTo: optionalColumnText(s, 21),
+            rfcReferences: optionalColumnText(s, 22),
             spamVerdict: readSpamVerdict(s, startingAt: 24)
         )
         return CachedMessage(
-            id: str(s, 0),
-            accountID: UUID(uuidString: str(s, 1)) ?? UUID(),
-            accountDisplayName: str(s, 2),
-            folder: str(s, 23),
+            id: columnText(s, 0),
+            accountID: UUID(uuidString: columnText(s, 1)) ?? UUID(),
+            accountDisplayName: columnText(s, 2),
+            folder: columnText(s, 23),
             uid: UInt32(truncatingIfNeeded: sqlite3_column_int64(s, 3)),
-            subject: str(s, 4),
-            from: str(s, 5),
-            to: str(s, 6),
+            subject: columnText(s, 4),
+            from: columnText(s, 5),
+            to: columnText(s, 6),
             date: dateVal.map { Date(timeIntervalSince1970: $0) },
             isUnread: sqlite3_column_int(s, 8) != 0,
             isFlagged: sqlite3_column_int(s, 9) != 0,
@@ -2333,8 +2336,8 @@ nonisolated final class MessageStore: @unchecked Sendable {
             isForwarded: sqlite3_column_int(s, 11) != 0,
             totalSizeBytes: Int(sqlite3_column_int64(s, 12)),
             hasAttachments: sqlite3_column_int(s, 13) != 0,
-            textBody: optStr(s, 14),
-            htmlBody: optStr(s, 15),
+            textBody: optionalColumnText(s, 14),
+            htmlBody: optionalColumnText(s, 15),
             fetchedAt: Date(timeIntervalSince1970: sqlite3_column_double(s, 16)),
             headers: headers
         )
@@ -2348,13 +2351,13 @@ nonisolated final class MessageStore: @unchecked Sendable {
         let dateVal = sqlite3_column_type(s, 6) != SQLITE_NULL
             ? sqlite3_column_double(s, 6) : nil
         return MessageListItem(
-            id: str(s, 0),
-            accountID: UUID(uuidString: str(s, 1)) ?? UUID(),
-            folder: str(s, 2),
+            id: columnText(s, 0),
+            accountID: UUID(uuidString: columnText(s, 1)) ?? UUID(),
+            folder: columnText(s, 2),
             uid: UInt32(truncatingIfNeeded: sqlite3_column_int64(s, 3)),
-            subject: str(s, 4),
-            from: str(s, 5),
-            recipients: decodeList(optStr(s, 13)),
+            subject: columnText(s, 4),
+            from: columnText(s, 5),
+            recipients: decodeList(optionalColumnText(s, 13)),
             date: dateVal.map { Date(timeIntervalSince1970: $0) },
             isUnread: sqlite3_column_int(s, 7) != 0,
             isFlagged: sqlite3_column_int(s, 8) != 0,
@@ -2378,13 +2381,13 @@ nonisolated final class MessageStore: @unchecked Sendable {
             data = Data(bytes: bytes, count: count)
         }
         return CachedAttachment(
-            id: str(s, 0),
-            messageID: str(s, 1),
-            filename: str(s, 2),
-            contentType: str(s, 3),
+            id: columnText(s, 0),
+            messageID: columnText(s, 1),
+            filename: columnText(s, 2),
+            contentType: columnText(s, 3),
             sizeBytes: Int(sqlite3_column_int64(s, 4)),
             data: data,
-            contentID: optStr(s, 6),
+            contentID: optionalColumnText(s, 6),
             isInline: sqlite3_column_int(s, 7) != 0
         )
     }
@@ -2483,7 +2486,7 @@ nonisolated final class MessageStore: @unchecked Sendable {
     ///   - s: Statement auf einer Ergebniszeile.
     ///   - col: Spaltenindex.
     /// - Returns: Text; leer bei NULL.
-    private func str(_ s: OpaquePointer?, _ col: Int32) -> String {
+    private func columnText(_ s: OpaquePointer?, _ col: Int32) -> String {
         guard let c = sqlite3_column_text(s, col) else { return "" }
         return String(cString: c)
     }
@@ -2494,7 +2497,7 @@ nonisolated final class MessageStore: @unchecked Sendable {
     ///   - s: Statement auf einer Ergebniszeile.
     ///   - col: Spaltenindex.
     /// - Returns: Text oder `nil` bei NULL.
-    private func optStr(_ s: OpaquePointer?, _ col: Int32) -> String? {
+    private func optionalColumnText(_ s: OpaquePointer?, _ col: Int32) -> String? {
         guard sqlite3_column_type(s, col) != SQLITE_NULL,
               let c = sqlite3_column_text(s, col) else { return nil }
         return String(cString: c)
@@ -2628,7 +2631,7 @@ nonisolated final class MessageStore: @unchecked Sendable {
     private func prepare(_ sql: String) -> OpaquePointer? {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            Log.store.error("🗄️ SQL-Fehler: \(self.errMsg, privacy: .public) – \(String(sql.prefix(80)), privacy: .public)")
+            Log.store.error("🗄️ SQL-Fehler: \(self.errorMessage, privacy: .public) – \(String(sql.prefix(80)), privacy: .public)")
             return nil
         }
         return stmt
@@ -2644,7 +2647,7 @@ nonisolated final class MessageStore: @unchecked Sendable {
     @discardableResult
     private func exec(_ sql: String) -> Bool {
         let ok = sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK
-        if !ok { Log.store.error("🗄️ SQL-Fehler: \(self.errMsg, privacy: .public) – \(String(sql.prefix(80)), privacy: .public)") }
+        if !ok { Log.store.error("🗄️ SQL-Fehler: \(self.errorMessage, privacy: .public) – \(String(sql.prefix(80)), privacy: .public)") }
         return ok
     }
 }

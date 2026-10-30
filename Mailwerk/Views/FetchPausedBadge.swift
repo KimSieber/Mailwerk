@@ -1,6 +1,9 @@
 //
 //  FetchPausedBadge.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 13.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Kennzeichen „Abruf ausgeschaltet“ vor dem Namen eines Postfachs –
 //  ein orangefarbener Kreis mit weißem Pause-Zeichen. Einheitlich in der
@@ -37,7 +40,7 @@ struct FetchPausedBadge: View {
 // MARK: - Vorschau
 
 #Preview {
-    HStack(spacing: 6) {
+    HStack(spacing: AppSpacing.small) {
         FetchPausedBadge(font: .headline)
         Text("Posteo").font(.headline)
     }

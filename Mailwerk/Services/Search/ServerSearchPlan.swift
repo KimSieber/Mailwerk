@@ -1,6 +1,9 @@
 //
 //  ServerSearchPlan.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 30.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Logik der Suche auf dem Server ohne die Verbindung selbst –
 //  welche Suchkriterien gesendet werden, für welche Treffer Kopfdaten

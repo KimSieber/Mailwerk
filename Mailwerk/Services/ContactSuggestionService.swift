@@ -1,6 +1,9 @@
 //
 //  ContactSuggestionService.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 23.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Adressvorschläge aus den Systemkontakten für die Adressfelder
 //  beim Verfassen.
@@ -45,6 +48,9 @@ final class ContactSuggestionService {
     /// Ab dieser Länge wird gesucht – kürzere Eingaben liefern zu viele Treffer.
     static let minimumQueryLength = 2
 
+    /// Höchstzahl der Vorschläge unter dem Empfängerfeld.
+    nonisolated static let defaultLimit = 6
+
     /// Nur die gemeinsame Instanz.
     private init() {}
 
@@ -85,7 +91,7 @@ final class ContactSuggestionService {
     ///   - query: Bisherige Eingabe.
     ///   - limit: Höchstzahl der Vorschläge.
     /// - Returns: Vorschläge, Treffer am Wortanfang zuerst.
-    func suggestions(matching query: String, limit: Int = 6) async -> [ContactSuggestion] {
+    func suggestions(matching query: String, limit: Int = defaultLimit) async -> [ContactSuggestion] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= Self.minimumQueryLength, isAccessAllowed else { return [] }
 

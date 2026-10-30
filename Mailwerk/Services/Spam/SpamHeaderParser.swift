@@ -1,6 +1,9 @@
 //
 //  SpamHeaderParser.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Liest die Spam-Einstufung des Servers aus den Headern `X-Spam`,
 //  `X-Spam-Flag` (z. B. GMX, web.de) und `X-Spam-Status` (z. B. rspamd bei

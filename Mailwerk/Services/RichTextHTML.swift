@@ -1,6 +1,9 @@
 //
 //  RichTextHTML.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 23.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Wandelt den formatierten Text des Editors in HTML und in eine
 //  Nur-Text-Fassung um. Beide Teile gehen als multipart/alternative raus.

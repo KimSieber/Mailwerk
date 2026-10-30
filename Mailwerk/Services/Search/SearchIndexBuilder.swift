@@ -1,6 +1,9 @@
 //
 //  SearchIndexBuilder.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 15.10.2026
+//  Geändert: 24.10.2026
 //
 //  Zweck: Trägt fehlende Einträge im Suchindex schrittweise nach – nach
 //  dem Update auf den Suchindex für den ganzen Cache, sonst für einzelne

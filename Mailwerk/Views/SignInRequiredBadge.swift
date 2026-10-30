@@ -1,6 +1,9 @@
 //
 //  SignInRequiredBadge.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 17.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Kennzeichen „Anmeldung abgelaufen“ vor dem Namen eines
 //  Postfachs – ein roter Kreis mit weißem Ausrufezeichen. Einheitlich in
@@ -39,7 +42,7 @@ struct SignInRequiredBadge: View {
 // MARK: - Vorschau
 
 #Preview {
-    HStack(spacing: 6) {
+    HStack(spacing: AppSpacing.small) {
         SignInRequiredBadge(font: .headline)
         Text("Outlook").font(.headline)
     }

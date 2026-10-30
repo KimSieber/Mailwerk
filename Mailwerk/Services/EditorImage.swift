@@ -1,6 +1,9 @@
 //
 //  EditorImage.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 12.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Bilder im formatierten Editor (z. B. Logo einer Signatur oder
 //  ein eingefügtes Foto).
@@ -153,6 +156,9 @@ nonisolated final class MailImageAttachment: NSTextAttachment {
 
 /// Aufbereitung von Bilddaten für Editor und Versand.
 nonisolated enum EditorImageData {
+    /// JPEG-Qualität beim Verkleinern (0…1) – kaum sichtbare Verluste bei
+    /// deutlich kleineren Dateien.
+    static let jpegQuality = 0.85
 
     /// Aufbereitete Bilddaten.
     struct Prepared: Equatable {
@@ -216,7 +222,7 @@ nonisolated enum EditorImageData {
         guard let destination = CGImageDestinationCreateWithData(
             output, outputType.identifier as CFString, 1, nil
         ) else { return nil }
-        let quality: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 0.85]
+        let quality: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: jpegQuality]
         CGImageDestinationAddImage(destination, image, hasAlpha ? nil : quality as CFDictionary)
         guard CGImageDestinationFinalize(destination) else { return nil }
 

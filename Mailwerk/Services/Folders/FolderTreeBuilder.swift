@@ -1,6 +1,9 @@
 //
 //  FolderTreeBuilder.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 28.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Baut aus der flachen Ordnerliste eines Postfachs den Ordnerbaum
 //  für die Seitenleiste.

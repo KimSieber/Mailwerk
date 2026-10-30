@@ -1,6 +1,9 @@
 //
 //  FetchCoordinator.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 08.10.2026
+//  Geändert: 10.10.2026
 //
 //  Zweck: Stimmt die Abrufe vom Server aufeinander ab. Abrufe laufen
 //  nacheinander, nie gleichzeitig. Zwei gleichzeitige Abrufe würden

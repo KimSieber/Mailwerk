@@ -1,6 +1,9 @@
 //
 //  CachingFilterListRepository.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 25.10.2026
+//  Geändert: 25.10.2026
 //
 //  Zweck: Hält die Momentaufnahme der Filterlisten (`lists()`) im
 //  Speicher, damit das Öffnen einer Mail nicht jedes Mal SwiftData liest

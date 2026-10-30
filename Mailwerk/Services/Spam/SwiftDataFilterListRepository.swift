@@ -1,6 +1,9 @@
 //
 //  SwiftDataFilterListRepository.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.09.2026
+//  Geändert: 11.10.2026
 //
 //  Zweck: Listenpflege über SwiftData. Ist der Container mit CloudKit
 //  verbunden, gleicht sich der Bestand von selbst über alle Geräte ab;

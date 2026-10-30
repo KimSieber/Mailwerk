@@ -1,6 +1,9 @@
 //
 //  MessageOpenTimer.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 25.10.2026
+//  Geändert: 25.10.2026
 //
 //  Zweck: Misst, wie lange es vom Öffnen einer Mail dauert, bis ihr Inhalt
 //  sichtbar ist („Mail sichtbar“, v0.2.3d). Die vorhandenen Messpunkte

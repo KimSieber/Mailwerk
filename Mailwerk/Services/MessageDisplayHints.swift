@@ -1,6 +1,9 @@
 //
 //  MessageDisplayHints.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 25.10.2026
+//  Geändert: 25.10.2026
 //
 //  Zweck: Vorberechnete Anzeige-Hinweise einer Mail – ob sie externe
 //  Inhalte enthält, ob sie eigene Farben mitbringt und welche fremde

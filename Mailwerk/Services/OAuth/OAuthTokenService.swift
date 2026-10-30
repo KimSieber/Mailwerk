@@ -1,6 +1,9 @@
 //
 //  OAuthTokenService.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 17.10.2026
+//  Geändert: 17.10.2026
 //
 //  Zweck: Liefert für Postfächer mit Anmeldung per OAuth 2 ein gültiges
 //  Access-Token – aus dem Speicher, sonst erneuert mit dem Refresh-Token

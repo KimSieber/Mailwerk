@@ -1,6 +1,9 @@
 //
 //  ShareContext.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 15.10.2026
+//  Geändert: 17.10.2026
 //
 //  Zweck: Abschrift der Daten, die die Teilen-Erweiterung zum Verfassen
 //  braucht: Postfächer, Standard-Postfach und Signaturen. Die App schreibt

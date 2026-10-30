@@ -1,6 +1,9 @@
 //
 //  MailSendService.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 23.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Versendet eine verfasste Nachricht und erledigt die Nacharbeiten
 //  auf dem Server.

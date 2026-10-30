@@ -1,6 +1,9 @@
 //
 //  AddAccountViewModel.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Eingaben, Prüfung und Verbindungstest des Formulars „Postfach
 //  hinzufügen“ sowie der Aufbau des neuen Postfachs – für beide Arten:
@@ -61,11 +64,11 @@ final class AddAccountViewModel {
     /// IMAP-Server.
     var imapHost = ""
     /// IMAP-Port als Text.
-    var imapPort = "993"
+    var imapPort = String(MailPorts.imaps)
     /// SMTP-Server.
     var smtpHost = ""
     /// SMTP-Port als Text.
-    var smtpPort = "587"
+    var smtpPort = String(MailPorts.submission)
     /// Kopie in „Gesendet“ ablegen (Standard: ja).
     var savesSentCopy = true
 
@@ -199,9 +202,9 @@ final class AddAccountViewModel {
             username: loginName,
             emailAddress: emailAddress,
             imapHost: imapHost,
-            imapPort: MailAccount.port(from: imapPort) ?? 993,
+            imapPort: MailAccount.port(from: imapPort) ?? MailPorts.imaps,
             smtpHost: smtpHost,
-            smtpPort: MailAccount.port(from: smtpPort) ?? 587,
+            smtpPort: MailAccount.port(from: smtpPort) ?? MailPorts.submission,
             colorHex: selectedColor?.rawValue,
             storesSentCopy: savesSentCopy
         )

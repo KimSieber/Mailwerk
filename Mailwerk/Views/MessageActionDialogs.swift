@@ -1,6 +1,9 @@
 //
 //  MessageActionDialogs.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 12.10.2026
+//  Geändert: 24.10.2026
 //
 //  Zweck: Rückfragen und Meldungen zu den Aktionen des Mail-Menüs –
 //  einheitlich für Mailansicht und Liste: Löschen (mit Anzahl), Spam-

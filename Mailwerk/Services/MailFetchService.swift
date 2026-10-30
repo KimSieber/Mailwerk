@@ -1,6 +1,9 @@
 //
 //  MailFetchService.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Holt Mails von IMAP-Servern und legt sie im lokalen Cache ab.
 //
@@ -93,7 +96,7 @@ nonisolated enum MailFetchService {
 
     /// Maximale Nachrichtengröße (RFC822.SIZE) in Bytes, bis zu der
     /// Anhänge automatisch mitgeladen werden. Darüber: erst bei Tap.
-    static let autoDownloadThreshold = 5 * 1024 * 1024  // 5 MB
+    static let autoDownloadThresholdBytes = 5 * 1024 * 1024  // 5 MB
 
     /// Zusätzlich zum ENVELOPE angeforderte Header: References (nicht Teil
     /// des ENVELOPE, für korrektes Threading) und die Spam-Kopfzeilen des
@@ -1066,7 +1069,7 @@ nonisolated enum MailFetchService {
         let plan = MessageContentPlan(
             structure: try await context.server.fetchStructure(message.uid),
             totalSize: totalSize,
-            threshold: autoDownloadThreshold
+            threshold: autoDownloadThresholdBytes
         )
         let bodyData = try await fetchBodies(of: plan, uid: message.uid, on: context.server)
         let bodies = plan.bodies(withData: bodyData)

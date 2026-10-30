@@ -1,6 +1,9 @@
 //
 //  MessageStepping.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 22.10.2026
+//  Geändert: 24.10.2026
 //
 //  Zweck: Regeln für das Weiterschalten der geöffneten Mail im
 //  Spaltenlayout des iPad – vorige und nächste Mail der Liste (Knöpfe in

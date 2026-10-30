@@ -1,6 +1,9 @@
 //
 //  MessageLanguage.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.10.2026
+//  Geändert: 24.10.2026
 //
 //  Zweck: Erkennt die Sprache einer Mail (aus ihrem Text, nicht dem
 //  Betreff) mit Apples on-device-Spracherkennung (NaturalLanguage) und

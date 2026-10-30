@@ -1,6 +1,9 @@
 //
 //  ShareContextPublisher.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 15.10.2026
+//  Geändert: 15.10.2026
 //
 //  Zweck: Hält die Abschrift für die Teilen-Erweiterung (ShareContext)
 //  aktuell. Beobachtet Postfächer, Standard-Postfach und Signaturen und

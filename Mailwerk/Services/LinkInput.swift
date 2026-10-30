@@ -1,6 +1,9 @@
 //
 //  LinkInput.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 12.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Prüft und ergänzt eine eingegebene Link-Adresse für den Editor
 //  (Knopf „Link“). Erlaubt sind Web-Adressen und E-Mail-Adressen:
@@ -21,6 +24,8 @@ import Foundation
 
 /// Prüfung und Ergänzung von Link-Adressen.
 nonisolated enum LinkInput {
+    /// Schema eines Mail-Links.
+    static let mailtoPrefix = "mailto:"
 
     /// Wandelt eine Eingabe in ein gültiges Link-Ziel.
     ///
@@ -36,8 +41,8 @@ nonisolated enum LinkInput {
         guard !trimmed.isEmpty, !trimmed.contains(where: \.isWhitespace) else { return nil }
         let lower = trimmed.lowercased()
 
-        if lower.hasPrefix("mailto:") {
-            return isEmailAddress(String(trimmed.dropFirst(7))) ? trimmed : nil
+        if lower.hasPrefix(mailtoPrefix) {
+            return isEmailAddress(String(trimmed.dropFirst(mailtoPrefix.count))) ? trimmed : nil
         }
         if lower.hasPrefix("http://") || lower.hasPrefix("https://") {
             return hasValidHost(trimmed) ? trimmed : nil
@@ -63,7 +68,7 @@ nonisolated enum LinkInput {
     /// - Parameter link: Link-Ziel.
     /// - Returns: Ziel ohne „mailto:“.
     static func displayText(for link: String) -> String {
-        link.lowercased().hasPrefix("mailto:") ? String(link.dropFirst(7)) : link
+        link.lowercased().hasPrefix(mailtoPrefix) ? String(link.dropFirst(mailtoPrefix.count)) : link
     }
 
     /// Einfache Prüfung einer E-Mail-Adresse: genau ein „@“, Name davor,

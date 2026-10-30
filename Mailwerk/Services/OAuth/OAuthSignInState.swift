@@ -1,6 +1,9 @@
 //
 //  OAuthSignInState.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 17.10.2026
+//  Geändert: 17.10.2026
 //
 //  Zweck: Anmeldung per OAuth 2 aus Sicht der Oberfläche –
 //  1. welche Postfächer neu angemeldet werden müssen (`signInRequired`,

@@ -1,6 +1,9 @@
 //
 //  ServerReconciliation.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 30.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Vergleicht den Cache eines Ordners mit dem Stand auf dem Server
 //  und sagt, was zu tun ist.

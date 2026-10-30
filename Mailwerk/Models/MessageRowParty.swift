@@ -1,6 +1,9 @@
 //
 //  MessageRowParty.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 11.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Wen eine Zeile der Mailliste zeigt – in Posteingang und Ordnern
 //  den Absender, in Gesendet und Entwürfen den ersten Empfänger (bei
@@ -30,6 +33,10 @@ import Foundation
 
 /// Die in einer Listenzeile gezeigte Person samt Texten und Platzhalter.
 nonisolated struct MessageRowParty: Equatable, Sendable {
+    /// Startwert von FNV-1a (32 Bit) für den Farbindex.
+    static let fnvOffsetBasis: UInt32 = 2_166_136_261
+    /// Primzahl von FNV-1a (32 Bit).
+    static let fnvPrime: UInt32 = 16_777_619
     /// Anzeigename; `nil`, wenn keiner angegeben ist.
     let name: String?
     /// E-Mail-Adresse; `nil`, wenn sich keine auswerten lässt.
@@ -145,10 +152,10 @@ nonisolated struct MessageRowParty: Equatable, Sendable {
     @MainActor
     var colorIndex: Int {
         let key = (address ?? name ?? "").lowercased()
-        var hash: UInt32 = 2_166_136_261
+        var hash = Self.fnvOffsetBasis
         for byte in key.utf8 {
             hash ^= UInt32(byte)
-            hash = hash &* 16_777_619
+            hash = hash &* Self.fnvPrime
         }
         return Int(hash % UInt32(AccountColor.allCases.count))
     }

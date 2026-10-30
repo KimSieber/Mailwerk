@@ -1,6 +1,9 @@
 //
 //  MailWebViewPool.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 25.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Hält fertig eingerichtete Web-Ansichten für die Anzeige von
 //  Mails bereit (v0.2.3d, Prüfbericht P-12). Bisher entstand für jede

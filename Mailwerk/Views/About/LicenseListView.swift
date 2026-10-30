@@ -1,6 +1,9 @@
 //
 //  LicenseListView.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 29.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: „Open-Source-Lizenzen“ – Mailwerk selbst und die verwendeten
 //  Komponenten mit ihrer Lizenz; ein Tipp zeigt den vollständigen
@@ -82,14 +85,14 @@ struct LicenseListView: View {
         NavigationLink {
             LicenseDetailView(component: component)
         } label: {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: AppSpacing.tiny) {
                 Text(component.name)
                     .font(.headline)
                 Text([component.licenseName, component.origin].compactMap { $0 }.joined(separator: " · "))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
-            .padding(.vertical, 2)
+            .padding(.vertical, AppSpacing.tiny)
         }
     }
 }
@@ -115,7 +118,7 @@ struct LicenseDetailView: View {
     /// (die Lizenztexte sind von Hand umbrochen).
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: AppSpacing.large) {
                 Link(component.websiteURL.absoluteString, destination: component.websiteURL)
                     .font(.footnote)
                 Text(text)

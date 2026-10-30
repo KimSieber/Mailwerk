@@ -1,6 +1,9 @@
 //
 //  OAuthPKCE.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 17.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Schutz der Anmeldung per PKCE (RFC 7636) und zufällige Werte für
 //  den Anmeldeablauf.
@@ -35,6 +38,9 @@ import Security
 
 /// Prüfwert und Abbild für PKCE.
 nonisolated struct OAuthPKCE: Equatable, Sendable {
+    /// Länge des Zufalls für den Code-Verifier in Byte (256 Bit, RFC 7636
+    /// empfiehlt 32 Byte).
+    static let verifierByteCount = 32
     /// Zufälliger Prüfwert; bleibt in der App und geht erst beim Tausch mit.
     let verifier: String
     /// SHA-256-Abbild des Prüfwerts (Base64-URL); geht ins Anmeldefenster.
@@ -51,7 +57,7 @@ nonisolated struct OAuthPKCE: Equatable, Sendable {
     /// - Throws: `OAuthError.randomUnavailable`, wenn das System keinen
     ///   Zufall liefert.
     static func make() throws -> OAuthPKCE {
-        let verifier = try randomString(byteCount: 32)
+        let verifier = try randomString(byteCount: Self.verifierByteCount)
         return OAuthPKCE(verifier: verifier, challenge: challenge(for: verifier))
     }
 

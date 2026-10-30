@@ -1,6 +1,9 @@
 //
 //  InboxCommands.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 22.10.2026
+//  Geändert: 27.10.2026
 //
 //  Zweck: Menübefehle und Tastaturkürzel der Mailliste auf iPhone (mit
 //  Tastatur), iPad und Mac. Sie stehen in der Menüleiste –

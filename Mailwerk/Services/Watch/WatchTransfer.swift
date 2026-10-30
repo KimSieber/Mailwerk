@@ -1,6 +1,9 @@
 //
 //  WatchTransfer.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 20.10.2026
+//  Geändert: 24.10.2026
 //
 //  Zweck: Was iPhone und Apple Watch austauschen – die Mails für die Watch
 //  samt Zustand (gelesen, gekennzeichnet, Eingang oder Spam), die

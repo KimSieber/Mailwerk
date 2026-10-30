@@ -1,6 +1,9 @@
 //
 //  SyncStatePlanner.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 06.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Entscheidet anhand des gespeicherten Sync-Zustands eines
 //  Ordners und der Werte des Servers, wie ein Abruf vorgeht, und

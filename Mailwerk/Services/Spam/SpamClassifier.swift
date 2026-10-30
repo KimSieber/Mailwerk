@@ -1,6 +1,9 @@
 //
 //  SpamClassifier.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Entscheidet für eine Mail anhand der Black- und Whitelist und der
 //  Spam-Einstufung des Servers:

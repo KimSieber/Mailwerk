@@ -1,6 +1,9 @@
 //
 //  FolderNode.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 28.09.2026
+//  Geändert: 11.10.2026
 //
 //  Zweck: Ein Knoten im Ordnerbaum eines Postfachs, aufbereitet für die
 //  Anzeige, samt Rolle (Posteingang, Gesendet, …), deutschem Anzeigenamen

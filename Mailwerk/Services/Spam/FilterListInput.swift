@@ -1,6 +1,9 @@
 //
 //  FilterListInput.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.09.2026
+//  Geändert: 18.10.2026
 //
 //  Zweck: Zerlegt eine Eingabe für die Listenpflege in einzelne Einträge.
 //  Erlaubt sind mehrere Angaben auf einmal, getrennt durch Komma,

@@ -1,6 +1,9 @@
 //
 //  MessageSort.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 15.10.2026
+//  Geändert: 16.10.2026
 //
 //  Zweck: Sortierung der Nachrichtenliste – Feld (Von, Betreff, Datum,
 //  Größe) und Richtung. Grundstellung ist „Datum, absteigend“ (neueste

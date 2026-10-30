@@ -1,6 +1,9 @@
 //
 //  FlowLayout.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 23.09.2026
+//  Geändert: 11.10.2026
 //
 //  Zweck: Einfaches Layout, das seine Elemente von links nach rechts
 //  anordnet und bei Platzmangel umbricht. Wird für die Adress-Chips

@@ -1,6 +1,9 @@
 //
 //  FilterListImport.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 17.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Bereitet den Import einer Textdatei in eine Filterliste vor –
 //  Datei lesen, Einträge erkennen, schon Vorhandenes aussortieren – und

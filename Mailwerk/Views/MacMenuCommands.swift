@@ -1,6 +1,9 @@
 //
 //  MacMenuCommands.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 27.10.2026
+//  Geändert: 29.10.2026
 //
 //  Zweck: Zusätzliche Menübefehle des Mac, die über die Befehle der
 //  Mailliste (InboxCommands) hinausgehen:

@@ -1,6 +1,9 @@
 //
 //  MailLineEndings.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 14.10.2026
+//  Geändert: 14.10.2026
 //
 //  Zweck: Bringt Text- und HTML-Teil einer ausgehenden Nachricht auf
 //  einheitliche Zeilenenden CRLF ("\r\n"), wie SMTP und IMAP sie verlangen.

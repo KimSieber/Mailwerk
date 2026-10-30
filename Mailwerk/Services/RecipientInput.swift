@@ -1,6 +1,9 @@
 //
 //  RecipientInput.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 23.09.2026
+//  Geändert: 11.10.2026
 //
 //  Zweck: Zerlegt Tastatureingaben in Empfängeradressen. Reine Logik ohne
 //  UI, vollständig durch RecipientInputTests abgedeckt.

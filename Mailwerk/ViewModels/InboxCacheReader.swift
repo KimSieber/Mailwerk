@@ -1,6 +1,9 @@
 //
 //  InboxCacheReader.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.10.2026
+//  Geändert: 24.10.2026
 //
 //  Zweck: Liest alles, was die Mailliste aus dem Cache braucht, in einem
 //  Durchgang abseits des Hauptthreads: die Einträge der gezeigten Ansicht,

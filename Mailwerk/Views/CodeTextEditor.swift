@@ -1,6 +1,9 @@
 //
 //  CodeTextEditor.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 13.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Eingabefeld für Quelltext (z. B. den HTML-Code einer Signatur).
 //  Festbreitenschrift, ohne Autokorrektur, ohne automatische

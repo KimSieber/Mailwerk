@@ -1,6 +1,9 @@
 //
 //  FilterDomain.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.10.2026
+//  Geändert: 18.10.2026
 //
 //  Zweck: Domain-Regeln der Filterlisten an einer Stelle:
 //  - Ein Domain-Eintrag gilt für die Domain selbst und alle Subdomains:

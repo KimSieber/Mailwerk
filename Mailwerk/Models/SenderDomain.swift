@@ -1,6 +1,9 @@
 //
 //  SenderDomain.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 11.10.2026
+//  Geändert: 29.10.2026
 //
 //  Zweck: Ermittelt zu einer E-Mail-Adresse die Domain, deren Logo
 //  (Favicon) die Mailliste zeigt, und schließt Freemail-Anbieter aus.

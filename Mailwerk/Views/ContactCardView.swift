@@ -1,6 +1,9 @@
 //
 //  ContactCardView.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 16.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Die Apple-Kontaktkarte zu einer Person aus dem Mailkopf
 //  („Kontaktkarte anzeigen“).
@@ -48,7 +51,7 @@ struct ContactCardView: View {
                 Button("Fertig") { dismiss() }
                     .keyboardShortcut(.cancelAction)
             }
-            .padding(10)
+            .padding(AppSpacing.medium)
             Divider()
             ContactCardController(contact: lookup.contact)
         }

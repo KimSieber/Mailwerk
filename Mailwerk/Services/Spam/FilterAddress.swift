@@ -1,6 +1,9 @@
 //
 //  FilterAddress.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 24.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Normalisierte Absenderadresse für den Spamfilter: kleingeschrieben,
 //  ohne Anzeigename, mit exakter Domain. Bewusst toleranter als die
@@ -28,6 +31,10 @@ import SwiftMail
 
 /// Normalisierte Adresse mit Domain für die Filterlisten.
 nonisolated struct FilterAddress: Hashable {
+    /// Längste zulässige Domain (RFC 1035).
+    static let maxDomainLength = 253
+    /// Längster zulässiger Abschnitt einer Domain (RFC 1035).
+    static let maxLabelLength = 63
 
     /// Vollständige Adresse, kleingeschrieben.
     let address: String
@@ -117,13 +124,13 @@ nonisolated struct FilterAddress: Hashable {
     /// - Parameter value: Domain in Kleinschreibung.
     /// - Returns: `true` bei gültiger Form.
     private static func isValidDomain(_ value: String) -> Bool {
-        guard !value.isEmpty, value.count <= 253 else { return false }
+        guard !value.isEmpty, value.count <= Self.maxDomainLength else { return false }
 
         let labels = value.split(separator: ".", omittingEmptySubsequences: false)
         guard labels.count >= 2 else { return false }
 
         for label in labels {
-            guard !label.isEmpty, label.count <= 63,
+            guard !label.isEmpty, label.count <= Self.maxLabelLength,
                   label.first != "-", label.last != "-",
                   label.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") })
             else { return false }

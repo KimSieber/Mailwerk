@@ -1,6 +1,9 @@
 //
 //  WatchAppGroup.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 20.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Gemeinsamer Speicherort der Watch-App und ihrer Komplikation
 //  (App Group) sowie die kleine Datei mit der Zahl der ungelesenen Mails,

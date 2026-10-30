@@ -1,6 +1,9 @@
 //
 //  FlagState.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 10.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Wertet die IMAP-Flags einer Mail in einem Durchlauf aus –
 //  ungelesen, gekennzeichnet, beantwortet, weitergeleitet.

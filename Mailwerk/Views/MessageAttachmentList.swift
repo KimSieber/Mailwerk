@@ -1,6 +1,9 @@
 //
 //  MessageAttachmentList.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 12.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Liste der Anhänge in der Mailansicht – Überschrift mit Anzahl,
 //  darunter je Anhang eine Zeile mit Vorschau bzw. Nachladen und Teilen.
@@ -26,7 +29,7 @@ struct MessageAttachmentList: View {
 
     /// Überschrift und Zeilen.
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: AppSpacing.large) {
             Label("Anhänge (\(attachments.count))", systemImage: "paperclip")
                 .font(.headline)
 

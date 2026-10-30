@@ -1,6 +1,9 @@
 //
 //  MessageRowModel.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 30.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Vorberechnete Anzeige einer Zeile der Mailliste – wer gezeigt
 //  wird (Name, Adresse), ob ein Absenderbild erlaubt ist und der

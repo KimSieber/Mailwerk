@@ -1,6 +1,9 @@
 //
 //  MacSearchField.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 27.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Eigenes Suchfeld der Mailliste auf dem Mac. `.searchable` ist
 //  auf dem Mac an die Symbolleiste des Fensters gebunden, die es dort nicht mehr gibt; dieses Feld bietet dieselben
@@ -44,7 +47,7 @@ struct MacSearchField: View {
 
     /// Feld und darunter die Vorschläge.
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: AppSpacing.small) {
             field
             if !visibleSuggestions.isEmpty {
                 suggestionList
@@ -64,7 +67,7 @@ struct MacSearchField: View {
 
     /// Lupe, Marke, Textfeld und ✕ in einer abgerundeten Karte.
     private var field: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: AppSpacing.small) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
             if let person = search.tokens.first {
@@ -97,7 +100,7 @@ struct MacSearchField: View {
             .help("Suche beenden (Esc)")
             .accessibilityLabel("Suche beenden")
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, AppSpacing.medium)
         .frame(height: 32)
         .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 9))
         .overlay {
@@ -111,7 +114,7 @@ struct MacSearchField: View {
     /// - Parameter person: Gewählte Person.
     /// - Returns: Kapsel mit Name.
     private func tokenChip(_ person: SearchPerson) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: AppSpacing.xSmall) {
             Image(systemName: "person.fill")
                 .font(.caption)
             Text(person.title)
@@ -128,7 +131,7 @@ struct MacSearchField: View {
         }
         .font(.callout)
         .foregroundStyle(Color.accentColor)
-        .padding(.horizontal, 8)
+        .padding(.horizontal, AppSpacing.regular)
         .padding(.vertical, 3)
         .background(Color.accentColor.opacity(0.14), in: Capsule())
     }
@@ -143,8 +146,8 @@ struct MacSearchField: View {
                     select(person)
                 } label: {
                     MacSuggestionRow(person: person)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
+                        .padding(.horizontal, AppSpacing.medium)
+                        .padding(.vertical, AppSpacing.small)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(index == highlighted ? Color.accentColor.opacity(0.16) : Color.clear)
                         .contentShape(Rectangle())
@@ -202,7 +205,7 @@ struct MacSearchField: View {
 
     /// Beendet die Suche; die Liste zeigt wieder alle Mails.
     private func close() {
-        withAnimation(.snappy(duration: 0.25)) {
+        withAnimation(AppAnimation.standard) {
             search.isPresented = false
         }
     }
@@ -215,7 +218,7 @@ private struct MacSuggestionRow: View {
 
     /// Name und Adresse in einer Zeile.
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: AppSpacing.small) {
             Image(systemName: "person.crop.circle")
                 .foregroundStyle(.secondary)
             if let name = person.name {

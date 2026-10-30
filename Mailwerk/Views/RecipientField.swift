@@ -1,6 +1,9 @@
 //
 //  RecipientField.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 23.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Eingabefeld für An/Cc/Bcc: bereits erfasste Adressen erscheinen
 //  als Chips, während der Eingabe werden passende Kontakte vorgeschlagen.
@@ -60,12 +63,12 @@ struct RecipientField: View {
 
     /// Bezeichnung, Chips mit Eingabefeld und darunter die Vorschläge.
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 8) {
+        VStack(alignment: .leading, spacing: AppSpacing.small) {
+            HStack(alignment: .top, spacing: AppSpacing.regular) {
                 Text(label)
                     .foregroundStyle(.secondary)
                     .frame(width: 34, alignment: .leading)
-                    .padding(.top, 6)
+                    .padding(.top, AppSpacing.small)
 
                 FlowLayout {
                     ForEach(addresses) { address in
@@ -121,13 +124,13 @@ struct RecipientField: View {
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
-                            .padding(.vertical, 4)
-                            .padding(.horizontal, 6)
+                            .padding(.vertical, AppSpacing.xSmall)
+                            .padding(.horizontal, AppSpacing.small)
                             .background(
                                 index == selectedSuggestion
                                     ? Color.accentColor.opacity(0.15)
                                     : Color.clear,
-                                in: RoundedRectangle(cornerRadius: 6)
+                                in: RoundedRectangle(cornerRadius: AppCornerRadius.small)
                             )
                         }
                         .buttonStyle(.plain)
@@ -283,7 +286,7 @@ private struct RecipientChip: View {
 
     /// Name bzw. Adresse und Entfernen-Knopf; rot bei ungültiger Adresse.
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: AppSpacing.xSmall) {
             Button(action: onTap) {
                 Text(isExpanded ? address.address : (address.name ?? address.address))
                     .lineLimit(1)
@@ -298,8 +301,8 @@ private struct RecipientChip: View {
             .buttonStyle(.plain)
             .accessibilityLabel("\(address.displayString) entfernen")
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, AppSpacing.regular)
+        .padding(.vertical, AppSpacing.xSmall)
         .background(
             address.isValid ? Color.accentColor.opacity(0.15) : Color.red.opacity(0.2),
             in: Capsule()

@@ -1,6 +1,9 @@
 //
 //  RawSourceSearch.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.10.2026
+//  Geändert: 18.10.2026
 //
 //  Zweck: Einfache Suche im Blatt „Originalquelle“ – findet alle Stellen
 //  eines Begriffs, Worts oder Satzes im Text, ohne Rücksicht auf Groß- und

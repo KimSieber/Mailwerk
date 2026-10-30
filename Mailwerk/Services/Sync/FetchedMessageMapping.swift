@@ -1,6 +1,9 @@
 //
 //  FetchedMessageMapping.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 30.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Überführt, was der Server zu einer Mail liefert (Kopfdaten,
 //  Flags, Struktur, geladene Teile), in die Modelle des Caches und der

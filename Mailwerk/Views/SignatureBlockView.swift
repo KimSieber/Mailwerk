@@ -1,6 +1,9 @@
 //
 //  SignatureBlockView.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 13.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Zeigt eine HTML-Signatur beim Verfassen als eigenen Block unter
 //  dem Mailtext – direkt bearbeitbar wie im Browser (`contenteditable`):
@@ -52,11 +55,11 @@ struct SignatureBlockView: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .padding(4)
+            .padding(AppSpacing.xSmall)
             .help("Signatur entfernen")
             .accessibilityLabel("Signatur entfernen")
         }
-        .padding(.horizontal, 4)
+        .padding(.horizontal, AppSpacing.xSmall)
     }
 }
 

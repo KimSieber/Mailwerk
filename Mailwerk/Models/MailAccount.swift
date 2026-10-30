@@ -1,6 +1,9 @@
 //
 //  MailAccount.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Datenmodell eines eingerichteten IMAP-/SMTP-Postfachs – Bezeichnung,
 //  Absendername, Benutzername, E-Mail-Adresse, Server und Ports, Farbe,
@@ -121,9 +124,9 @@ nonisolated struct MailAccount: Identifiable, Codable, Equatable, Sendable {
         username: String,
         emailAddress: String? = nil,
         imapHost: String,
-        imapPort: Int = 993,
+        imapPort: Int = MailPorts.imaps,
         smtpHost: String,
-        smtpPort: Int = 465,
+        smtpPort: Int = MailPorts.smtps,
         colorHex: String? = nil,
         spamFolder: String? = nil,
         storesSentCopy: Bool = true,
@@ -206,4 +209,14 @@ nonisolated struct MailAccount: Identifiable, Codable, Equatable, Sendable {
               !trimmed.isEmpty else { return nil }
         return trimmed
     }
+}
+
+/// Standard-Ports der Mailprotokolle.
+nonisolated enum MailPorts {
+    /// IMAP mit TLS von Beginn an (IMAPS).
+    static let imaps = 993
+    /// SMTP mit TLS von Beginn an (SMTPS, „implicit TLS“).
+    static let smtps = 465
+    /// SMTP-Einlieferung mit STARTTLS (Submission).
+    static let submission = 587
 }

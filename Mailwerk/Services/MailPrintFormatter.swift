@@ -1,6 +1,9 @@
 //
 //  MailPrintFormatter.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 10.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Baut aus einer Mail ein eigenständiges HTML-Dokument für Druck
 //  und Teilen – Kopfdaten (Von, An, Kopie, Datum, Betreff), Inhalt und

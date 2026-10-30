@@ -1,6 +1,9 @@
 //
 //  SMTPLoginFailure.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 14.10.2026
+//  Geändert: 14.10.2026
 //
 //  Zweck: Verständliche Meldung, wenn die Anmeldung am Versandserver
 //  (SMTP) scheitert.

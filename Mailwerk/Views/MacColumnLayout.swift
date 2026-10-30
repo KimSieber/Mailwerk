@@ -1,6 +1,9 @@
 //
 //  MacColumnLayout.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 27.10.2026
+//  Geändert: 27.10.2026
 //
 //  Zweck: Reine Breitenlogik des Mac-Fensters.
 //  Das Fenster übernimmt das Spaltengerüst des iPad: feste Ordnerleiste,

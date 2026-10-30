@@ -1,6 +1,9 @@
 //
 //  ExternalMailtoRouter.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 18.10.2026
+//  Geändert: 18.10.2026
 //
 //  Zweck: Nimmt mailto:-Links an, die das System von außen an Mailwerk
 //  übergibt (Safari, Kontakte, andere Apps), und entscheidet, wann daraus

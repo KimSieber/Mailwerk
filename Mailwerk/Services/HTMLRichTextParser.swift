@@ -1,6 +1,9 @@
 //
 //  HTMLRichTextParser.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 13.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Liest HTML fehlertolerant in ein schlichtes Textmodell ein –
 //  Zeilen mit formatierten Textabschnitten und Bildern. Grundlage, um
@@ -79,6 +82,26 @@ nonisolated struct RichTextDocument: Equatable {
 
 /// Fehlertolerantes Einlesen von HTML in das Textmodell.
 nonisolated enum HTMLRichTextParser {
+
+    // MARK: Maße wie im Browser
+
+    /// Grundschriftgröße des Browsers in Pixeln (`medium`, `1rem`).
+    static let defaultFontSizePx: Double = 16
+    /// Pixel je typografischem Punkt (CSS: 1pt = 4/3 px).
+    static let pixelsPerPoint: Double = 4.0 / 3.0
+    /// Bezugswert von Prozentangaben.
+    static let percentBase: Double = 100
+    /// Ab diesem `font-weight` gilt Text als fett (CSS: 600 = semibold).
+    static let minimumBoldWeight = 600
+    /// Längste benannte Entität samt „#“-Zahlform, die noch gesucht wird.
+    static let maxEntityLength = 12
+    /// CSS-Schlüsselwörter für Schriftgrößen in Pixeln.
+    static let cssKeywordSizes: [String: Double] = [
+        "xx-small": 9, "x-small": 10, "small": 13, "medium": 16,
+        "large": 18, "x-large": 24, "xx-large": 32
+    ]
+    /// Größen des alten `<font size="1…7">` in Pixeln.
+    static let fontTagSizes: [Int: Double] = [1: 10, 2: 13, 3: 16, 4: 18, 5: 24, 6: 32, 7: 48]
 
     /// Liest HTML ein.
     ///
@@ -159,13 +182,14 @@ nonisolated enum HTMLRichTextParser {
     ///   - index: Position des „<“.
     /// - Returns: Position dahinter oder `nil`, wenn dort nichts davon steht.
     private static func skipSpecial(_ chars: [Character], from index: Int) -> Int? {
-        if matches(chars, at: index, "<!--") {
-            var i = index + 4
-            while i < chars.count, !matches(chars, at: i, "-->") { i += 1 }
-            return min(i + 3, chars.count)
+        let commentOpen = "<!--", commentClose = "-->"
+        if matches(chars, at: index, commentOpen) {
+            var i = index + commentOpen.count
+            while i < chars.count, !matches(chars, at: i, commentClose) { i += 1 }
+            return min(i + commentClose.count, chars.count)
         }
         if matches(chars, at: index, "<!") || matches(chars, at: index, "<?") {
-            var i = index + 2
+            var i = index + "<!".count
             while i < chars.count, chars[i] != ">" { i += 1 }
             return min(i + 1, chars.count)
         }
@@ -325,7 +349,7 @@ nonisolated enum HTMLRichTextParser {
         while let amp = rest.firstIndex(of: "&") {
             result += rest[..<amp]
             let afterAmp = rest.index(after: amp)
-            guard let semicolon = rest[afterAmp...].prefix(12).firstIndex(of: ";") else {
+            guard let semicolon = rest[afterAmp...].prefix(Self.maxEntityLength).firstIndex(of: ";") else {
                 result += "&"; rest = rest[afterAmp...]; continue
             }
             let name = String(rest[afterAmp..<semicolon])
@@ -405,11 +429,7 @@ nonisolated enum HTMLRichTextParser {
     /// - Returns: Größe in Pixeln oder `nil`, wenn nicht erkannt.
     static func parseFontSize(_ value: String, parent: Double) -> Double? {
         let raw = value.trimmingCharacters(in: .whitespaces).lowercased()
-        let keywords: [String: Double] = [
-            "xx-small": 9, "x-small": 10, "small": 13, "medium": 16,
-            "large": 18, "x-large": 24, "xx-large": 32
-        ]
-        if let size = keywords[raw] { return size }
+        if let size = Self.cssKeywordSizes[raw] { return size }
         /// Zahl vor einer Einheit, z. B. „12“ aus „12px“.
         ///
         /// - Parameter suffix: Einheit („px“, „pt“ …).
@@ -418,10 +438,10 @@ nonisolated enum HTMLRichTextParser {
             raw.hasSuffix(suffix) ? Double(raw.dropLast(suffix.count).trimmingCharacters(in: .whitespaces)) : nil
         }
         if let px = number("px") { return px }
-        if let pt = number("pt") { return pt * 4 / 3 }
-        if let em = number("rem") { return em * 16 }
+        if let pt = number("pt") { return pt * Self.pixelsPerPoint }
+        if let em = number("rem") { return em * Self.defaultFontSizePx }
         if let em = number("em") { return em * parent }
-        if let percent = number("%") { return percent / 100 * parent }
+        if let percent = number("%") { return percent / Self.percentBase * parent }
         return Double(raw)
     }
 
@@ -430,8 +450,7 @@ nonisolated enum HTMLRichTextParser {
     /// - Parameter value: „1“ … „7“.
     /// - Returns: Größe oder `nil`.
     static func fontTagSize(_ value: String) -> Double? {
-        let sizes: [Int: Double] = [1: 10, 2: 13, 3: 16, 4: 18, 5: 24, 6: 32, 7: 48]
-        return Int(value.trimmingCharacters(in: .whitespaces)).flatMap { sizes[$0] }
+        Int(value.trimmingCharacters(in: .whitespaces)).flatMap { Self.fontTagSizes[$0] }
     }
 
     /// Prüft ein Link-Ziel.
@@ -452,7 +471,7 @@ nonisolated enum HTMLRichTextParser {
     /// - Returns: Breite oder `nil`.
     static func parseWidth(_ value: String?) -> Int? {
         guard var raw = value?.trimmingCharacters(in: .whitespaces).lowercased(), !raw.isEmpty else { return nil }
-        if raw.hasSuffix("px") { raw = String(raw.dropLast(2)) }
+        if raw.hasSuffix("px") { raw = String(raw.dropLast("px".count)) }
         guard let number = Double(raw.trimmingCharacters(in: .whitespaces)), number > 0 else { return nil }
         return Int(number.rounded())
     }
@@ -629,7 +648,7 @@ nonisolated enum HTMLRichTextParser {
                 switch property {
                 case "font-weight":
                     if value == "bold" || value == "bolder" { result.bold = true }
-                    else if let weight = Int(value) { result.bold = weight >= 600 }
+                    else if let weight = Int(value) { result.bold = weight >= HTMLRichTextParser.minimumBoldWeight }
                     else if value == "normal" || value == "lighter" { result.bold = false }
                 case "font-style":
                     result.italic = value == "italic" || value == "oblique"
@@ -637,7 +656,7 @@ nonisolated enum HTMLRichTextParser {
                     result.underline = value.contains("underline")
                     if value.contains("line-through") || value.contains("overline") { isLossless = false }
                 case "font-size":
-                    let parent = result.fontSizePx ?? 16
+                    let parent = result.fontSizePx ?? HTMLRichTextParser.defaultFontSizePx
                     if let size = HTMLRichTextParser.parseFontSize(value, parent: parent) {
                         result.fontSizePx = size
                     } else {

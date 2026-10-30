@@ -1,6 +1,9 @@
 //
 //  ReplyBuilder.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 23.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Erzeugt die Vorbelegung des Composers für Neue Mail, Antworten,
 //  Allen antworten und Weiterleiten – Absende-Postfach, Empfänger, Betreff,

@@ -1,6 +1,9 @@
 //
 //  MailboxNameCodec.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 30.09.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Wandelt IMAP-Ordnernamen zwischen der Server-Form „modified UTF-7“
 //  (RFC 3501, Abschnitt 5.1.3) und lesbarem Text um:

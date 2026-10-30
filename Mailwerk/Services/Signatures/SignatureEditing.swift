@@ -1,6 +1,9 @@
 //
 //  SignatureEditing.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 13.10.2026
+//  Geändert: 13.10.2026
 //
 //  Zweck: Umwandlungen zwischen gespeicherter Signatur (HTML mit
 //  Logo-Platzhalter) und formatiertem Text im Editor:

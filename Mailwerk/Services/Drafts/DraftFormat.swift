@@ -1,6 +1,9 @@
 //
 //  DraftFormat.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 13.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Aufbau des HTML-Teils eines Entwurfs, damit Mailwerk ihn später
 //  wieder in seine Teile zerlegen kann – eigener Text, Signatur, Zitat –

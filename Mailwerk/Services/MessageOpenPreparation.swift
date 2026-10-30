@@ -1,6 +1,9 @@
 //
 //  MessageOpenPreparation.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 25.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Bereitet das Öffnen einer Mail abseits des Hauptthreads vor
 //  (Prüfbericht P-11). Bisher lief beim Öffnen alles synchron auf dem

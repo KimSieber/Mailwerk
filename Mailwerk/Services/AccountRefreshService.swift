@@ -1,6 +1,9 @@
 //
 //  AccountRefreshService.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 25.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Ruft ein Postfach über *eine* IMAP-Verbindung ab – Spamfilter
 //  (bzw. Suche nach dem Spam-Ordner), Posteingang und Spam-Ordner

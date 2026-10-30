@@ -1,6 +1,9 @@
 //
 //  SearchPerson.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 15.10.2026
+//  Geändert: 16.10.2026
 //
 //  Zweck: Personen für die Namensvorschläge der Suche. Quelle sind die
 //  Adressen (Von, An, Cc) der Mails im Suchbereich – vorgeschlagen wird

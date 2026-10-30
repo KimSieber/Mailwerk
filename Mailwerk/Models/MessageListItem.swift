@@ -1,6 +1,9 @@
 //
 //  MessageListItem.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 07.10.2026
+//  Geändert: 24.10.2026
 //
 //  Zweck: Eintrag der Nachrichtenliste – alles, was eine Listenzeile und
 //  die Wischaktionen brauchen, aber ohne Text- und HTML-Inhalt der Mail.

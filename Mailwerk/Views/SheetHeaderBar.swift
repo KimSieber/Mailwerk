@@ -1,6 +1,9 @@
 //
 //  SheetHeaderBar.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 27.10.2026
+//  Geändert: 30.10.2026
 //
 //  Zweck: Einheitliche Kopfleisten und Kreisknöpfe des Mac.
 //
@@ -211,8 +214,8 @@ struct SheetHeaderBar<Leading: View, Trailing: View>: View {
     /// Verarbeitung: Der Titel steht unabhängig von den Knöpfen genau in
     /// der Mitte; reicht der Platz nicht, wird er gekürzt.
     var body: some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 8) { leading() }
+        HStack(spacing: AppSpacing.regular) {
+            HStack(spacing: AppSpacing.regular) { leading() }
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(title)
                 .font(.headline)
@@ -220,10 +223,10 @@ struct SheetHeaderBar<Leading: View, Trailing: View>: View {
                 .truncationMode(.tail)
                 .layoutPriority(1)
                 .accessibilityAddTraits(.isHeader)
-            HStack(spacing: 8) { trailing() }
+            HStack(spacing: AppSpacing.regular) { trailing() }
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, AppSpacing.large)
         .frame(height: Self.height)
         .frame(maxWidth: .infinity)
         .background(AppTheme.background)

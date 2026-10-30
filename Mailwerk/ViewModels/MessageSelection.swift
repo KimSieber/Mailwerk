@@ -1,6 +1,9 @@
 //
 //  MessageSelection.swift
 //  Mailwerk
+//  Autor: Kim Sieber
+//  Erstellt: 12.10.2026
+//  Geändert: 24.10.2026
 //
 //  Zweck: Regeln für Aktionen an mehreren ausgewählten Mails.
 //
