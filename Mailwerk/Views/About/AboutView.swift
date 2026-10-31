@@ -3,7 +3,7 @@
 //  Mailwerk
 //  Autor: Kim Sieber
 //  Erstellt: 29.10.2026
-//  Geändert: 30.10.2026
+//  Geändert: 31.10.2026
 //
 //  Zweck: „Über Mailwerk“ – App-Icon, Name, Version mit Build-Nummer,
 //  Urheberzeile, Kontaktadresse, Webseite und der Zugang zu den
@@ -27,21 +27,24 @@
 //  ist). Die Webseite öffnet der Browser.
 //
 //  App-Icon: Mac aus dem Bundle über NSWorkspace (zeigt das fertige Icon
-//  samt Glas-Effekt); iPhone/iPad über den Icon-Namen aus der Info.plist,
-//  notfalls ein neutrales Briefsymbol auf Mailwerk-Blau.
+//  samt Glas-Effekt); iPhone/iPad als eigenes Bild `AboutIcon` im
+//  Asset-Katalog (aus Icon Composer exportiert, 1024 × 1024). Das App-Icon
+//  selbst ist eine Icon-Composer-Datei (`AppIcon.icon`) und lässt sich
+//  nicht als Bild laden: `UIImage(named: "AppIcon")` brach im Simulator
+//  mit iOS 27 mit „Need an imageRef“ ab, statt `nil` zu liefern
+//  (Absturz 31.10.2026).
+//  Ändert sich das Icon, das Bild neu exportieren.
 //
 //  Abgrenzung: Angaben (Version, Kontakt, Webseite) → AppInfo; Lizenzen →
 //  LicenseListView, OpenSourceLicenses.
 //
-//  Abhängigkeiten: SwiftUI, UIKit bzw. AppKit (App-Icon), AppInfo,
+//  Abhängigkeiten: SwiftUI, AppKit (App-Icon Mac), Asset `AboutIcon`
+//  (iPhone/iPad), AppInfo,
 //  ExternalMailtoRouter, LicenseListView, AppTheme, SheetHeaderBar,
 //  PlatformSheetSize, ExternalMailtoPresenter (countsAsOpenWindow).
 //
 
 import SwiftUI
-#if canImport(UIKit)
-import UIKit
-#endif
 #if os(macOS)
 import AppKit
 #endif
@@ -98,7 +101,7 @@ struct AppIconImage: View {
     /// Kantenlänge in Punkt.
     let size: CGFloat
 
-    /// Icon aus dem Bundle; auf iPhone/iPad notfalls ein Ersatzsymbol.
+    /// Icon der App (Mac aus dem Bundle, iPhone/iPad aus dem Asset-Katalog).
     var body: some View {
         iconView
             .frame(width: size, height: size)
@@ -113,42 +116,12 @@ struct AppIconImage: View {
             .interpolation(.high)
     }
     #else
-    /// iPhone/iPad: Icon mit abgerundeten Ecken wie auf dem Home-Bildschirm.
-    @ViewBuilder
+    /// iPhone/iPad: exportiertes Icon aus dem Asset-Katalog; Form und
+    /// abgerundete Ecken sind im Bild enthalten.
     private var iconView: some View {
-        let shape = RoundedRectangle(cornerRadius: size * 0.2237, style: .continuous)
-        if let image = Self.bundleIcon() {
-            Image(uiImage: image)
-                .resizable()
-                .interpolation(.high)
-                .clipShape(shape)
-        } else {
-            shape
-                .fill(Color.accentColor)
-                .overlay {
-                    Image(systemName: "envelope.fill")
-                        .font(.system(size: size * 0.42))
-                        .foregroundStyle(.white)
-                }
-        }
-    }
-
-    /// Lädt das App-Icon über die Namen aus der Info.plist.
-    ///
-    /// Verarbeitung: Probiert den Icon-Namen (`CFBundleIconName`), dann die
-    /// Icon-Dateien (größte zuerst), zuletzt „AppIcon“.
-    ///
-    /// - Returns: Icon, oder `nil`, wenn keines gefunden wurde.
-    private static func bundleIcon() -> UIImage? {
-        let icons = Bundle.main.object(forInfoDictionaryKey: "CFBundleIcons") as? [String: Any]
-        let primary = icons?["CFBundlePrimaryIcon"] as? [String: Any]
-        let iconName = primary?["CFBundleIconName"] as? String
-        let iconFiles = (primary?["CFBundleIconFiles"] as? [String]) ?? []
-        let candidates = [iconName].compactMap { $0 } + iconFiles.reversed() + ["AppIcon"]
-        for name in candidates {
-            if let image = UIImage(named: name) { return image }
-        }
-        return nil
+        Image("AboutIcon")
+            .resizable()
+            .interpolation(.high)
     }
     #endif
 }

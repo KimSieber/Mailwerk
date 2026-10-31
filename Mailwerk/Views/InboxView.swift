@@ -3,7 +3,7 @@
 //  Mailwerk
 //  Autor: Kim Sieber
 //  Erstellt: 18.09.2026
-//  Geändert: 30.10.2026
+//  Geändert: 31.10.2026
 //
 //  Zweck: Hauptansicht mit der Nachrichtenliste. Zeigt die gewählte
 //  Ansicht (alle Posteingänge, Ungelesen, Gekennzeichnet, Spam, ein
@@ -13,9 +13,9 @@
 //  (gelesen, kennzeichnen),
 //  das Kontextmenü einer Mail per langem Drücken (dasselbe Menü wie in
 //  der Mailansicht, siehe MessageMenu), „Rückgängig“ für Kennzeichnung
-//  und Gelesen-Status, die Mehrfachauswahl (über „Auswählen“ im
-//  Kontextmenü; Auswahlkreise, „Alle auswählen“, „Fertig“ und schwebende
-//  Befehlsleiste unten), die Zeile „Ältere Nachrichten laden“, die
+//  und Gelesen-Status, die Mehrfachauswahl (iPhone/iPad über „Auswählen“
+//  im Kontextmenü; Auswahlkreise, „Alle auswählen“, „Fertig“ und
+//  schwebende Befehlsleiste unten; Mac siehe unten), die Zeile „Ältere Nachrichten laden“, die
 //  Ordnerleiste sowie Einstellungen (Zahnrad: Postfächer, Spamfilter,
 //  auf iPhone/iPad zuletzt „Über Mailwerk“). Sortieren, Suche und Verfassen liegen
 //  auf dem iPhone/iPad in der eigenen Leiste am unteren Rand (einhändige
@@ -100,7 +100,12 @@
 //  öffnet die Mail rechts, die Pfeiltasten bewegen die Auswahl, Mails
 //  lassen sich auf einen Ordner der festen Leiste ziehen, ein Rechtsklick
 //  öffnet das Kontextmenü, und die Zeile unter dem Mauszeiger ist dezent
-//  hervorgehoben. Treffer der Serversuche öffnen sich in der Mailansicht
+//  hervorgehoben. Mehrfachauswahl wie in Apple Mail (`macSelection`,
+//  Regeln in MacListSelection): ⌘-Klick wählt einzelne Mails dazu,
+//  ⇧-Klick einen Bereich, ⌘A alle; bei mehreren zeigt die Mailansicht
+//  „n Mails ausgewählt“, und Kontextmenü (MessageSelectionMenuItems) bzw.
+//  Entf-Taste wirken auf alle ausgewählten Mails. Den Auswahlmodus von
+//  iPhone/iPad gibt es auf dem Mac nicht. Treffer der Serversuche öffnen sich in der Mailansicht
 //  (`selectedServerHit`).
 //
 //  Alle Layouts verwenden dieselbe Liste und dieselbe Zeile; sie
@@ -208,6 +213,10 @@ struct InboxView: View {
     @State private var searchFocusTick = 0
     /// In der Mailansicht geöffneter Treffer der Serversuche; `nil` = keiner.
     @State private var selectedServerHit: MessageListItem?
+    /// Ausgewählte Mails der Liste (⌘-/⇧-Klick). Genau eine = die
+    /// geöffnete Mail (`selectedMessageID`); mehrere = keine geöffnet,
+    /// die Mailansicht zeigt die Anzahl.
+    @State private var macSelection: Set<String> = []
     #endif
     /// Postfach, das gerade neu angemeldet wird; `nil` = keins.
     @State private var renewingAccountID: UUID?
@@ -601,6 +610,9 @@ struct InboxView: View {
                 }
             }
             .onChange(of: viewModel.messages) { oldMessages, newMessages in
+                #if os(macOS)
+                pruneMacSelection()
+                #endif
                 guard selectedMessageID != nil else { return }
                 let next = MessageStepping.replacement(
                     for: selectedMessageID,
@@ -622,6 +634,9 @@ struct InboxView: View {
             .onChange(of: selectedMessageID) { _, id in
                 // Eine Mail der Liste ersetzt einen geöffneten Servertreffer.
                 if id != nil { selectedServerHit = nil }
+                // Weiterschalten, Nachrücken nach Löschen: Die Auswahl der
+                // Liste folgt der geöffneten Mail.
+                if let id, macSelection != [id] { macSelection = [id] }
             }
             #endif
     }
@@ -898,6 +913,7 @@ struct InboxView: View {
         isDetailFullscreen = false
         #if os(macOS)
         selectedServerHit = nil
+        macSelection = []
         #endif
     }
 
@@ -998,7 +1014,127 @@ struct InboxView: View {
     /// - Parameter hit: Treffer (noch nicht im Cache).
     private func openServerHit(_ hit: MessageListItem) {
         selectedMessageID = nil
+        macSelection = []
         selectedServerHit = hit
+    }
+
+    // MARK: - Mehrfachauswahl (Mac)
+
+    /// Auswahl der Liste auf dem Mac (Mehrfachauswahl mit ⌘ und ⇧).
+    private var macListSelection: Binding<Set<String>> {
+        Binding(
+            get: { macSelection },
+            set: { applyMacSelection($0) }
+        )
+    }
+
+    /// Ausgewählte Mails, wenn es mehrere sind; sonst leer (eine einzelne
+    /// ist die geöffnete Mail).
+    private var macMultiSelection: [MessageListItem] {
+        guard macSelection.count > 1 else { return [] }
+        return viewModel.visibleMessages.filter { macSelection.contains($0.id) }
+    }
+
+    /// Übernimmt eine neue Auswahl: keine Mail → Mailansicht schließen,
+    /// eine → öffnen, mehrere → „n Mails ausgewählt“ (MacListSelection).
+    ///
+    /// - Parameter ids: Von der Liste gemeldete Kennungen.
+    private func applyMacSelection(_ ids: Set<String>) {
+        let outcome = MacListSelection.outcome(
+            for: ids,
+            visibleIDs: viewModel.visibleMessages.map(\.id)
+        )
+        switch outcome {
+        case .ignore:
+            return
+        case .empty:
+            closeSelectedMessage()
+        case .open(let id):
+            macSelection = [id]
+            selectedMessageID = id
+        case .multiple(let mails):
+            macSelection = mails
+            selectedMessageID = nil
+            selectedServerHit = nil
+        }
+    }
+
+    /// Entfernt Mails, die nicht mehr in der Liste stehen, aus einer
+    /// Mehrfachauswahl (nach Löschen, Verschieben, Abruf). Eine einzelne
+    /// geöffnete Mail regelt das Nachrücken (`MessageStepping`).
+    private func pruneMacSelection() {
+        guard macSelection.count > 1 else { return }
+        let kept = MacListSelection.pruned(macSelection, visibleIDs: viewModel.visibleMessages.map(\.id))
+        if kept != macSelection { applyMacSelection(kept) }
+    }
+
+    /// Kontextmenü der Liste: für eine Mail das volle Menü, für mehrere
+    /// ausgewählte die Sammelaktionen. Ein Rechtsklick auf eine nicht
+    /// ausgewählte Zeile gilt nur für diese.
+    ///
+    /// - Parameter ids: Zeilen, für die das Menü gilt.
+    /// - Returns: Einträge; leer bei Zeilen ohne Mail (Serversuche).
+    @ViewBuilder
+    private func macContextMenu(for ids: Set<String>) -> some View {
+        let items = viewModel.visibleMessages.filter { ids.contains($0.id) }
+        if items.count == 1, let item = items.first {
+            MessageMenuItems(
+                context: MessageMenuContext(item),
+                onAction: { handleMenuAction($0, for: item) }
+            ) {
+                EmptyView()
+            }
+        } else if items.count > 1 {
+            MessageSelectionMenuItems(items: items) { action in
+                handleSelectionMenuAction(action, for: items)
+            }
+        }
+    }
+
+    /// Führt eine Aktion des Kontextmenüs für mehrere Mails aus – über die
+    /// Sammelaktionen des ViewModels (dieselben wie die Befehlsleiste auf
+    /// iPhone/iPad, mit „Rückgängig“).
+    ///
+    /// - Parameters:
+    ///   - action: Gewählte Aktion.
+    ///   - items: Betroffene Mails.
+    private func handleSelectionMenuAction(_ action: MessageMenuAction, for items: [MessageListItem]) {
+        viewModel.selectedIDs = Set(items.map(\.id))
+        switch action {
+        case .toggleFlag:
+            runSelectionAction { await viewModel.toggleFlagForSelection() }
+        case .toggleRead:
+            runSelectionAction { await viewModel.toggleReadForSelection() }
+        case .move:
+            showingSelectionMove = true
+        case .delete:
+            confirmDeleteSelection()
+        case .select, .reply, .spam:
+            break
+        }
+    }
+
+    /// Mailansicht bei mehreren ausgewählten Mails: Anzahl statt Mail.
+    ///
+    /// - Parameters:
+    ///   - count: Anzahl ausgewählter Mails.
+    ///   - onBack: Zurück-Knopf (eine Spalte); `nil` = keiner.
+    /// - Returns: Platzhalter über die ganze Fläche.
+    private func macMultiSelectionPlaceholder(count: Int, onBack: (() -> Void)?) -> some View {
+        VStack(spacing: AppSpacing.medium) {
+            Image(systemName: "rectangle.stack")
+                .font(.largeTitle)
+            Text("\(count) Mails ausgewählt")
+                .font(.title3)
+        }
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .topLeading) {
+            if let onBack {
+                Button("Zurück", systemImage: "chevron.left", action: onBack)
+                    .padding(AppSpacing.medium)
+            }
+        }
     }
 
     /// Aktionen für die zusätzlichen Menübefehle des Mac (MacMenuCommands).
@@ -1006,17 +1142,14 @@ struct InboxView: View {
     /// Verarbeitung: Eine Aktion fehlt (`nil`), solange sie nicht möglich
     /// ist – der Befehl ist dann ausgegraut. „Alle E-Mails auswählen“ gibt
     /// es nicht in Entwürfen, dort öffnet ein Klick die Mail zum
-    /// Weiterbearbeiten; sonst beginnt es die Mehrfachauswahl und wählt
-    /// alle Mails der Liste.
+    /// Weiterbearbeiten; sonst wählt es alle Mails der Liste aus
+    /// (`macSelection`).
     private var macMenuActions: MacMenuActions {
         MacMenuActions(
             toggleSidebar: { toggleFolders() },
             isSidebarVisible: isSidebarVisible,
             selectAll: InboxCommandActions.enabled(!viewModel.visibleMessages.isEmpty && !showsDrafts) {
-                withAnimation(AppAnimation.standard) {
-                    viewModel.isSelecting = true
-                    if !viewModel.isAllSelected { viewModel.toggleSelectAll() }
-                }
+                applyMacSelection(Set(viewModel.visibleMessages.map(\.id)))
             },
             showAccounts: { showingAccounts = true }
         )
@@ -1032,7 +1165,7 @@ struct InboxView: View {
     /// zum rechten Rand. Die feste Ordnerleiste nimmt gezogene Mails an.
     /// Wird sie sichtbar, schließt sich eine eingeblendete Leiste.
     private var macColumns: some View {
-        let hasDetail = selectedMessageID != nil || selectedServerHit != nil
+        let hasDetail = selectedMessageID != nil || selectedServerHit != nil || macSelection.count > 1
         let columns = MacColumnLayout.columns(
             width: macWindowWidth,
             sidebarEnabled: macSidebarEnabled,
@@ -1073,7 +1206,8 @@ struct InboxView: View {
     }
 
     /// Mailansicht des Mac: die geöffnete Mail bzw. ein Treffer der
-    /// Serversuche, jeweils mit eigener Kopfleiste.
+    /// Serversuche, jeweils mit eigener Kopfleiste; bei mehreren
+    /// ausgewählten Mails deren Anzahl.
     ///
     /// - Parameter onBack: Zurück-Knopf (eine Spalte); `nil` = keiner.
     /// - Returns: Mailansicht.
@@ -1097,30 +1231,23 @@ struct InboxView: View {
                 onBack: onBack
             )
             .id(hit.id)
+        } else if macSelection.count > 1 {
+            macMultiSelectionPlaceholder(count: macSelection.count, onBack: onBack)
         }
     }
 
     /// Kopfleiste über der Liste (Mac): Knöpfe, Titel mit Stand und das
-    /// Suchfeld; im Auswahlmodus „Alle auswählen“, Anzahl und „Fertig“.
+    /// Suchfeld.
     private var macListHeader: some View {
         let statusText: (() -> String)? = viewModel.syncState.map { state in
             { InboxTitle.statusText(state, connectionStatus: connectionStatus) }
         }
-        let selection: MacListSelectionState? = viewModel.isSelecting
-            ? MacListSelectionState(
-                isAllSelected: viewModel.isAllSelected,
-                count: viewModel.selectedIDs.count,
-                onToggleAll: { viewModel.toggleSelectAll() },
-                onDone: { withAnimation(AppAnimation.standard) { viewModel.endSelection() } }
-            )
-            : nil
         return MacListHeaderBar(
             title: viewModel.selection.title,
             systemImage: viewModel.selection.systemImage,
             accountColor: selectedAccountColor,
             statusText: statusText,
             statusIsWarning: connectionStatus != nil,
-            selection: selection,
             onFolders: { toggleFolders() },
             isLoading: viewModel.isLoading,
             canRefresh: !accountStore.accounts.isEmpty,
@@ -1268,15 +1395,38 @@ struct InboxView: View {
             previousMail: InboxCommandActions.enabled(steppingTarget(.previous) != nil) {
                 stepMessage(.previous)
             },
-            deleteMail: InboxCommandActions.enabled(usesColumns && selectedMessageItem != nil && !viewModel.isSelecting) {
-                if let item = selectedMessageItem {
-                    handleMenuAction(.delete, for: item)
-                }
+            deleteMail: InboxCommandActions.enabled(canDeleteFromCommand) {
+                deleteFromCommand()
             },
             exitFullscreen: InboxCommandActions.enabled(isDetailFullscreen && selectedMessageID != nil && !showingFolders) {
                 withAnimation(AppAnimation.standard) { isDetailFullscreen = false }
             }
         )
+    }
+
+    /// `true`, wenn Entf bzw. „Löschen“ im Menü etwas löscht: die
+    /// geöffnete Mail im Spaltengerüst oder (Mac) mehrere ausgewählte.
+    private var canDeleteFromCommand: Bool {
+        guard usesColumns, !viewModel.isSelecting else { return false }
+        #if os(macOS)
+        if !macMultiSelection.isEmpty { return true }
+        #endif
+        return selectedMessageItem != nil
+    }
+
+    /// Löscht nach Rückfrage die geöffnete Mail bzw. (Mac) alle
+    /// ausgewählten Mails.
+    private func deleteFromCommand() {
+        #if os(macOS)
+        let items = macMultiSelection
+        if !items.isEmpty {
+            handleSelectionMenuAction(.delete, for: items)
+            return
+        }
+        #endif
+        if let item = selectedMessageItem {
+            handleMenuAction(.delete, for: item)
+        }
     }
 
     // MARK: - Symbolleiste
@@ -1593,12 +1743,16 @@ struct InboxView: View {
             onFlag: { runSelectionAction { await viewModel.toggleFlagForSelection() } },
             onRead: { runSelectionAction { await viewModel.toggleReadForSelection() } },
             onMove: { showingSelectionMove = true },
-            onDelete: {
-                listConfirmation = MessageActionDialogs.deleteConfirmation(count: items.count) {
-                    runSelectionAction { await viewModel.deleteSelection() }
-                }
-            }
+            onDelete: { confirmDeleteSelection() }
         )
+    }
+
+    /// Fragt nach, ob die ausgewählten Mails (`viewModel.selectedIDs`)
+    /// gelöscht werden sollen, und löscht sie dann.
+    private func confirmDeleteSelection() {
+        listConfirmation = MessageActionDialogs.deleteConfirmation(count: viewModel.selectedItems.count) {
+            runSelectionAction { await viewModel.deleteSelection() }
+        }
     }
 
     /// Startet eine Sammelaktion. Das Ende des Auswahlmodus animiert die
@@ -1641,13 +1795,25 @@ struct InboxView: View {
     /// nach dem Löschen wechselt. Ränder und Zeilenabstände sind dort fest
     /// (`ColumnListMargins`), damit nichts springt, wenn die Liste von
     /// voller Breite auf Spaltenbreite wechselt. Im Auswahlmodus und in
-    /// Entwürfen gilt die gewöhnliche Liste.
+    /// Entwürfen gilt die gewöhnliche Liste. Der Mac wählt mit ⌘ und ⇧
+    /// mehrere Mails (`macListSelection`); das Kontextmenü hängt dort an der
+    /// Liste und gilt für die Auswahl (`macContextMenu`).
     ///
     /// Eigene Eigenschaft statt Teil von `body`, damit der Compiler den
     /// Ausdruck in vertretbarer Zeit prüfen kann.
     private var messageList: some View {
         ScrollViewReader { proxy in
             Group {
+                #if os(macOS)
+                // Entwürfe: Ein Klick öffnet das Verfassen-Fenster, keine
+                // Auswahl; das Kontextmenü braucht trotzdem eine Bindung.
+                List(selection: showsDrafts ? Binding<Set<String>>.constant([]) : macListSelection) {
+                    messageListRows
+                }
+                .contextMenu(forSelectionType: String.self) { ids in
+                    macContextMenu(for: ids)
+                }
+                #else
                 if usesColumns && !viewModel.isSelecting && !showsDrafts {
                     List(selection: columnSelection) {
                         messageListRows
@@ -1657,6 +1823,7 @@ struct InboxView: View {
                         messageListRows
                     }
                 }
+                #endif
             }
             .modifier(ColumnListMargins(isActive: usesColumns))
             #if os(iOS)
@@ -1689,10 +1856,7 @@ struct InboxView: View {
             // Auswahlfarbe des Systems. Auf dem Mac tönt sie zusätzlich die
             // Zeile unter dem Mauszeiger.
             #if os(macOS)
-            .modifier(HoverCardRowBackground(
-                isSelected: viewModel.isSelecting && viewModel.selectedIDs.contains(message.id),
-                isOpened: !viewModel.isSelecting && message.id == selectedMessageID
-            ))
+            .modifier(HoverCardRowBackground(isOpened: macSelection.contains(message.id)))
             #else
             .cardRowBackground(
                 isSelected: viewModel.isSelecting && viewModel.selectedIDs.contains(message.id),
@@ -1737,7 +1901,8 @@ struct InboxView: View {
         }
     }
 
-    /// Auswahl der Liste im Spaltengerüst: die geöffnete Mail.
+    #if os(iOS)
+    /// Auswahl der Liste im Spaltengerüst (iPad): die geöffnete Mail.
     ///
     /// Verarbeitung: Ein Tipp oder eine Pfeiltaste setzt die Auswahl und
     /// öffnet damit die Mail rechts; hebt die Liste die Auswahl auf, schließt
@@ -1754,6 +1919,7 @@ struct InboxView: View {
             }
         )
     }
+    #endif
 
     /// Hinweis am Listenende der Sichten, die jeder Abruf unabhängig vom
     /// Alter vollständig holt („Ungelesen“, „Mit Kennzeichnung“) – dort
@@ -1767,13 +1933,13 @@ struct InboxView: View {
         }
     }
 
-    /// Auswahlbindung der Liste: nur im Auswahlmodus. Auf iPhone/iPad
-    /// zeichnet die Liste dann Auswahlkreise; auf dem Mac gilt die übliche
-    /// Mehrfachauswahl (Klick ersetzt die Auswahl, ⌘- und ⇧-Klick erweitern
-    /// sie).
+    #if os(iOS)
+    /// Auswahlbindung der Liste (iPhone/iPad): nur im Auswahlmodus; die
+    /// Liste zeichnet dann Auswahlkreise.
     private var listSelection: Binding<Set<String>>? {
         viewModel.isSelecting ? $viewModel.selectedIDs : nil
     }
+    #endif
 
     /// Farbe je Postfach – einmal je Listenaufbau statt einer Suche je Zeile.
     /// Postfächer ohne Farbe fehlen.
@@ -1864,6 +2030,9 @@ struct InboxView: View {
                 }
                 .tint(.orange)
             }
+            #if os(iOS)
+            // Mac: Kontextmenü an der Liste (`macContextMenu`), damit es
+            // für alle ausgewählten Mails gilt.
             .contextMenu {
                 MessageMenuItems(
                     context: MessageMenuContext(message),
@@ -1873,6 +2042,7 @@ struct InboxView: View {
                     EmptyView()
                 }
             }
+            #endif
             // Ziehen auf einen Ordner nur, wo die feste Ordnerleiste daneben
             // stehen kann (Spaltengerüst von iPad und Mac), und nicht im
             // Auswahlmodus.
@@ -2711,9 +2881,7 @@ private struct MessageDragSource: ViewModifier {
 /// InboxView, würde jede Mausbewegung über eine Zeilengrenze die ganze
 /// Liste neu aufbauen lassen.
 private struct HoverCardRowBackground: ViewModifier {
-    /// Die Zeile ist ausgewählt (Auswahlmodus).
-    let isSelected: Bool
-    /// Die Zeile ist die geöffnete Mail.
+    /// Die Zeile ist geöffnet bzw. ausgewählt.
     let isOpened: Bool
 
     /// Mauszeiger steht über der Zeile.
@@ -2726,7 +2894,7 @@ private struct HoverCardRowBackground: ViewModifier {
     func body(content: Content) -> some View {
         content
             .onHover { isHovered = $0 }
-            .cardRowBackground(isSelected: isSelected, isOpened: isOpened, isHovered: isHovered)
+            .cardRowBackground(isOpened: isOpened, isHovered: isHovered)
     }
 }
 #endif

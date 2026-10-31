@@ -3,7 +3,7 @@
 //  Mailwerk
 //  Autor: Kim Sieber
 //  Erstellt: 27.10.2026
-//  Geändert: 29.10.2026
+//  Geändert: 31.10.2026
 //
 //  Zweck: Zusätzliche Menübefehle des Mac, die über die Befehle der
 //  Mailliste (InboxCommands) hinausgehen:
@@ -12,8 +12,8 @@
 //    wirkt wie der Ordner-Knopf über der Liste: in breiten Fenstern
 //    schaltet er die feste Ordnerleiste, in schmaleren öffnet er die
 //    einblendbare (MacColumnLayout);
-//  - Menü „Bearbeiten“: „Alle E-Mails auswählen“ (⌥⌘A) – beginnt die
-//    Mehrfachauswahl und wählt alle Mails der Liste;
+//  - Menü „Bearbeiten“: „Alle E-Mails auswählen“ (⌥⌘A) – wählt alle
+//    Mails der Liste aus (Mehrfachauswahl wie mit ⌘- bzw. ⇧-Klick);
 //  - Menü „Ablage“: „Postfächer …“ (⌘,) – öffnet die Postfachverwaltung;
 //  - Menü „Mailwerk“: „Über Mailwerk“ – ersetzt den Info-Dialog des
 //    Systems und öffnet das eigene Fenster (AboutWindowView), das auch

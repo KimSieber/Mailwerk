@@ -3,7 +3,7 @@
 //  Mailwerk
 //  Autor: Kim Sieber
 //  Erstellt: 27.10.2026
-//  Geändert: 30.10.2026
+//  Geändert: 31.10.2026
 //
 //  Zweck: Kopf der Mailliste auf dem Mac – ein gewöhnlicher View statt
 //  Einträgen der System-Symbolleiste. Dadurch fasst macOS keine Knöpfe
@@ -14,8 +14,8 @@
 //     selbst den Kreisel), Sortieren (bei geänderter Sortierung blauer
 //     Kreis), Suchen (blauer Kreis – Wiedererkennungsmerkmal), Neue Mail;
 //     rechts außen Einstellungen. Alle als Kreise 32 × 32 pt.
-//     Im Auswahlmodus ersetzt dieselbe Zeile „Alle auswählen / Auswahl
-//     aufheben“, „n ausgewählt“ und „Fertig“ (gleiche Höhe, kein Springen).
+//     Einen Auswahlmodus gibt es auf dem Mac nicht: Mehrere Mails wählt
+//     ⌘- bzw. ⇧-Klick in der Liste (InboxView).
 //  2. Titel der Ansicht (bei einem Ordner mit Farbpunkt des Postfachs),
 //     darunter klein Stand bzw. Verbindungshinweis; minütlich neu.
 //  3. Suchfeld (MacSearchField) – nur solange die Suche aktiv ist.
@@ -36,18 +36,6 @@
 #if os(macOS)
 import SwiftUI
 
-/// Zustand des Auswahlmodus für den Kopf der Mailliste (Mac).
-struct MacListSelectionState {
-    /// Alle Mails sind ausgewählt.
-    let isAllSelected: Bool
-    /// Anzahl ausgewählter Mails.
-    let count: Int
-    /// „Alle auswählen“ bzw. „Auswahl aufheben“.
-    let onToggleAll: () -> Void
-    /// „Fertig“ – beendet den Auswahlmodus.
-    let onDone: () -> Void
-}
-
 /// Kopf der Mailliste (Mac): Knöpfe, Titel mit Stand, Suchfeld.
 struct MacListHeaderBar<SortMenu: View, SettingsMenu: View>: View {
     /// Titel der Ansicht.
@@ -61,8 +49,6 @@ struct MacListHeaderBar<SortMenu: View, SettingsMenu: View>: View {
     let statusText: (() -> String)?
     /// `true`, wenn die Standzeile einen Verbindungshinweis trägt (orange).
     let statusIsWarning: Bool
-    /// Auswahlmodus; `nil` = gewöhnliche Knopfzeile.
-    let selection: MacListSelectionState?
     /// Ordnerleiste ein-/ausblenden bzw. öffnen.
     let onFolders: () -> Void
     /// Ein Abruf läuft.
@@ -94,14 +80,8 @@ struct MacListHeaderBar<SortMenu: View, SettingsMenu: View>: View {
     /// Kopf in drei Zeilen.
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Group {
-                if let selection {
-                    selectionRow(selection)
-                } else {
-                    buttonRow
-                }
-            }
-            .frame(height: Self.buttonRowHeight)
+            buttonRow
+                .frame(height: Self.buttonRowHeight)
 
             titleBlock
                 .padding(.bottom, search.isPresented ? 8 : 10)
@@ -177,25 +157,6 @@ struct MacListHeaderBar<SortMenu: View, SettingsMenu: View>: View {
             .fixedSize()
             .help("Einstellungen")
             .accessibilityLabel("Einstellungen")
-        }
-    }
-
-    /// Zeile im Auswahlmodus: „Alle auswählen“, Anzahl, „Fertig“.
-    ///
-    /// - Parameter selection: Zustand des Auswahlmodus.
-    /// - Returns: Zeile in der Höhe der Knopfzeile.
-    private func selectionRow(_ selection: MacListSelectionState) -> some View {
-        HStack {
-            Button(selection.isAllSelected ? "Auswahl aufheben" : "Alle auswählen") {
-                selection.onToggleAll()
-            }
-            Spacer()
-            Text("\(selection.count) ausgewählt")
-                .font(.subheadline.weight(.semibold))
-            Spacer()
-            Button("Fertig") {
-                selection.onDone()
-            }
         }
     }
 

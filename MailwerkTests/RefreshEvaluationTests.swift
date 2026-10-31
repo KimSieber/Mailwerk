@@ -82,10 +82,13 @@ struct RefreshEvaluationTests {
 
     // MARK: - WatchBridge.failureHandling
 
-    /// Verbindungsfehler lassen die Aktion offen, andere Fehler scheitern mit Text.
+    #if os(iOS) && canImport(WatchConnectivity)
+    /// Verbindungsfehler lassen die Aktion offen, andere Fehler scheitern mit
+    /// Text. Nur unter iOS – WatchBridge gibt es auf dem Mac nicht.
     @Test("Fehler einer Watch-Aktion")
     func watchFailureHandling() {
         #expect(WatchBridge.failureHandling(for: URLError(.notConnectedToInternet), spamRequest: nil) == .keepOpen)
         #expect(WatchBridge.failureHandling(for: SampleError(), spamRequest: nil) == .fail("Testfehler"))
     }
+    #endif
 }

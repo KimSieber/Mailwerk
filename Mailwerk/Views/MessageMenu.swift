@@ -3,14 +3,15 @@
 //  Mailwerk
 //  Autor: Kim Sieber
 //  Erstellt: 12.10.2026
-//  Geändert: 24.10.2026
+//  Geändert: 31.10.2026
 //
 //  Zweck: Gemeinsames Aktionsmenü einer Mail. Dasselbe Menü erscheint in
 //  der Mailansicht (Drei-Punkte-Menü) und in der Liste (Kontextmenü per
 //  langem Drücken), damit beide gleich aussehen und sich gleich bedienen.
 //
 //  Aufbau (jeder Eintrag einzeilig):
-//  - nur im Kontextmenü der Liste: „Auswählen“ (Mehrfachauswahl)
+//  - nur im Kontextmenü der Liste auf iPhone/iPad: „Auswählen“
+//    (Mehrfachauswahl; auf dem Mac wählt ⌘- bzw. ⇧-Klick)
 //  - Antworten, Allen antworten, Weiterleiten
 //  - Kennzeichnung (Symbol zeigt, was der Tipp bewirkt), Gelesen bzw.
 //    Ungelesen, Verschieben
@@ -20,6 +21,11 @@
 //    `*mail.firma.de`, `*firma.de`), darunter „Blockieren“ und „Vertrauen“
 //  - zusätzliche Einträge des Aufrufers (in der Mailansicht Teilen,
 //    Drucken, Anlagen lokal löschen), zuletzt „Mail löschen“
+//
+//  Für mehrere ausgewählte Mails (Kontextmenü der Liste auf dem Mac) gibt
+//  es ein verkürztes Menü (`MessageSelectionMenuItems`): Kennzeichnung,
+//  Gelesen bzw. Ungelesen, Verschieben, Löschen – dieselben Sammelaktionen
+//  wie die Befehlsleiste im Auswahlmodus von iPhone und iPad.
 //
 //  Die Mailansicht hängt darunter noch einen eigenen Abschnitt
 //  „Originalquelle“ an (Beschriftung hier in `MessageMenuLabels.source`);
@@ -34,7 +40,7 @@
 //  Abschnitte des Untermenüs → SpamMenuChoice.
 //
 //  Abhängigkeiten: SwiftUI, FilterAddress, SpamMenuRequest, SpamMenuSection,
-//  ComposeKind.
+//  ComposeKind, MessageSelection, MessageListItem.
 //
 
 import SwiftUI
@@ -121,6 +127,9 @@ enum MessageMenuLabels {
 
     /// Eintrag „Verschieben“.
     static let move = Entry(title: "Verschieben", systemImage: "folder", accessibility: "In Ordner verschieben")
+
+    /// Eintrag „Mails löschen“ für mehrere ausgewählte Mails.
+    static let deleteSelection = Entry(title: "Mails löschen", systemImage: "trash.fill", accessibility: "Ausgewählte Mails löschen")
 
     /// Eintrag „Mail löschen“.
     static let delete = Entry(title: "Mail löschen", systemImage: "trash.fill", accessibility: "Mail löschen")
@@ -247,9 +256,71 @@ struct MessageMenuItems<Extra: View>: View {
         action: MessageMenuAction,
         role: ButtonRole? = nil
     ) -> some View {
-        Button(role: role) {
-            onAction(action)
-        } label: {
+        MenuEntryButton(entry: entry, role: role) { onAction(action) }
+    }
+}
+
+/// Einträge des Kontextmenüs für mehrere ausgewählte Mails (Mac).
+///
+/// Die Symbole von Kennzeichnung und Gelesen zeigen wie in der
+/// Befehlsleiste, was der Klick bei dieser Auswahl bewirkt (Regeln in
+/// MessageSelection). Verschieben ist gesperrt, wenn die Mails aus
+/// mehreren Postfächern stammen.
+struct MessageSelectionMenuItems: View {
+    /// Ausgewählte Mails (mindestens zwei).
+    let items: [MessageListItem]
+    /// Empfängt die gewählte Aktion: `.toggleFlag`, `.toggleRead`, `.move`
+    /// oder `.delete`.
+    let onAction: (MessageMenuAction) -> Void
+
+    /// Abschnitte des Menüs.
+    var body: some View {
+        Section {
+            entryButton(
+                MessageMenuLabels.flag(isFlagged: MessageSelection.flagChange(for: items) == .flagged(false)),
+                action: .toggleFlag
+            )
+            entryButton(
+                MessageMenuLabels.read(isUnread: MessageSelection.readChange(for: items) == .read(true)),
+                action: .toggleRead
+            )
+            entryButton(MessageMenuLabels.move, action: .move)
+                .disabled(!MessageSelection.canMove(items))
+        }
+        Section {
+            entryButton(MessageMenuLabels.deleteSelection, action: .delete, role: .destructive)
+        }
+    }
+
+    /// Ein Eintrag des Menüs.
+    ///
+    /// - Parameters:
+    ///   - entry: Beschriftung und Symbol.
+    ///   - action: Auszulösende Aktion.
+    ///   - role: Rolle des Knopfs (z. B. destruktiv).
+    /// - Returns: Knopf.
+    private func entryButton(
+        _ entry: MessageMenuLabels.Entry,
+        action: MessageMenuAction,
+        role: ButtonRole? = nil
+    ) -> some View {
+        MenuEntryButton(entry: entry, role: role) { onAction(action) }
+    }
+}
+
+/// Knopf eines Menüeintrags: Text und Symbol, dazu die ausführliche
+/// Bezeichnung für Bedienungshilfen – für beide Menüs gleich.
+private struct MenuEntryButton: View {
+    /// Beschriftung und Symbol.
+    let entry: MessageMenuLabels.Entry
+    /// Rolle des Knopfs (z. B. destruktiv); `nil` = gewöhnlich.
+    var role: ButtonRole?
+    /// Auszuführende Aktion.
+    let action: () -> Void
+
+    /// Der Knopf.
+    var body: some View {
+        Button(role: role, action: action) {
             Label(entry.title, systemImage: entry.systemImage)
         }
         .accessibilityLabel(entry.accessibility)
