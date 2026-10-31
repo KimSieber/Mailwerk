@@ -1,13 +1,17 @@
 //
 //  WatchRootView.swift
 //  MailwerkWatch
+//  Autor: Kim Sieber
+//  Erstellt: 20.10.2026
+//  Geändert: 30.10.2026
 //
-//  Zweck: Startansicht der Watch – die vier Sammelansichten der App (Alle
+//  Zweck: Menü der Watch – die vier Sammelansichten der App (Alle
 //  Eingänge, Ungelesen mit Zähler, Mit Kennzeichnung mit Zähler, Spam),
-//  darunter der Stand und „Aktualisieren“.
+//  darunter der Stand und „Aktualisieren“. Beim Start ist „Alle Eingänge“
+//  bereits geöffnet; das Menü liegt einen Schritt zurück.
 //
 //  Aktualisiert wird beim Öffnen, bei jeder Rückkehr in den Vordergrund,
-//  per Herunterziehen und per Knopf. Ist das iPhone nicht erreichbar,
+//  per Herunterziehen (WatchPullToRefresh) und per Knopf. Ist das iPhone nicht erreichbar,
 //  zeigt die Watch ihren gespeicherten Stand mit Uhrzeit des letzten
 //  Abrufs. Hinweise des iPhones zum letzten Abruf stehen über dem Stand –
 //  alle, z. B. je nicht erreichbarem Postfach eine Zeile.
@@ -16,21 +20,23 @@
 //  WatchConnector.
 //
 //  Abhängigkeiten: SwiftUI, WatchStore, WatchConnector, WatchMailbox
-//  (WatchView), WatchMailListView.
+//  (WatchView), WatchMailListView, WatchPullToRefresh.
 //
 
 import SwiftUI
 
-/// Startansicht mit den Sammelansichten.
+/// Menü mit den Sammelansichten; startet in „Alle Eingänge“.
 struct WatchRootView: View {
     /// Speicher der App.
     private let store = WatchStore.shared
     /// Vordergrund oder Hintergrund.
     @Environment(\.scenePhase) private var scenePhase
+    /// Geöffnete Ansichten; beim Start „Alle Eingänge“.
+    @State private var path: [WatchView] = [.allInboxes]
 
     /// Sammelansichten, Stand und Hinweise.
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
                 Section {
                     ForEach(WatchView.allCases) { view in
@@ -53,7 +59,7 @@ struct WatchRootView: View {
             .navigationDestination(for: WatchView.self) { view in
                 WatchMailListView(view: view)
             }
-            .refreshable {
+            .watchPullToRefresh {
                 await WatchConnector.shared.refresh()
             }
         }
