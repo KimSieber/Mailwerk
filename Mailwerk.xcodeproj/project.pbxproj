@@ -453,6 +453,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 3B8C3B40305DE09B0028B269 /* Build configuration list for PBXNativeTarget "Mailwerk" */;
 			buildPhases = (
+				3BC0291B3096287300530DB6 /* Release-Prüfung Anzeigename/Bundle-ID */,
 				3B8C3B1B305DE0980028B269 /* Sources */,
 				3B8C3B1C305DE0980028B269 /* Frameworks */,
 				3B8C3B1D305DE0980028B269 /* Resources */,
@@ -639,6 +640,28 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		3BC0291B3096287300530DB6 /* Release-Prüfung Anzeigename/Bundle-ID */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Release-Prüfung Anzeigename/Bundle-ID";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Verhindert, dass ein Release-Build (Archive/TestFlight) mit Dev-Namen oder Dev-Bundle-ID entsteht.\nif [ \"$CONFIGURATION\" = \"Release\" ]; then\n  if [ \"$INFOPLIST_KEY_CFBundleDisplayName\" != \"Mailwerk\" ]; then\n    echo \"error: Anzeigename ist '$INFOPLIST_KEY_CFBundleDisplayName' statt 'Mailwerk'. Ziel Mailwerk → Build Settings → Bundle Display Name muss \\$(MAILWERK_DISPLAY_NAME) sein.\"\n    exit 1\n  fi\n  case \"$PRODUCT_BUNDLE_IDENTIFIER\" in\n    *.dev*)\n      echo \"error: Bundle-ID '$PRODUCT_BUNDLE_IDENTIFIER' enthält .dev – Release darf nicht die Dev-App sein.\"\n      exit 1\n      ;;\n  esac\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		3B3F6DB230802A69001BA55D /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -765,6 +788,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 62QD57DH52;
@@ -782,6 +806,7 @@
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MAILWERK_BUNDLE_SUFFIX = .dev;
 				MAILWERK_DISPLAY_NAME = "Mailwerk Dev";
+				MARKETING_VERSION = 0.3.2;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -796,7 +821,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Mailwerk/Mailwerk.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 62QD57DH52;
 				ENABLE_APP_SANDBOX = YES;
@@ -815,7 +839,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Mailwerk/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Mailwerk Dev";
+				INFOPLIST_KEY_CFBundleDisplayName = "$(MAILWERK_DISPLAY_NAME)";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Mailwerk schlägt beim Verfassen passende Empfänger aus deinen Kontakten vor und zeigt in der Mailliste die Bilder deiner Kontakte. Deine Kontakte verlassen das Gerät nicht.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -832,7 +856,6 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				MARKETING_VERSION = 0.3.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "de.sieber-bw.Mailwerk$(MAILWERK_BUNDLE_SUFFIX)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -908,7 +931,6 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = MailwerkShare/MailwerkShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 62QD57DH52;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MailwerkShare/Info.plist;
@@ -920,7 +942,6 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.3.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "de.sieber-bw.Mailwerk$(MAILWERK_BUNDLE_SUFFIX).MailwerkShare";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -943,7 +964,6 @@
 				CODE_SIGN_ENTITLEMENTS = MailwerkShareMac/MailwerkShareMac.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 62QD57DH52;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -968,7 +988,6 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				MARKETING_VERSION = 0.3.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "de.sieber-bw.Mailwerk$(MAILWERK_BUNDLE_SUFFIX).MailwerkShareMac";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -990,7 +1009,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "";
 				CODE_SIGN_ENTITLEMENTS = MailwerkWatch/MailwerkWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 62QD57DH52;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1001,7 +1019,6 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.3.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "de.sieber-bw.Mailwerk$(MAILWERK_BUNDLE_SUFFIX).watchkitapp";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1026,7 +1043,6 @@
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_ENTITLEMENTS = MailwerkWatchComplication/MailwerkWatchWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 62QD57DH52;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MailwerkWatchComplication/Info.plist;
@@ -1038,7 +1054,6 @@
 					"@executable_path/../../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 0.3.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "de.sieber-bw.Mailwerk$(MAILWERK_BUNDLE_SUFFIX).watchkitapp.MailwerkWatchWidget";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1061,7 +1076,6 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = MailwerkShare/MailwerkShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 62QD57DH52;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MailwerkShare/Info.plist;
@@ -1073,7 +1087,6 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.3.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "de.sieber-bw.Mailwerk$(MAILWERK_BUNDLE_SUFFIX).MailwerkShare";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1094,7 +1107,6 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = MailwerkShare/MailwerkShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 62QD57DH52;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MailwerkShare/Info.plist;
@@ -1106,7 +1118,6 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.3.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "de.sieber-bw.Mailwerk$(MAILWERK_BUNDLE_SUFFIX).MailwerkShare";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1129,7 +1140,6 @@
 				CODE_SIGN_ENTITLEMENTS = MailwerkShareMac/MailwerkShareMac.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 62QD57DH52;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -1154,7 +1164,6 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				MARKETING_VERSION = 0.3.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "de.sieber-bw.Mailwerk$(MAILWERK_BUNDLE_SUFFIX).MailwerkShareMac";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1175,7 +1184,6 @@
 				CODE_SIGN_ENTITLEMENTS = MailwerkShareMac/MailwerkShareMac.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 62QD57DH52;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -1200,7 +1208,6 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				MARKETING_VERSION = 0.3.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "de.sieber-bw.Mailwerk$(MAILWERK_BUNDLE_SUFFIX).MailwerkShareMac";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1222,7 +1229,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "";
 				CODE_SIGN_ENTITLEMENTS = MailwerkWatch/MailwerkWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 62QD57DH52;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1233,7 +1239,6 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.3.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "de.sieber-bw.Mailwerk$(MAILWERK_BUNDLE_SUFFIX).watchkitapp";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1257,7 +1262,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "";
 				CODE_SIGN_ENTITLEMENTS = MailwerkWatch/MailwerkWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 62QD57DH52;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1268,7 +1272,6 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.3.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "de.sieber-bw.Mailwerk$(MAILWERK_BUNDLE_SUFFIX).watchkitapp";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1293,7 +1296,6 @@
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_ENTITLEMENTS = MailwerkWatchComplication/MailwerkWatchWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 62QD57DH52;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MailwerkWatchComplication/Info.plist;
@@ -1305,7 +1307,6 @@
 					"@executable_path/../../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 0.3.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "de.sieber-bw.Mailwerk$(MAILWERK_BUNDLE_SUFFIX).watchkitapp.MailwerkWatchWidget";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1329,7 +1330,6 @@
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_ENTITLEMENTS = MailwerkWatchComplication/MailwerkWatchWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 62QD57DH52;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MailwerkWatchComplication/Info.plist;
@@ -1341,7 +1341,6 @@
 					"@executable_path/../../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 0.3.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "de.sieber-bw.Mailwerk$(MAILWERK_BUNDLE_SUFFIX).watchkitapp.MailwerkWatchWidget";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1394,6 +1393,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 62QD57DH52;
@@ -1417,6 +1417,7 @@
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MAILWERK_BUNDLE_SUFFIX = .dev;
 				MAILWERK_DISPLAY_NAME = "Mailwerk Dev";
+				MARKETING_VERSION = 0.3.2;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -1461,6 +1462,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 62QD57DH52;
@@ -1478,6 +1480,7 @@
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MAILWERK_BUNDLE_SUFFIX = "";
 				MAILWERK_DISPLAY_NAME = Mailwerk;
+				MARKETING_VERSION = 0.3.2;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -1492,7 +1495,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Mailwerk/Mailwerk.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 62QD57DH52;
 				ENABLE_APP_SANDBOX = YES;
@@ -1511,7 +1513,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Mailwerk/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Mailwerk Dev";
+				INFOPLIST_KEY_CFBundleDisplayName = "$(MAILWERK_DISPLAY_NAME)";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Mailwerk schlägt beim Verfassen passende Empfänger aus deinen Kontakten vor und zeigt in der Mailliste die Bilder deiner Kontakte. Deine Kontakte verlassen das Gerät nicht.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -1528,7 +1530,6 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				MARKETING_VERSION = 0.3.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "de.sieber-bw.Mailwerk$(MAILWERK_BUNDLE_SUFFIX)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1553,7 +1554,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Mailwerk/Mailwerk.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 62QD57DH52;
 				ENABLE_APP_SANDBOX = YES;
@@ -1572,7 +1572,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Mailwerk/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Mailwerk Dev";
+				INFOPLIST_KEY_CFBundleDisplayName = "$(MAILWERK_DISPLAY_NAME)";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Mailwerk schlägt beim Verfassen passende Empfänger aus deinen Kontakten vor und zeigt in der Mailliste die Bilder deiner Kontakte. Deine Kontakte verlassen das Gerät nicht.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -1589,7 +1589,6 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				MARKETING_VERSION = 0.3.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "de.sieber-bw.Mailwerk$(MAILWERK_BUNDLE_SUFFIX)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;

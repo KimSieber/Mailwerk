@@ -4,6 +4,13 @@
 
 Antworten und Erklärungen zu den Ergebnissen sind kurz und prägnant zu halten. 
 
+## Xcode-Projekt: Version und Anzeigename
+
+- **Version und Build-Nummer** (`MARKETING_VERSION`, `CURRENT_PROJECT_VERSION`) stehen nur auf **Projektebene** (PROJECT Mailwerk → Build Settings). In den Zielen Mailwerk, MailwerkShare, MailwerkShareMac, MailwerkWatch Watch App und MailwerkWatchWidgetExtension dürfen sie nicht gesetzt sein. Anleitungen zum Hochsetzen der Version immer über diesen Weg geben – **nie** über den Reiter General eines Ziels (Xcode schreibt dort feste Werte ins Ziel, auch den Anzeigenamen).
+- **Anzeigename:** `INFOPLIST_KEY_CFBundleDisplayName` ist in allen Zielen `$(MAILWERK_DISPLAY_NAME)`; der Wert kommt aus der Projekt-Variable je Konfiguration (Debug/Profile „Mailwerk Dev“, Release „Mailwerk“). Nie durch einen festen Text ersetzen.
+- **Prüfung:** Bei Änderungen an `project.pbxproj` muss `grep -n '"Mailwerk Dev"' Mailwerk.xcodeproj/project.pbxproj` genau zwei Treffer liefern – nur die Zeilen `MAILWERK_DISPLAY_NAME = "Mailwerk Dev";`.
+- Die Run-Script-Phase „Release-Prüfung Anzeigename/Bundle-ID“ im Ziel Mailwerk bricht ein Release-Archive mit falschem Namen oder `.dev`-Bundle-ID ab. Nicht entfernen.
+
 ## Dokumentation (`Documentation/`)
 
 Das Repository ist **öffentlich**. Alles unter `Documentation/` (außer `Documentation/Intern/`) kann jeder lesen.

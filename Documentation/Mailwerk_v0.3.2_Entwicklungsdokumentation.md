@@ -123,11 +123,32 @@ Bewusst unverändert: „Fertig“ im Auswahlmodus der Liste (iOS) – kein Fens
 
 ---
 
+## 8. Absicherung der Release-Builds (Anzeigename, Version)
+
+**Anlass:** Der TestFlight-Build 0.3.2 erschien auf allen Geräten als „Mailwerk Dev“ (wie schon einmal bei v0.2.3). Auffällig wurde das erst nach der Installation auf den Geräten; in App Store Connect ist der Anzeigename vorher nicht zu sehen. iOS- und Mac-Build mussten neu hochgeladen werden.
+
+**Ursache:** Beim Hochsetzen der Version im Reiter **General → Identity** des Ziels Mailwerk schreibt Xcode alle Felder dieses Bereichs neu – auch „Display Name“, und zwar mit dem gerade angezeigten, bereits aufgelösten Debug-Wert. Damit wurde `INFOPLIST_KEY_CFBundleDisplayName = $(MAILWERK_DISPLAY_NAME)` in Debug, Profile **und Release** durch den festen Text „Mailwerk Dev“ ersetzt (Commit `4ff0615`). Betroffen war nur das Ziel Mailwerk; Share-, Watch- und Widget-Ziel lasen den Namen weiter aus der Variable.
+
+**Maßnahmen:**
+
+1. **Anzeigename zurückgesetzt:** Ziel Mailwerk → Build Settings → Bundle Display Name = `$(MAILWERK_DISPLAY_NAME)` für alle Konfigurationen.
+2. **Prüfung im Build (Sicherheitsnetz):** Run-Script-Phase „Release-Prüfung Anzeigename/Bundle-ID“ im Ziel Mailwerk, vor „Compile Sources“, „Based on dependency analysis“ aus. In der Konfiguration Release (Archive) bricht der Build mit Fehlermeldung ab, wenn der Anzeigename nicht „Mailwerk“ ist oder die Bundle-ID `.dev` enthält. Das Skript liest nur Build-Einstellungen (Umgebungsvariablen), keine Dateien – daher keine Ein-/Ausgabedateien und kein Konflikt mit der Skript-Sandbox. Gilt für iOS und Mac (gemeinsames Ziel). Geprüft: Archive mit richtigem Namen läuft durch, mit „Mailwerk Dev“ in Release bricht es ab.
+3. **Version zentral:** `MARKETING_VERSION` und `CURRENT_PROJECT_VERSION` stehen nur noch auf **Projektebene**; die Einträge in den Zielen Mailwerk, MailwerkShare, MailwerkShareMac, MailwerkWatch Watch App und MailwerkWatchWidgetExtension wurden entfernt (vorher 15 bzw. 21 Einzelwerte). Alle eingebetteten Ziele haben damit zwingend dieselbe Version und Build-Nummer wie die App. Die Testziele behalten ihre eigenen Werte.
+
+**Regel für die Zukunft:**
+
+- Version und Build-Nummer nur unter **PROJECT Mailwerk → Build Settings → Marketing Version / Current Project Version** ändern – **nie** im Reiter General eines Ziels (Xcode schreibt dort wieder feste Werte ins Ziel).
+- Build-Nummer: je Upload innerhalb derselben Version erhöhen; bei neuer Version wieder bei 1 beginnen.
+- `INFOPLIST_KEY_CFBundleDisplayName` bleibt in allen Zielen `$(MAILWERK_DISPLAY_NAME)`; der Name wird nur über die Projekt-Variable je Konfiguration gesteuert (Debug/Profile „Mailwerk Dev“, Release „Mailwerk“).
+- Vor einem Commit mit Änderungen an `project.pbxproj` prüfen, dass kein fester „Mailwerk Dev“ außerhalb von `MAILWERK_DISPLAY_NAME` steht.
+
+---
+
 ## Gesamtstand des Projekts (Stand 31.10.2026)
 
 ### Produkt
 - **Mailwerk**, Mail-Client in Swift/SwiftUI für iOS/iPadOS, macOS und watchOS. Repo `github.com/KimSieber/Mailwerk` (public, MIT-Lizenz; Name und Icon ausgenommen), Branch `main`.
-- Version **0.3.2** (die Versionsnummer `MARKETING_VERSION` wird manuell in Xcode gesetzt), **891 Testfunktionen**. Ziele: Mailwerk, MailwerkShare (iOS), MailwerkShareMac, MailwerkWatch Watch App, MailwerkWatchWidgetExtension, MailwerkTests, MailwerkUITests.
+- Version **0.3.2** (Version und Build-Nummer nur auf Projektebene in Build Settings, nie im Reiter General – siehe Abschnitt 8), **891 Testfunktionen**. Ziele: Mailwerk, MailwerkShare (iOS), MailwerkShareMac, MailwerkWatch Watch App, MailwerkWatchWidgetExtension, MailwerkTests, MailwerkUITests.
 - **Ziel:** Veröffentlichung im App Store; neue Nacharbeiten nur aufnehmen, wenn sie dafür nötig sind.
 
 ### Technik (Kurzfassung)
@@ -136,6 +157,7 @@ Bewusst unverändert: „Fertig“ im Auswahlmodus der Liste (iOS) – kein Fens
 - Datenbank: SQLite (WAL, getrennte Lese-/Schreibverbindung), FTS5-Suchindex.
 - Abruf: eine IMAP-Verbindung je Postfach und Runde, höchstens 3 Postfächer gleichzeitig (2 je Server); Entscheidungen in reinen Planern.
 - Erscheinungsbild: Farben, Abstände, Radien und Animationen zentral in `AppTheme`; Fensterknöpfe nach der Regel in Abschnitt 1.
+- Release-Absicherung: Run-Script-Phase im Ziel Mailwerk bricht ein Archive mit Dev-Anzeigename oder `.dev`-Bundle-ID ab (Abschnitt 8).
 
 ### Arbeitsregeln (verbindlich)
 - Nichts bauen ohne ausdrückliche Freigabe; Inhalt jeder Version vorher abstimmen; große Schritte in 3–4 Teile mit eigenem Testpunkt.
@@ -154,5 +176,5 @@ Bewusst unverändert: „Fertig“ im Auswahlmodus der Liste (iOS) – kein Fens
 - Übrige offene Punkte unverändert wie in v0.3.1 (Mac: größere HTML-Mails, Übersetzung für weitere Sprachen, Abnahme iPad/Watch über TestFlight, Ordnerliste über eigene Verbindung, Default Mail App, Azure-Herausgeber-Verifizierung vor dem App Store).
 
 ### Fahrplan
-- **Jetzt:** Versionsnummer 0.3.2 setzen, TestFlight-Build hochladen, Watch auf der Uhr prüfen.
+- **Jetzt:** Watch auf der Uhr prüfen (TestFlight-Build 0.3.2 mit korrektem Namen erneut hochgeladen).
 - **Danach:** Handoff, dann die für den App Store nötigen Punkte (Herausgeber-Verifizierung, Store-Auftritt, Screenshots).
