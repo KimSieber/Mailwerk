@@ -3,7 +3,7 @@
 //  Mailwerk
 //  Autor: Kim Sieber
 //  Erstellt: 13.10.2026
-//  Geändert: 30.10.2026
+//  Geändert: 31.10.2026
 //
 //  Zweck: Pflege-Seite für die Signatur eines Postfachs (aus „Postfach
 //  bearbeiten“ geöffnet). Von oben nach unten:
@@ -144,10 +144,10 @@ struct SignatureEditorView: View {
         #if !os(macOS)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("Abbrechen") { dismiss() }
+                Button(role: .cancel) { dismiss() }
             }
             ToolbarItem(placement: .confirmationAction) {
-                Button("Sichern") { save() }
+                Button(role: .confirm) { save() }
             }
         }
         #endif

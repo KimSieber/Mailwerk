@@ -3,7 +3,7 @@
 //  Mailwerk
 //  Autor: Kim Sieber
 //  Erstellt: 18.09.2026
-//  Geändert: 30.10.2026
+//  Geändert: 31.10.2026
 //
 //  Zweck: Postfachverwaltung – Liste der Postfächer mit Farbe, Name und
 //  E-Mail-Adresse; Hinzufügen, Bearbeiten (Tipp) und Entfernen (Wischen);
@@ -20,14 +20,18 @@
 //  (siehe Dialogs.swift).
 //
 //  Getönte Fläche, Abschnitte als Karten wie in der ganzen App (AppTheme).
+//  Unter den Postfächern eine eigene Karte „Postfach hinzufügen“ (statt
+//  Plus-Knopf oben), darunter „Standard-Postfach“.
 //
-//  Mac: Kopfleiste oben mit ✓ (Fertig) statt Symbolleiste
-//  (SheetHeaderBar); Inhalt als gruppiertes Formular: die Postfächer in
-//  einer Karte mit hohen Zeilen und „>“ als Hinweis auf Bearbeiten,
-//  darunter eine eigene Karte „Postfach hinzufügen“ (statt Plus-Knopf)
-//  und eine Karte „Standard-Postfach“ mit Menü und Erklärung in derselben
-//  Zeile (unter der Beschriftung). Entfernen geht dort über
-//  das Kontextmenü einer Zeile (Wischen gibt es nicht).
+//  Knöpfe (Regel MW-60): Hier wird nichts gesichert – Schalter und
+//  Standard-Postfach wirken sofort –, deshalb nur ✕ links oben zum
+//  Schließen; auf iPhone/iPad der Systemknopf (Rolle „close“).
+//
+//  Mac: Kopfleiste oben (SheetHeaderBar) statt Symbolleiste; Inhalt als
+//  gruppiertes Formular: die Postfächer in einer Karte mit hohen Zeilen
+//  und „>“ als Hinweis auf Bearbeiten, „Standard-Postfach“ mit Menü und
+//  Erklärung in derselben Zeile (unter der Beschriftung). Entfernen geht
+//  dort über das Kontextmenü einer Zeile (Wischen gibt es nicht).
 //
 //  Abgrenzung: Anlegen → AddAccountView; Bearbeiten → EditAccountView;
 //  Speichern und Entfernen → AccountStore.
@@ -70,17 +74,13 @@ struct AccountListView: View {
                     )
                     // Hinweis frei auf der getönten Fläche, ohne Karte.
                     .listRowBackground(Color.clear)
-                    #if os(macOS)
                     addAccountSection
                         .cardRowBackground()
-                    #endif
                 } else {
                     accountSection
                         .cardRowBackground()
-                    #if os(macOS)
                     addAccountSection
                         .cardRowBackground()
-                    #endif
                     defaultAccountSection
                         .cardRowBackground()
                 }
@@ -88,25 +88,14 @@ struct AccountListView: View {
             .appBackground()
             .navigationTitle("Postfächer")
             .macSheetHeader("Postfächer") {
-                EmptyView()
+                HeaderCircleButton.cancel("Schließen") { dismiss() }
             } trailing: {
-                HeaderCircleButton.confirm("Fertig") { dismiss() }
+                EmptyView()
             }
             #if !os(macOS)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                    }
-                }
-                ToolbarItem {
-                    Button {
-                        showingAddAccount = true
-                    } label: {
-                        Label("Postfach hinzufügen", systemImage: "plus")
-                    }
+                    Button(role: .close) { dismiss() }
                 }
             }
             #endif
@@ -159,9 +148,8 @@ struct AccountListView: View {
         #endif
     }
 
-    #if os(macOS)
-    /// Karte „Postfach hinzufügen“ (Mac): volle Breite, blaues Plus und
-    /// blaue Schrift – gestaltet wie „Ältere Nachrichten laden“.
+    /// Karte „Postfach hinzufügen“: volle Breite, blaues Plus und blaue
+    /// Schrift – gestaltet wie „Ältere Nachrichten laden“.
     private var addAccountSection: some View {
         Section {
             Button {
@@ -179,7 +167,6 @@ struct AccountListView: View {
             .buttonStyle(.plain)
         }
     }
-    #endif
 
     /// Postfächer mit Farbpunkt, Name und E-Mail-Adresse sowie Schalter
     /// „Abruf“; Tipp auf den Namen bearbeitet, Wischen entfernt (nach

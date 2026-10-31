@@ -722,7 +722,7 @@ struct InboxView: View {
             }
     }
 
-    /// Von der Watch übergebene Mail als Blatt mit „Fertig“.
+    /// Von der Watch übergebene Mail als Blatt mit ✕ zum Schließen.
     ///
     /// - Parameter request: Übergebene Mail.
     /// - Returns: Blatt mit der Mailansicht.
@@ -731,7 +731,7 @@ struct InboxView: View {
             MessageDetailLoader(messageID: request.id, context: handoffDetailContext)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("Fertig") { handoffMessage = nil }
+                        Button(role: .close) { handoffMessage = nil }
                     }
                 }
         }

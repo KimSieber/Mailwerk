@@ -3,15 +3,16 @@
 //  Mailwerk
 //  Autor: Kim Sieber
 //  Erstellt: 29.10.2026
-//  Geändert: 30.10.2026
+//  Geändert: 31.10.2026
 //
 //  Zweck: „Open-Source-Lizenzen“ – Mailwerk selbst und die verwendeten
 //  Komponenten mit ihrer Lizenz; ein Tipp zeigt den vollständigen
 //  Lizenztext (LicenseDetailView), bei Apache 2.0 samt NOTICE.
 //
 //  Aufruf: iPhone/iPad aus „Über Mailwerk“ (Navigation im Blatt), Mac als
-//  Blatt über dem Fenster „Über Mailwerk“ – dort mit Kopfleiste und ✓
-//  (Fertig), der Lizenztext mit „<“ (SheetHeaderBar).
+//  Blatt über dem Fenster „Über Mailwerk“ – dort mit Kopfleiste und ✕
+//  links oben (Regel MW-60: nichts zu sichern), der Lizenztext als
+//  Unterseite mit „<“ (SheetHeaderBar).
 //
 //  Abgrenzung: Verzeichnis und Texte → OpenSourceLicenses; Aufruf →
 //  AboutView.
@@ -54,11 +55,11 @@ struct LicenseListView: View {
         .appBackground()
         .navigationTitle("Open-Source-Lizenzen")
         .macSheetHeader("Open-Source-Lizenzen") {
-            EmptyView()
-        } trailing: {
             if let onDone {
-                HeaderCircleButton.confirm("Fertig", action: onDone)
+                HeaderCircleButton.cancel("Schließen", action: onDone)
             }
+        } trailing: {
+            EmptyView()
         }
     }
 

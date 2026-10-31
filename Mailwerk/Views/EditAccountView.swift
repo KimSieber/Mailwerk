@@ -3,7 +3,7 @@
 //  Mailwerk
 //  Autor: Kim Sieber
 //  Erstellt: 20.09.2026
-//  Geändert: 30.10.2026
+//  Geändert: 31.10.2026
 //
 //  Zweck: Formular zum Bearbeiten eines Postfachs – Bezeichnung,
 //  Absendername, E-Mail-Adresse, Benutzername, Passwort, Server, Kopie in
@@ -28,8 +28,10 @@
 //  ohne Adressfeld zeigen ihren Benutzernamen als Adresse und bekommen sie
 //  beim Sichern eingetragen.
 //
-//  Mac: feste Kopfleiste oben (✕ Abbrechen, ✓ Sichern)
-//  statt der Symbolleiste, die mitten im Inhalt stand; darunter scrollt
+//  Knöpfe (Regel MW-60): ✕ links oben bricht ab, ✓ rechts oben sichert;
+//  auf iPhone/iPad die Systemknöpfe (Rollen „cancel“ und „confirm“).
+//
+//  Mac: feste Kopfleiste oben statt der Symbolleiste, die mitten im Inhalt stand; darunter scrollt
 //  das ganze Formular im gruppierten Stil (Karten, Überschriften darüber,
 //  Fußtexte vollständig darunter).
 //
@@ -249,10 +251,10 @@ struct EditAccountView: View {
             #if !os(macOS)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Abbrechen") { dismiss() }
+                    Button(role: .cancel) { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Sichern") { save() }
+                    Button(role: .confirm) { save() }
                         .disabled(!isValid)
                 }
             }

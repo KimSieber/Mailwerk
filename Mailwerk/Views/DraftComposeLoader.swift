@@ -3,7 +3,7 @@
 //  Mailwerk
 //  Autor: Kim Sieber
 //  Erstellt: 14.10.2026
-//  Geändert: 27.10.2026
+//  Geändert: 31.10.2026
 //
 //  Zweck: Öffnet einen gesicherten Entwurf im Verfassen-Fenster. Lädt den
 //  Entwurf samt Anhängen aus dem Cache, holt fehlende eingebettete Bilder
@@ -80,7 +80,7 @@ struct DraftComposeLoader: View {
                 #if !os(macOS)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("Abbrechen") { dismiss() }
+                        Button(role: .cancel) { dismiss() }
                     }
                 }
                 #endif

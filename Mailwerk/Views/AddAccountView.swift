@@ -3,7 +3,7 @@
 //  Mailwerk
 //  Autor: Kim Sieber
 //  Erstellt: 18.09.2026
-//  Geändert: 30.10.2026
+//  Geändert: 31.10.2026
 //
 //  Zweck: Formular zum Einrichten eines Postfachs. Zuerst wählt der Nutzer
 //  die Art:
@@ -22,8 +22,11 @@
 //  bleibt das Formular mit allen Eingaben offen und eine Meldung erklärt
 //  den Grund.
 //
-//  Mac: feste Kopfleiste oben (✕ Abbrechen, bei IMAP/SMTP
-//  ✓ Speichern) statt Symbolleiste; das Formular im gruppierten Stil
+//  Knöpfe (Regel MW-60): ✕ links oben bricht ab, ✓ rechts oben speichert
+//  (nur bei IMAP/SMTP; OAuth speichert nach der Anmeldung selbst). Auf
+//  iPhone/iPad die Systemknöpfe (Rollen „cancel“ und „confirm“).
+//
+//  Mac: feste Kopfleiste oben statt Symbolleiste; das Formular im gruppierten Stil
 //  (Karten, Beschriftung links) scrollt darunter vollständig.
 //
 //  Abgrenzung: Eingabeprüfung, Verbindungstest, Anmeldung und Aufbau des
@@ -71,11 +74,11 @@ struct AddAccountView: View {
             #if !os(macOS)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Abbrechen") { dismiss() }
+                    Button(role: .cancel) { dismiss() }
                 }
                 if viewModel.provider == nil {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Speichern") { save() }
+                        Button(role: .confirm) { save() }
                             .disabled(!viewModel.isValid)
                     }
                 }

@@ -3,7 +3,7 @@
 //  Mailwerk
 //  Autor: Kim Sieber
 //  Erstellt: 16.10.2026
-//  Geändert: 30.10.2026
+//  Geändert: 31.10.2026
 //
 //  Zweck: Die Apple-Kontaktkarte zu einer Person aus dem Mailkopf
 //  („Kontaktkarte anzeigen“).
@@ -14,11 +14,13 @@
 //  Auf dem Mac zeigt die Systemkarte nur an; Anlegen geht dort über die
 //  App Kontakte.
 //
+//  Mac: ✕ links oben schließt (Regel MW-60: nichts zu sichern).
+//
 //  Abgrenzung: Auslöser ist das Menü einer Person (MessageDetailHeader);
 //  das Blatt öffnet MessageDetailView.
 //
 //  Abhängigkeiten: SwiftUI, Contacts, ContactsUI, UIKit (iOS) bzw. AppKit
-//  (macOS), HeaderPerson.
+//  (macOS), HeaderPerson, HeaderCircleButton (Mac).
 //
 
 import Contacts
@@ -47,9 +49,8 @@ struct ContactCardView: View {
         #else
         VStack(spacing: 0) {
             HStack {
+                HeaderCircleButton.cancel("Schließen") { dismiss() }
                 Spacer()
-                Button("Fertig") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
             }
             .padding(AppSpacing.medium)
             Divider()

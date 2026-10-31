@@ -3,13 +3,16 @@
 //  Mailwerk
 //  Autor: Kim Sieber
 //  Erstellt: 24.09.2026
-//  Geändert: 27.10.2026
+//  Geändert: 31.10.2026
 //
 //  Zweck: Einstellungen des Spamfilters: Schalter, Score-Obergrenze und
 //  Zugang zur Pflege der beiden Listen.
 //
-//  Mac: feste Kopfleiste oben mit ✓ (Fertig) statt
-//  Symbolleiste; gruppiertes Formular (Karten wie iOS, „Score-Obergrenze“
+//  Knöpfe (Regel MW-60): Schalter und Score-Obergrenze speichern sofort,
+//  deshalb nur ✕ links oben zum Schließen (iPhone/iPad: Systemknopf,
+//  Rolle „close“); die Listen öffnen sich als Unterseite mit „<“.
+//
+//  Mac: feste Kopfleiste oben statt Symbolleiste; gruppiertes Formular (Karten wie iOS, „Score-Obergrenze“
 //  vollständig links, Wert mit Plus/Minus rechts); Whitelist und
 //  Blacklist als hohe Zeilen mit „>“ in einer Karte; kompaktes Sheet
 //  (520 × 600 pt, Inhalt ohne Scrollen).
@@ -87,15 +90,15 @@ struct SpamSettingsView: View {
             .appBackground()
             .navigationTitle("Spamfilter")
             .macSheetHeader("Spamfilter") {
-                EmptyView()
+                HeaderCircleButton.cancel("Schließen") { dismiss() }
             } trailing: {
-                HeaderCircleButton.confirm("Fertig") { dismiss() }
+                EmptyView()
             }
             #if !os(macOS)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Fertig") { dismiss() }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(role: .close) { dismiss() }
                 }
             }
             #endif
